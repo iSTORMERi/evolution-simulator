@@ -1,18 +1,18 @@
 import * as PIXI from 'pixi.js';
-import { CoastalWaterController } from './CoastalWaterController';
+import { CoastalWaterController } from './ocean/CoastalWaterController';
 
 export class WaterManager {
   public container: PIXI.Container;
 
   private coastalController: CoastalWaterController;
-  // Сюда позже добавим: private deepController: DeepWaterController;
 
   constructor(mapWidth: number, mapHeight: number, coastalRatio: number) {
     this.container = new PIXI.Container();
 
+    // Инициализируем контроллер прибрежной воды
     this.coastalController = new CoastalWaterController(mapWidth, mapHeight, coastalRatio);
 
-    // Подключаем слои в правильном порядке
+    // Добавляем его контейнер в менеджер
     this.container.addChild(this.coastalController.container);
   }
 
