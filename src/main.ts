@@ -1,6 +1,8 @@
 import * as PIXI from 'pixi.js';
 import { WorldMap } from './world/WorldMap';
 import { CameraController } from './world/CameraController';
+import { LightingController } from './world/LightingController';
+import { TimeDebugUI } from './ui/TimeDebugUI';
 
 console.log('Evolution Simulator Initializing...');
 
@@ -42,16 +44,19 @@ async function initApp() {
     canvas.style.touchAction = 'none';
     appContainer.appendChild(canvas);
 
-    // === НОВЫЕ ГИГАНТСКИЕ РАЗМЕРЫ (24000x24000) ===
     const WORLD_WIDTH = 24000;
     const WORLD_HEIGHT = 24000;
 
-    // Океан 50%, Суша 50%
     const worldMap = new WorldMap(WORLD_WIDTH, WORLD_HEIGHT, 0.50);
     app.stage.addChild(worldMap.container);
 
+    // Камера
     const camera = new CameraController(worldMap.container, canvas, WORLD_WIDTH, WORLD_HEIGHT);
     camera.fillScreen(screenWidth, screenHeight);
+
+    // Подключаем динамическое освещение и UI отладки
+    const lightingController = new LightingController(worldMap.container);
+    new TimeDebugUI(lightingController);
 
     window.addEventListener('resize', () => {
       const newWidth = window.innerWidth;
