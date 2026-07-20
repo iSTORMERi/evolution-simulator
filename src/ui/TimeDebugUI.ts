@@ -8,25 +8,24 @@ export class TimeDebugUI {
   private playButton: HTMLButtonElement;
 
   private isPlaying = false;
-  private currentTimeInHours = 12.0; // По умолчанию полдень
+  private currentTimeInHours = 12.0;
   private animFrameId: number | null = null;
 
   constructor(lightingController: LightingController) {
     this.lightingController = lightingController;
 
-    // Создаём верстку виджета
     this.container = document.createElement('div');
     this.setupStyles();
 
     this.container.innerHTML = `
       <div style="font-weight: bold; margin-bottom: 6px; font-size: 14px; display: flex; justify-content: space-between; align-items: center;">
         <span>🕒 Время суток</span>
-        <span id="time-text" style="color: #58a6ff;">12:00 (День)</span>
+        <span id="time-text" style="color: #58a6ff;">12:00 (Яркий день)</span>
       </div>
-      <input type="range" id="time-slider" min="0" max="24" step="0.1" value="12" style="width: 100%; cursor: pointer;" />
+      <input type="range" id="time-slider" min="0" max="24" step="0.05" value="12" style="width: 100%; cursor: pointer;" />
       <div style="margin-top: 8px; display: flex; gap: 8px;">
         <button id="play-btn" style="flex: 1; padding: 6px; background: #238636; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer;">
-          ▶ Авто-прокрутка
+          ▶ Авто-прокрутка (5 мин сутки)
         </button>
       </div>
     `;
@@ -62,17 +61,15 @@ export class TimeDebugUI {
   }
 
   private bindEvents(): void {
-    // Ручная прокрутка ползунка
     this.timeSlider.addEventListener('input', () => {
       this.isPlaying = false;
-      this.playButton.textContent = '▶ Авто-прокрутка';
+      this.playButton.textContent = '▶ Авто-прокрутка (5 мин сутки)';
       this.playButton.style.backgroundColor = '#238636';
 
       this.currentTimeInHours = parseFloat(this.timeSlider.value);
       this.update(this.currentTimeInHours);
     });
 
-    // Кнопка Play/Pause
     this.playButton.addEventListener('click', () => {
       this.isPlaying = !this.isPlaying;
       if (this.isPlaying) {
@@ -80,7 +77,7 @@ export class TimeDebugUI {
         this.playButton.style.backgroundColor = '#da3633';
         this.startLoop();
       } else {
-        this.playButton.textContent = '▶ Авто-прокрутка';
+        this.playButton.textContent = '▶ Авто-прокрутка (5 мин сутки)';
         this.playButton.style.backgroundColor = '#238636';
       }
     });
@@ -95,8 +92,9 @@ export class TimeDebugUI {
       const deltaSeconds = (now - lastTime) / 1000;
       lastTime = now;
 
-      // 1 игровая минута = за пару секунд real-time (полный цикл 24ч занимает ~24 сек)
-      this.currentTimeInHours = (this.currentTimeInHours + deltaSeconds * 1.0) % 24;
+      // 24 игровых часа за 300 секунд (5 минут) => 24 / 300 = 0.08 часа за реальную секунду
+      const hoursPerSecond = 24 / 300;
+      this.currentTimeInHours = (this.currentTimeInHours + deltaSeconds * hoursPerSecond) % 24;
       this.timeSlider.value = this.currentTimeInHours.toString();
       this.update(this.currentTimeInHours);
 
