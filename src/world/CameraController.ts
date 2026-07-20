@@ -7,12 +7,10 @@ export class CameraController {
   private dragStart = { x: 0, y: 0 };
   private containerStart = { x: 0, y: 0 };
 
-  // Размеры логического мира
-  private worldWidth: number = 0;
-  private worldHeight: number = 0;
+  private worldWidth: number;
+  private worldHeight: number;
 
-  // Расширенные границы масштаба (от глубокого отдаления до сильного приближения)
-  public minScale = 0.05;
+  public minScale = 0.02;
   public maxScale = 15.0;
 
   private initialTouchDistance = 0;
@@ -35,7 +33,6 @@ export class CameraController {
   private setupEvents(): void {
     const element = this.canvasElement;
 
-    // === Перетаскивание мышью / одним пальцем ===
     element.addEventListener('pointerdown', (e) => {
       if (e.pointerType === 'touch' && !e.isPrimary) return;
 
@@ -62,14 +59,12 @@ export class CameraController {
     window.addEventListener('pointerup', stopDrag);
     window.addEventListener('pointercancel', stopDrag);
 
-    // === Колесо мыши (Zoom) ===
     element.addEventListener('wheel', (e) => {
       e.preventDefault();
       const zoomFactor = e.deltaY < 0 ? 1.2 : 0.8;
       this.zoomAt(e.clientX, e.clientY, zoomFactor);
     }, { passive: false });
 
-    // === Multi-touch (Pinch-to-zoom) ===
     element.addEventListener('touchstart', (e) => {
       if (e.touches.length === 2) {
         this.isDragging = false;
@@ -121,8 +116,7 @@ export class CameraController {
     this.clampBounds();
   }
 
-  // Запрещает выезд за пределы мира
-  private clampBounds(): void {
+  public clampBounds(): void {
     const screenWidth = window.innerWidth;
     const screenHeight = window.innerHeight;
 
@@ -130,32 +124,35 @@ export class CameraController {
     const scaledWorldWidth = this.worldWidth * scale;
     const scaledWorldHeight = this.worldHeight * scale;
 
-    // Ограничение по X
+    // По Х
     if (scaledWorldWidth <= screenWidth) {
-      // Если карта меньше экрана по ширине -- центрируем
       this.container.x = (screenWidth - scaledWorldWidth) / 2;
     } else {
-      // Зажимаем между левым и правым краем
       const minX = screenWidth - scaledWorldWidth;
-      const maxX = 0;
-      this.container.x = Math.min(Math.max(this.container.x, minX), maxX);
+      this.container.x = Math.min(Math.max(this.container.x, minX), 0);
     }
 
-    // Ограничение по Y
+    // По Y
     if (scaledWorldHeight <= screenHeight) {
-      // Если карта меньше экрана по высоте -- центрируем
       this.container.y = (screenHeight - scaledWorldHeight) / 2;
     } else {
-      // Зажимаем между верхним и нижним краем
       const minY = screenHeight - scaledWorldHeight;
-      const maxY = 0;
-      this.container.y = Math.min(Math.max(this.container.y, minY), maxY);
+      this.container.y = Math.min(Math.max(this.container.y, minY), 0);
     }
   }
 
-  public fitToView(screenWidth: number, screenHeight: number): void {
-    const scale = Math.max(screenWidth / this.worldWidth, screenHeight / this.worldHeight);
+  // Заполнение всего экрана без черных полей
+  public fillScreen(screenWidth: number, screenHeight: number): void {
+    const scaleX = screenWidth / this.worldWidth;
+    const scaleY = screenHeight / this.worldHeight;
+    
+    // Берем бóльший масштаб, чтобы закрасить весь холст без остатка
+    const scale = Math.max(scaleX, scaleY);
     this.container.scale.set(scale);
+    
+    // Вычисляем минимальный допустимый зум, чтобы нельзя было «ужать» карту меньше размера экрана
+    this.minScale = Math.max(scaleX, scaleY);
+
     this.clampBounds();
   }
 }
