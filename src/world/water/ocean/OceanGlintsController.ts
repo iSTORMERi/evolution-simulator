@@ -23,7 +23,8 @@ export class OceanGlintsController {
   private animTime = 0;
   private daylightFactor = 1.0;
 
-  constructor(mapWidth: number, mapHeight: number, coastalRatio: number, count = 60) {
+  // Увеличено дефолтное количество бликов до 300
+  constructor(mapWidth: number, mapHeight: number, coastalRatio: number, count = 300) {
     this.mapWidth = mapWidth;
     this.mapHeight = mapHeight;
     this.coastalRatio = coastalRatio;
@@ -71,7 +72,6 @@ export class OceanGlintsController {
       const maxX = this.getCoastlineX(y) - 30; // Чуть не доходя до самого сухого пляжа
       const x = Math.random() * Math.max(50, maxX);
 
-      // Без аддитивного режима, чтобы не давать сбоев в разных версиях Pixi
       sprite.x = x;
       sprite.y = y;
       sprite.alpha = 0;
@@ -84,8 +84,8 @@ export class OceanGlintsController {
         baseY: y,
         phase: Math.random() * Math.PI * 2, // Разная начальная фаза
         speed: 1.5 + Math.random() * 2.5,   // Индивидуальная скорость мерцания
-        maxScale: 0.6 + Math.random() * 0.8, // Разные размеры бликов
-        baseAlpha: 0.4 + Math.random() * 0.5
+        maxScale: 0.5 + Math.random() * 0.7, // Слегка варьируем размер для плотности
+        baseAlpha: 0.35 + Math.random() * 0.5
       });
     }
   }
@@ -136,14 +136,16 @@ export class OceanGlintsController {
       // Плавная синусоида мерцания (от 0 до 1)
       const glow = (Math.sin(this.animTime * g.speed + g.phase) + 1) / 2;
 
-      // Точка не просто затухает, но и чуть пульсирует в размере
+      // Пульсация размера и прозрачности
       const currentScale = g.maxScale * (0.7 + glow * 0.5);
       const currentAlpha = Math.pow(glow, 2) * g.baseAlpha * this.daylightFactor;
 
-      // Микро-сдвиг от волнения воды
+      // Микро-покачивание точки на поверхности воды
       const driftX = Math.sin(this.animTime * 1.2 + g.phase) * 6;
+      const driftY = Math.cos(this.animTime * 0.8 + g.phase) * 3;
 
       g.sprite.x = g.baseX + driftX;
+      g.sprite.y = g.baseY + driftY;
       g.sprite.scale.set(currentScale);
       g.sprite.alpha = currentAlpha;
     }
