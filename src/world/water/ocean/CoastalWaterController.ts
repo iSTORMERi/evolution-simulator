@@ -9,19 +9,8 @@ interface BreakerWaveInstance {
   isLarge: boolean;
 }
 
-interface CausticSpot {
-  sprite: PIXI.Sprite;
-  baseY: number;
-  rayProgress: number;
-  rIndex: number;
-}
-
 export class CoastalWaterController {
   public container: PIXI.Container;
-
-  private causticsContainer: PIXI.Container; // Контейнер для спрайтов каустики
-  private causticSpots: CausticSpot[] = [];
-  private causticTexture!: PIXI.Texture;
 
   private wetSandGraphics: PIXI.Graphics;
   private seaWavesGraphics: PIXI.Graphics;
@@ -44,73 +33,16 @@ export class CoastalWaterController {
 
     this.container = new PIXI.Container();
 
-    this.causticsContainer = new PIXI.Container();
     this.wetSandGraphics = new PIXI.Graphics();
     this.seaWavesGraphics = new PIXI.Graphics();
     this.breakersGraphics = new PIXI.Graphics();
     this.foamGraphics = new PIXI.Graphics();
 
     // Слои от дна к поверхности
-    this.container.addChild(this.causticsContainer);
     this.container.addChild(this.wetSandGraphics);
     this.container.addChild(this.seaWavesGraphics);
     this.container.addChild(this.breakersGraphics);
     this.container.addChild(this.foamGraphics);
-
-    // Генерируем мягкую текстуру и инициализируем сетку бликов
-    this.initCausticsTexture();
-    this.initCausticsGrid();
-  }
-
-  /**
-   * Программно создаем мягкую градиентную текстуру блика (Soft Circle Glow)
-   */
-  private initCausticsTexture(): void {
-    const canvas = document.createElement('canvas');
-    canvas.width = 32;
-    canvas.height = 32;
-    const ctx = canvas.getContext('2d');
-
-    if (ctx) {
-      const gradient = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
-      gradient.addColorStop(0, 'rgba(224, 255, 255, 1.0)');  // Яркий мягкий центр (e0ffff)
-      gradient.addColorStop(0.5, 'rgba(224, 255, 255, 0.5)');
-      gradient.addColorStop(1, 'rgba(224, 255, 255, 0.0)');  // Полная прозрачность к краям
-
-      ctx.fillStyle = gradient;
-      ctx.beginPath();
-      ctx.arc(16, 16, 16, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    this.causticTexture = PIXI.Texture.from(canvas);
-  }
-
-  /**
-   * Спавним пул спрайтов единоразово при создании контроллера
-   */
-  private initCausticsGrid(): void {
-    const stepY = 35;
-    const numRays = 22;
-
-    for (let y = 0; y <= this.mapHeight; y += stepY) {
-      for (let r = 0; r < numRays; r++) {
-        const sprite = new PIXI.Sprite(this.causticTexture);
-        sprite.anchor.set(0.5);
-        
-        // Исправлено: безопасная установка бленд-мода строкой для совместимости с любыми версиями PixiJS
-        sprite.blendMode = 'add'; 
-
-        this.causticsContainer.addChild(sprite);
-
-        this.causticSpots.push({
-          sprite,
-          baseY: y,
-          rayProgress: r / numRays,
-          rIndex: r
-        });
-      }
-    }
   }
 
   private getCoastlineX(y: number): number {
@@ -146,52 +78,10 @@ export class CoastalWaterController {
     const wetLag = (Math.sin(this.animTime * 1.4 - 0.4) + 1) / 2;
     const wetReach = Math.max(waveReach, wetLag * 260);
 
-    this.updateCaustics();
     this.renderWetSand(wetReach);
     this.renderSeaWaves();
     this.renderBreakers();
     this.renderFoam(waveReach);
-  }
-
-  /**
-   * Быстрое обновление существующих спрайтов (без пересоздания геометрии)
-   */
-  private updateCaustics(): void {
-    if (this.daylightFactor <= 0.05) {
-      this.causticsContainer.visible = false;
-      return;
-    }
-
-    this.causticsContainer.visible = true;
-    const alphaBase = 0.28 * this.daylightFactor;
-
-    for (let i = 0; i < this.causticSpots.length; i++) {
-      const spot = this.causticSpots[i];
-      const y = spot.baseY;
-      const baseX = this.getCoastlineX(y);
-
-      const startX = 0;
-      const endX = baseX + 60;
-      const rayX = startX + (endX - startX) * spot.rayProgress;
-
-      const waveOffset = Math.sin(y * 0.015 + this.animTime * 1.8 + spot.rIndex * 0.5) * 20;
-
-      const depthFade = 0.4 + 0.6 * spot.rayProgress;
-      const rayAlpha = alphaBase * depthFade * (0.65 + Math.sin(this.animTime * 2 + spot.rIndex) * 0.35);
-
-      if (rayAlpha < 0.02) {
-        spot.sprite.alpha = 0;
-        continue;
-      }
-
-      // Анимируем размер и координаты спрайта
-      const scale = (0.5 + Math.sin(y * 0.03 + spot.rIndex + this.animTime * 2) * 0.2);
-
-      spot.sprite.x = rayX + waveOffset;
-      spot.sprite.y = y;
-      spot.sprite.scale.set(scale);
-      spot.sprite.alpha = rayAlpha;
-    }
   }
 
   private handleBreakerSpawns(deltaSeconds: number): void {
