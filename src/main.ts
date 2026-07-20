@@ -2,7 +2,6 @@ import * as PIXI from 'pixi.js';
 import { WorldMap } from './world/WorldMap';
 import { CameraController } from './world/CameraController';
 import { LightingController } from './world/LightingController';
-import { WaterEffectsController } from './world/WaterEffectsController';
 import { TimeDebugUI } from './ui/TimeDebugUI';
 
 console.log('Evolution Simulator Initializing...');
@@ -49,26 +48,24 @@ async function initApp() {
     const WORLD_HEIGHT = 24000;
     const COASTAL_RATIO = 0.50;
 
-    // 1. Карта мира
+    // 1. Карта мира (внутри уже инициализирован WaterManager)
     const worldMap = new WorldMap(WORLD_WIDTH, WORLD_HEIGHT, COASTAL_RATIO);
     app.stage.addChild(worldMap.container);
 
-    // 2. Эффекты воды (каустика, биолюминесценция, прибой)
-    const waterEffects = new WaterEffectsController(WORLD_WIDTH, WORLD_HEIGHT, COASTAL_RATIO);
-    worldMap.container.addChild(waterEffects.container);
-
-    // 3. Камера
+    // 2. Камера
     const camera = new CameraController(worldMap.container, canvas, WORLD_WIDTH, WORLD_HEIGHT);
     camera.fillScreen(screenWidth, screenHeight);
 
-    // 4. Освещение и UI отладки
-    const lightingController = new LightingController(worldMap.container, waterEffects);
+    // 3. Освещение и UI отладки
+    // Передаем worldMap.waterManager для управления освещением водных эффектов
+    const lightingController = new LightingController(worldMap.container, worldMap.waterManager);
     new TimeDebugUI(lightingController);
 
-    // 5. Игровой цикл (обновляем динамику воды каждый кадр)
+    // 4. Игровой цикл
     app.ticker.add((ticker) => {
       const deltaSeconds = ticker.deltaTime / 60;
-      waterEffects.update(deltaSeconds);
+      // Обновляем всю динамику мира, включая воду
+      worldMap.update(deltaSeconds);
     });
 
     window.addEventListener('resize', () => {
