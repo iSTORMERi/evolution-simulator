@@ -97,8 +97,9 @@ export class CoastalWaterController {
       for (let r = 0; r < numRays; r++) {
         const sprite = new PIXI.Sprite(this.causticTexture);
         sprite.anchor.set(0.5);
-        // Аддитивное наложение даёт сочное "свечение" воды
-        sprite.blendMode = PIXI.BLEND_MODES.ADD; 
+        
+        // Исправлено: безопасная установка бленд-мода строкой для совместимости с любыми версиями PixiJS
+        sprite.blendMode = 'add'; 
 
         this.causticsContainer.addChild(sprite);
 
