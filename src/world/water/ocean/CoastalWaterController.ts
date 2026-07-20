@@ -9,10 +9,20 @@ interface BreakerWaveInstance {
   isLarge: boolean;
 }
 
+interface CausticSpot {
+  sprite: PIXI.Sprite;
+  baseY: number;
+  rayProgress: number;
+  rIndex: number;
+}
+
 export class CoastalWaterController {
   public container: PIXI.Container;
 
-  private causticsGraphics: PIXI.Graphics; // Слои под каустику
+  private causticsContainer: PIXI.Container; // Контейнер для спрайтов каустики
+  private causticSpots: CausticSpot[] = [];
+  private causticTexture!: PIXI.Texture;
+
   private wetSandGraphics: PIXI.Graphics;
   private seaWavesGraphics: PIXI.Graphics;
   private breakersGraphics: PIXI.Graphics;
@@ -25,7 +35,7 @@ export class CoastalWaterController {
   private animTime = 0;
   private activeBreakers: BreakerWaveInstance[] = [];
   private spawnTimer = 0;
-  private daylightFactor = 1.0; // Для регуляции яркости каустики от времени суток
+  private daylightFactor = 1.0;
 
   constructor(mapWidth: number, mapHeight: number, coastalRatio: number) {
     this.mapWidth = mapWidth;
@@ -34,18 +44,72 @@ export class CoastalWaterController {
 
     this.container = new PIXI.Container();
 
-    this.causticsGraphics = new PIXI.Graphics();
+    this.causticsContainer = new PIXI.Container();
     this.wetSandGraphics = new PIXI.Graphics();
     this.seaWavesGraphics = new PIXI.Graphics();
     this.breakersGraphics = new PIXI.Graphics();
     this.foamGraphics = new PIXI.Graphics();
 
-    // Строгий порядок слоев (от дна к поверхности)
-    this.container.addChild(this.causticsGraphics);
+    // Слои от дна к поверхности
+    this.container.addChild(this.causticsContainer);
     this.container.addChild(this.wetSandGraphics);
     this.container.addChild(this.seaWavesGraphics);
     this.container.addChild(this.breakersGraphics);
     this.container.addChild(this.foamGraphics);
+
+    // Генерируем мягкую текстуру и инициализируем сетку бликов
+    this.initCausticsTexture();
+    this.initCausticsGrid();
+  }
+
+  /**
+   * Программно создаем мягкую градиентную текстуру блика (Soft Circle Glow)
+   */
+  private initCausticsTexture(): void {
+    const canvas = document.createElement('canvas');
+    canvas.width = 32;
+    canvas.height = 32;
+    const ctx = canvas.getContext('2d');
+
+    if (ctx) {
+      const gradient = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+      gradient.addColorStop(0, 'rgba(224, 255, 255, 1.0)');  // Яркий мягкий центр (e0ffff)
+      gradient.addColorStop(0.5, 'rgba(224, 255, 255, 0.5)');
+      gradient.addColorStop(1, 'rgba(224, 255, 255, 0.0)');  // Полная прозрачность к краям
+
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.arc(16, 16, 16, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    this.causticTexture = PIXI.Texture.from(canvas);
+  }
+
+  /**
+   * Спавним пул спрайтов единоразово при создании контроллера
+   */
+  private initCausticsGrid(): void {
+    const stepY = 35;
+    const numRays = 22;
+
+    for (let y = 0; y <= this.mapHeight; y += stepY) {
+      for (let r = 0; r < numRays; r++) {
+        const sprite = new PIXI.Sprite(this.causticTexture);
+        sprite.anchor.set(0.5);
+        // Аддитивное наложение даёт сочное "свечение" воды
+        sprite.blendMode = PIXI.BLEND_MODES.ADD; 
+
+        this.causticsContainer.addChild(sprite);
+
+        this.causticSpots.push({
+          sprite,
+          baseY: y,
+          rayProgress: r / numRays,
+          rIndex: r
+        });
+      }
+    }
   }
 
   private getCoastlineX(y: number): number {
@@ -58,7 +122,6 @@ export class CoastalWaterController {
   }
 
   public updateTimeState(hours: number): void {
-    // В день (10:00 - 16:00) каустика на максимуме, ночью -- 0
     if (hours >= 10 && hours <= 16) {
       this.daylightFactor = 1.0;
     } else if (hours >= 6 && hours < 10) {
@@ -82,50 +145,51 @@ export class CoastalWaterController {
     const wetLag = (Math.sin(this.animTime * 1.4 - 0.4) + 1) / 2;
     const wetReach = Math.max(waveReach, wetLag * 260);
 
-    this.renderCaustics();
+    this.updateCaustics();
     this.renderWetSand(wetReach);
     this.renderSeaWaves();
     this.renderBreakers();
     this.renderFoam(waveReach);
   }
 
-  private renderCaustics(): void {
-    this.causticsGraphics.clear();
-    if (this.daylightFactor <= 0.05) return;
+  /**
+   * Быстрое обновление существующих спрайтов (без пересоздания геометрии)
+   */
+  private updateCaustics(): void {
+    if (this.daylightFactor <= 0.05) {
+      this.causticsContainer.visible = false;
+      return;
+    }
 
-    const stepY = 35;
-    const alphaBase = 0.20 * this.daylightFactor;
+    this.causticsContainer.visible = true;
+    const alphaBase = 0.28 * this.daylightFactor;
 
-    for (let y = 0; y <= this.mapHeight; y += stepY) {
+    for (let i = 0; i < this.causticSpots.length; i++) {
+      const spot = this.causticSpots[i];
+      const y = spot.baseY;
       const baseX = this.getCoastlineX(y);
 
-      // Начинаем от левого края карты (X = 0) и идем до мокрого песка
       const startX = 0;
       const endX = baseX + 60;
+      const rayX = startX + (endX - startX) * spot.rayProgress;
 
-      const numRays = 22; // Плотность точек распределена по всей ширине океанской зоны
+      const waveOffset = Math.sin(y * 0.015 + this.animTime * 1.8 + spot.rIndex * 0.5) * 20;
 
-      for (let r = 0; r < numRays; r++) {
-        const rayProgress = r / numRays;
-        const rayX = startX + (endX - startX) * rayProgress;
+      const depthFade = 0.4 + 0.6 * spot.rayProgress;
+      const rayAlpha = alphaBase * depthFade * (0.65 + Math.sin(this.animTime * 2 + spot.rIndex) * 0.35);
 
-        const waveOffset = Math.sin(y * 0.015 + this.animTime * 1.8 + r * 0.5) * 20;
-
-        const depthFade = 0.4 + 0.6 * rayProgress;
-        const rayAlpha = alphaBase * depthFade * (0.65 + Math.sin(this.animTime * 2 + r) * 0.35);
-
-        if (rayAlpha < 0.02) continue;
-
-        const rayThickness = 5 + Math.sin(y * 0.03 + r + this.animTime * 2) * 3;
-
-        this.causticsGraphics.beginFill(0xe0ffff, rayAlpha);
-        this.causticsGraphics.drawCircle(
-          rayX + waveOffset,
-          y,
-          rayThickness
-        );
-        this.causticsGraphics.endFill();
+      if (rayAlpha < 0.02) {
+        spot.sprite.alpha = 0;
+        continue;
       }
+
+      // Анимируем размер и координаты спрайта
+      const scale = (0.5 + Math.sin(y * 0.03 + spot.rIndex + this.animTime * 2) * 0.2);
+
+      spot.sprite.x = rayX + waveOffset;
+      spot.sprite.y = y;
+      spot.sprite.scale.set(scale);
+      spot.sprite.alpha = rayAlpha;
     }
   }
 
