@@ -93,7 +93,40 @@ export class CoastalWaterController {
     this.causticsGraphics.clear();
     if (this.daylightFactor <= 0.05) return;
 
-    // Здесь будет отрисовка каустики мелководья
+    const stepY = 40;
+    const causticsWidth = 550;
+    const alphaBase = 0.22 * this.daylightFactor;
+
+    for (let y = 0; y <= this.mapHeight; y += stepY) {
+      const baseX = this.getCoastlineX(y);
+
+      const waveShift1 = Math.sin(y * 0.015 + this.animTime * 1.8) * 35;
+      const waveShift2 = Math.cos(y * 0.025 - this.animTime * 1.2) * 25;
+
+      const startX = baseX - causticsWidth + waveShift1;
+      const endX = baseX + 80 + waveShift2;
+
+      const numRays = 8;
+      for (let r = 0; r < numRays; r++) {
+        const rayProgress = r / numRays;
+        const rayX = startX + (endX - startX) * rayProgress;
+
+        const depthFade = Math.sin(rayProgress * Math.PI);
+        const rayAlpha = alphaBase * depthFade * (0.6 + Math.sin(this.animTime * 2 + r) * 0.4);
+
+        if (rayAlpha < 0.03) continue;
+
+        const rayThickness = 6 + Math.sin(y * 0.03 + r + this.animTime * 2) * 4;
+
+        this.causticsGraphics.beginFill(0xe0ffff, rayAlpha);
+        this.causticsGraphics.drawCircle(
+          rayX + Math.sin(y * 0.01 + this.animTime + r) * 20,
+          y,
+          rayThickness
+        );
+        this.causticsGraphics.endFill();
+      }
+    }
   }
 
   private handleBreakerSpawns(deltaSeconds: number): void {
