@@ -93,34 +93,34 @@ export class CoastalWaterController {
     this.causticsGraphics.clear();
     if (this.daylightFactor <= 0.05) return;
 
-    const stepY = 40;
-    const causticsWidth = 550;
-    const alphaBase = 0.22 * this.daylightFactor;
+    const stepY = 35;
+    const alphaBase = 0.20 * this.daylightFactor;
 
     for (let y = 0; y <= this.mapHeight; y += stepY) {
       const baseX = this.getCoastlineX(y);
 
-      const waveShift1 = Math.sin(y * 0.015 + this.animTime * 1.8) * 35;
-      const waveShift2 = Math.cos(y * 0.025 - this.animTime * 1.2) * 25;
+      // Начинаем от левого края карты (X = 0) и идем до мокрого песка
+      const startX = 0;
+      const endX = baseX + 60;
 
-      const startX = baseX - causticsWidth + waveShift1;
-      const endX = baseX + 80 + waveShift2;
+      const numRays = 22; // Плотность точек распределена по всей ширине океанской зоны
 
-      const numRays = 8;
       for (let r = 0; r < numRays; r++) {
         const rayProgress = r / numRays;
         const rayX = startX + (endX - startX) * rayProgress;
 
-        const depthFade = Math.sin(rayProgress * Math.PI);
-        const rayAlpha = alphaBase * depthFade * (0.6 + Math.sin(this.animTime * 2 + r) * 0.4);
+        const waveOffset = Math.sin(y * 0.015 + this.animTime * 1.8 + r * 0.5) * 20;
 
-        if (rayAlpha < 0.03) continue;
+        const depthFade = 0.4 + 0.6 * rayProgress;
+        const rayAlpha = alphaBase * depthFade * (0.65 + Math.sin(this.animTime * 2 + r) * 0.35);
 
-        const rayThickness = 6 + Math.sin(y * 0.03 + r + this.animTime * 2) * 4;
+        if (rayAlpha < 0.02) continue;
+
+        const rayThickness = 5 + Math.sin(y * 0.03 + r + this.animTime * 2) * 3;
 
         this.causticsGraphics.beginFill(0xe0ffff, rayAlpha);
         this.causticsGraphics.drawCircle(
-          rayX + Math.sin(y * 0.01 + this.animTime + r) * 20,
+          rayX + waveOffset,
           y,
           rayThickness
         );
