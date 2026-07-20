@@ -39,19 +39,21 @@ async function initApp() {
     canvas.style.width = '100%';
     canvas.style.height = '100%';
     canvas.style.display = 'block';
-    canvas.style.touchAction = 'none'; // Отключаем стандартные жесты браузера Safari
+    canvas.style.touchAction = 'none';
     appContainer.appendChild(canvas);
 
-    const WORLD_WIDTH = 3000;
-    const WORLD_HEIGHT = 1500;
+    // === НОВЫЕ ГИГАНТСКИЕ РАЗМЕРЫ МИРА ===
+    const WORLD_WIDTH = 12000;
+    const WORLD_HEIGHT = 6000;
 
-    const worldMap = new WorldMap(WORLD_WIDTH, WORLD_HEIGHT, 0.65);
+    // Доля океана 0.35 -> Океан занимает 35% слева, Суша -- 65% справа
+    const worldMap = new WorldMap(WORLD_WIDTH, WORLD_HEIGHT, 0.35);
     app.stage.addChild(worldMap.container);
 
     // Подключаем управление камерой
     const camera = new CameraController(worldMap.container, canvas);
     
-    // Заполняем экран картой, чтобы не было мелкой полоски
+    // Начальный фокус камеры
     camera.fitToView(screenWidth, screenHeight, WORLD_WIDTH, WORLD_HEIGHT);
 
     window.addEventListener('resize', () => {
