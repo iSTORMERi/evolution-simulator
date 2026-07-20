@@ -1,17 +1,18 @@
 import * as PIXI from 'pixi.js';
 
 interface BreakerWaveInstance {
-  startY: number;       // Начальная Y-координата
-  lengthY: number;      // Длина фронта волны
-  progress: number;     // Прогресс: 0.0 -> 1.0
-  speed: number;        // Скорость перемещения
-  maxThickness: number; // Толщина массива
-  isLarge: boolean;     // Крупная волна или мелкая
+  startY: number;
+  lengthY: number;
+  progress: number;
+  speed: number;
+  maxThickness: number;
+  isLarge: boolean;
 }
 
-export class WaterEffectsController {
+export class CoastalWaterController {
   public container: PIXI.Container;
 
+  private causticsGraphics: PIXI.Graphics; // Слои под каустику
   private wetSandGraphics: PIXI.Graphics;
   private seaWavesGraphics: PIXI.Graphics;
   private breakersGraphics: PIXI.Graphics;
@@ -24,6 +25,7 @@ export class WaterEffectsController {
   private animTime = 0;
   private activeBreakers: BreakerWaveInstance[] = [];
   private spawnTimer = 0;
+  private daylightFactor = 1.0; // Для регуляции яркости каустики от времени суток
 
   constructor(mapWidth: number, mapHeight: number, coastalRatio: number) {
     this.mapWidth = mapWidth;
@@ -32,11 +34,14 @@ export class WaterEffectsController {
 
     this.container = new PIXI.Container();
 
+    this.causticsGraphics = new PIXI.Graphics();
     this.wetSandGraphics = new PIXI.Graphics();
     this.seaWavesGraphics = new PIXI.Graphics();
     this.breakersGraphics = new PIXI.Graphics();
     this.foamGraphics = new PIXI.Graphics();
 
+    // Строгий порядок слоев (от дна к поверхности)
+    this.container.addChild(this.causticsGraphics);
     this.container.addChild(this.wetSandGraphics);
     this.container.addChild(this.seaWavesGraphics);
     this.container.addChild(this.breakersGraphics);
@@ -52,7 +57,18 @@ export class WaterEffectsController {
     return baseOceanWidth + wave1 + wave2 + wave3;
   }
 
-  public updateTimeState(_hours: number): void {}
+  public updateTimeState(hours: number): void {
+    // В день (10:00 - 16:00) каустика на максимуме, ночью -- 0
+    if (hours >= 10 && hours <= 16) {
+      this.daylightFactor = 1.0;
+    } else if (hours >= 6 && hours < 10) {
+      this.daylightFactor = (hours - 6) / 4;
+    } else if (hours > 16 && hours <= 20) {
+      this.daylightFactor = 1.0 - (hours - 16) / 4;
+    } else {
+      this.daylightFactor = 0;
+    }
+  }
 
   public update(deltaSeconds: number): void {
     this.animTime += deltaSeconds;
@@ -66,32 +82,37 @@ export class WaterEffectsController {
     const wetLag = (Math.sin(this.animTime * 1.4 - 0.4) + 1) / 2;
     const wetReach = Math.max(waveReach, wetLag * 260);
 
+    this.renderCaustics();
     this.renderWetSand(wetReach);
     this.renderSeaWaves();
     this.renderBreakers();
     this.renderFoam(waveReach);
   }
 
+  private renderCaustics(): void {
+    this.causticsGraphics.clear();
+    if (this.daylightFactor <= 0.05) return;
+
+    // Здесь будет отрисовка каустики мелководья
+  }
+
   private handleBreakerSpawns(deltaSeconds: number): void {
     this.spawnTimer += deltaSeconds;
 
-    // Регулярный спавн (лимит до 25 активных волн)
     if (this.spawnTimer > 0.35 && this.activeBreakers.length < 25) {
       this.spawnTimer = 0;
-
-      // 25% шанс гигантской волны, 75% шанс мелкого/среднего барашка
       const isLarge = Math.random() < 0.25;
 
       const lengthY = isLarge 
-        ? 1800 + Math.random() * 1200  // Крупные: 1800-3000px
-        : 500 + Math.random() * 700;    // Мелкие: 500-1200px
+        ? 1800 + Math.random() * 1200 
+        : 500 + Math.random() * 700;
 
       const maxThickness = isLarge 
-        ? 120 + Math.random() * 60     // Толстые валы
-        : 40 + Math.random() * 45;      // Изящные мелкие гребни
+        ? 120 + Math.random() * 60 
+        : 40 + Math.random() * 45;
 
       const speed = isLarge 
-        ? 0.08 + Math.random() * 0.04  // Большие волны идут вальяжно и медленнее
+        ? 0.08 + Math.random() * 0.04 
         : 0.14 + Math.random() * 0.08;
 
       this.activeBreakers.push({
@@ -109,7 +130,6 @@ export class WaterEffectsController {
     for (let i = this.activeBreakers.length - 1; i >= 0; i--) {
       const b = this.activeBreakers[i];
       b.progress += deltaSeconds * b.speed;
-
       if (b.progress >= 1.0) {
         this.activeBreakers.splice(i, 1);
       }
@@ -123,15 +143,11 @@ export class WaterEffectsController {
       const startY = Math.max(0, b.startY);
       const endY = Math.min(this.mapHeight, b.startY + b.lengthY);
       const stepY = 25;
-
-      // Начинаем спавн дальше в море: от -1200px до +40px у берега
       const currentOffset = -1200 * (1 - b.progress) + 40 * b.progress;
 
-      // Плавный запуск (Scale In) и плавная смерть у берега
-      // До 0.25 прогресса волна МЕДЛЕННО прорастает и нарастает
       let fadeIn = 1.0;
       if (b.progress < 0.25) {
-        fadeIn = Math.pow(b.progress / 0.25, 2.0); // Мягкая парабола проявления
+        fadeIn = Math.pow(b.progress / 0.25, 2.0);
       } else {
         fadeIn = Math.sin(((b.progress - 0.25) / 0.75) * Math.PI / 2 + Math.PI / 2);
       }
@@ -141,7 +157,6 @@ export class WaterEffectsController {
 
       if (alpha <= 0.02 || currentThickness < 2) continue;
 
-      // 1. СВЕТЛАЯ И МЯГКАЯ ТЕНЬ ПОД ВОЛНОЙ (Более природный бирюзово-морской оттенок)
       const shadowColor = b.isLarge ? 0x0e5269 : 0x187087;
       this.breakersGraphics.beginFill(shadowColor, alpha * 0.4);
 
@@ -161,7 +176,6 @@ export class WaterEffectsController {
       this.breakersGraphics.closePath();
       this.breakersGraphics.endFill();
 
-      // 2. ТЕЛО ВОЛНЫ (Яркий небесно-бирюзовый гребень)
       this.breakersGraphics.beginFill(0x60f0d8, alpha * 0.75);
       for (let y = startY; y <= endY; y += stepY) {
         const baseX = this.getCoastlineX(y);
@@ -183,7 +197,6 @@ export class WaterEffectsController {
       this.breakersGraphics.closePath();
       this.breakersGraphics.endFill();
 
-      // 3. БЕЛАЯ ПЕНА НА ГРЕБНЕ (Зажигается ближе к берегу)
       if (b.progress > 0.3) {
         const foamAlpha = Math.sin((b.progress - 0.3) / 0.7 * Math.PI) * 0.85 * fadeIn;
         this.breakersGraphics.beginFill(0xffffff, foamAlpha);

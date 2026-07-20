@@ -1,5 +1,6 @@
 import * as PIXI from 'pixi.js';
 import { OCEAN_ZONES_CONFIG, LAND_COLOR } from './zoneConfig';
+import { WaterManager } from './water/WaterManager';
 
 interface RGBColor {
   r: number;
@@ -14,6 +15,8 @@ interface ColorStop {
 
 export class WorldMap {
   public container: PIXI.Container;
+  public waterManager: WaterManager; // Ссылка для вызова update() извне
+
   private width: number;
   private height: number;
   private oceanWidthRatio: number;
@@ -24,7 +27,12 @@ export class WorldMap {
     this.height = height;
     this.oceanWidthRatio = oceanWidthRatio;
 
+    // 1. Рендерим статическую карту (суша + градиент океана)
     this.renderMap();
+
+    // 2. Инициализируем и добавляем динамические эффекты воды
+    this.waterManager = new WaterManager(this.width, this.height, this.oceanWidthRatio);
+    this.container.addChild(this.waterManager.container);
   }
 
   private getCoastlineX(y: number, baseOceanWidth: number): number {
@@ -88,8 +96,6 @@ export class WorldMap {
   }
 
   private renderMap(): void {
-    this.container.removeChildren();
-
     const baseOceanWidth = this.width * this.oceanWidthRatio;
 
     const canvas = document.createElement('canvas');
@@ -140,5 +146,19 @@ export class WorldMap {
     sprite.height = this.height;
 
     this.container.addChild(sprite);
+  }
+
+  // Обновление всей гидрографии карты
+  public update(deltaSeconds: number): void {
+    if (this.waterManager) {
+      this.waterManager.update(deltaSeconds);
+    }
+  }
+
+  // Обновление состояния освещенности водных эффектов
+  public updateTimeState(hours: number): void {
+    if (this.waterManager) {
+      this.waterManager.updateTimeState(hours);
+    }
   }
 }
