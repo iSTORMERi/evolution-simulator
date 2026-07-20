@@ -42,19 +42,15 @@ async function initApp() {
     canvas.style.touchAction = 'none';
     appContainer.appendChild(canvas);
 
-    // === НОВЫЕ ГИГАНТСКИЕ РАЗМЕРЫ МИРА ===
     const WORLD_WIDTH = 12000;
     const WORLD_HEIGHT = 6000;
 
-    // Доля океана 0.35 -> Океан занимает 35% слева, Суша -- 65% справа
     const worldMap = new WorldMap(WORLD_WIDTH, WORLD_HEIGHT, 0.35);
     app.stage.addChild(worldMap.container);
 
-    // Подключаем управление камерой
-    const camera = new CameraController(worldMap.container, canvas);
-    
-    // Начальный фокус камеры
-    camera.fitToView(screenWidth, screenHeight, WORLD_WIDTH, WORLD_HEIGHT);
+    // Подключаем обновленный контроллер с границами
+    const camera = new CameraController(worldMap.container, canvas, WORLD_WIDTH, WORLD_HEIGHT);
+    camera.fitToView(screenWidth, screenHeight);
 
     window.addEventListener('resize', () => {
       const newWidth = window.innerWidth;
