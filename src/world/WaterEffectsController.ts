@@ -2,18 +2,19 @@ import * as PIXI from 'pixi.js';
 
 export class WaterEffectsController {
   public container: PIXI.Container;
-  
-  private causticsGraphics: PIXI.Graphics;
-  private bioluminescenceGraphics: PIXI.Graphics;
-  private foamGraphics: PIXI.Graphics;
+
+  private sunGlintGraphics: PIXI.Graphics;
+  private ripplesGraphics: PIXI.Graphics;
+  private coastalFoamGraphics: PIXI.Graphics;
+  private biolumGraphics: PIXI.Graphics;
 
   private mapWidth: number;
   private mapHeight: number;
-  private coastalRatio: number; // Граница мелководья
+  private coastalRatio: number;
 
   private animTime = 0;
-  private causticsAlpha = 1.0;
-  private biolumAlpha = 0.0;
+  private sunGlintAlpha = 0.8;
+  private isNight = false;
 
   constructor(mapWidth: number, mapHeight: number, coastalRatio: number) {
     this.mapWidth = mapWidth;
@@ -22,121 +23,149 @@ export class WaterEffectsController {
 
     this.container = new PIXI.Container();
 
-    this.causticsGraphics = new PIXI.Graphics();
-    this.bioluminescenceGraphics = new PIXI.Graphics();
-    this.foamGraphics = new PIXI.Graphics();
+    this.sunGlintGraphics = new PIXI.Graphics();
+    this.ripplesGraphics = new PIXI.Graphics();
+    this.biolumGraphics = new PIXI.Graphics();
+    this.coastalFoamGraphics = new PIXI.Graphics();
 
-    // Слои анимации воды
-    this.container.addChild(this.causticsGraphics);
-    this.container.addChild(this.bioluminescenceGraphics);
-    this.container.addChild(this.foamGraphics);
+    // Порядок слоев
+    this.container.addChild(this.ripplesGraphics);
+    this.container.addChild(this.sunGlintGraphics);
+    this.container.addChild(this.biolumGraphics);
+    this.container.addChild(this.coastalFoamGraphics);
 
-    this.drawWaterOverlays();
+    this.drawBaseRipples();
   }
 
   /**
-   * Генерация базовой структуры оверлеев каустики и свечения
+   * Рисует мягкую органическую рябы по всей воде
    */
-  private drawWaterOverlays(): void {
-    const coastX = this.mapWidth * this.coastalRatio;
+  private drawBaseRipples(): void {
+    this.ripplesGraphics.clear();
+    const oceanWidth = this.mapWidth * this.coastalRatio;
 
-    // === 1. Солнечная каустика (Сетка преломления света на мелководье) ===
-    this.causticsGraphics.clear();
-    this.causticsGraphics.beginFill(0xffffff, 0.18);
-    
-    // Рисуем сетчатый узор из полигонов на мелководной полосе
-    const causticsWidth = coastX * 0.8;
-    const step = 200;
-    for (let x = coastX - causticsWidth; x < coastX; x += step) {
-      for (let y = 0; y < this.mapHeight; y += step) {
-        if ((Math.floor(x / step) + Math.floor(y / step)) % 2 === 0) {
-          this.causticsGraphics.drawPolygon([
-            x, y,
-            x + step * 0.7, y + step * 0.3,
-            x + step * 0.9, y + step * 0.8,
-            x + step * 0.2, y + step * 0.9,
-          ]);
-        }
+    // Рисуем мягкие, нерегулярные линии ряби
+    this.ripplesGraphics.lineStyle(1.5, 0xffffff, 0.08);
+
+    for (let y = 50; y < this.mapHeight; y += 120) {
+      for (let x = 50; x < oceanWidth; x += 300) {
+        const length = 80 + Math.sin(x + y) * 40;
+        const curve = Math.cos(x * 0.01) * 15;
+
+        this.ripplesGraphics.moveTo(x, y);
+        this.ripplesGraphics.quadraticCurveTo(x + length / 2, y + curve, x + length, y + Math.sin(y) * 5);
       }
     }
-    this.causticsGraphics.endFill();
-
-    // === 2. Ночная биолюминесценция планктона (Вдоль прибойной зоны) ===
-    this.bioluminescenceGraphics.clear();
-    this.bioluminescenceGraphics.beginFill(0x00f3ff, 0.35); // Неоново-бирюзовый
-    const bioZoneWidth = 180;
-    this.bioluminescenceGraphics.drawRect(coastX - bioZoneWidth, 0, bioZoneWidth, this.mapHeight);
-    this.bioluminescenceGraphics.endFill();
-
-    // === 3. Береговая пена прибоя ===
-    this.foamGraphics.clear();
-    this.foamGraphics.beginFill(0xffffff, 0.4);
-    this.foamGraphics.drawRect(coastX - 35, 0, 35, this.mapHeight);
-    this.foamGraphics.endFill();
   }
 
   /**
-   * Обновление прозрачности и цвета эффектов в зависимости от времени суток
+   * Обновляем световой блик (солнечный или лунный) и биолюминесценцию
    */
   public updateTimeState(hours: number): void {
-    // === Дневная солнечная каустика ===
-    if (hours >= 8.5 && hours <= 17.0) {
-      // Полный яркий день
-      this.causticsAlpha = 1.0;
-      this.causticsGraphics.tint = 0xffffff;
-    } else if ((hours >= 6.0 && hours < 8.5) || (hours > 17.0 && hours <= 19.5)) {
-      // Рассвет / Закат (Каустика приобретает золотисто-оранжевый оттенок и затухает)
-      this.causticsAlpha = 0.5;
-      this.causticsGraphics.tint = 0xffa055;
+    const oceanWidth = this.mapWidth * this.coastalRatio;
+    const centerX = oceanWidth * 0.45;
+    const centerY = this.mapHeight * 0.5;
+
+    this.sunGlintGraphics.clear();
+
+    if (hours >= 7.0 && hours <= 18.0) {
+      // === ДЕНЬ: Яркий, мягкий, рассеянный солнечный блик на океане ===
+      this.isNight = false;
+
+      // Положение солнца на воде слегка смещается в зависимости от времени дня
+      const sunOffsetY = (hours - 12.5) * 300;
+
+      // Мягкое радиолинейное пятно солнечного блеска
+      this.sunGlintGraphics.beginFill(0xffffff, 0.15);
+      this.sunGlintGraphics.drawEllipse(centerX, centerY + sunOffsetY, 1800, 2400);
+      this.sunGlintGraphics.endFill();
+
+      this.sunGlintGraphics.beginFill(0xffffff, 0.25);
+      this.sunGlintGraphics.drawEllipse(centerX, centerY + sunOffsetY, 1000, 1400);
+      this.sunGlintGraphics.endFill();
+
+      this.sunGlintGraphics.beginFill(0xffffff, 0.45);
+      this.sunGlintGraphics.drawEllipse(centerX, centerY + sunOffsetY, 400, 600);
+      this.sunGlintGraphics.endFill();
+
+      this.sunGlintAlpha = 1.0;
+    } else if ((hours > 5.0 && hours < 7.0) || (hours > 18.0 && hours < 20.0)) {
+      // === РАССВЕТ / ЗАКАТ: Теплый золотисто-алый дорожный блик ===
+      this.isNight = false;
+      const sunOffsetY = hours > 12 ? 1200 : -1200;
+
+      this.sunGlintGraphics.beginFill(0xffa066, 0.2);
+      this.sunGlintGraphics.drawEllipse(centerX, centerY + sunOffsetY, 1400, 2800);
+      this.sunGlintGraphics.endFill();
+
+      this.sunGlintGraphics.beginFill(0xffd1a1, 0.35);
+      this.sunGlintGraphics.drawEllipse(centerX, centerY + sunOffsetY, 600, 1200);
+      this.sunGlintGraphics.endFill();
+
+      this.sunGlintAlpha = 0.8;
     } else {
-      // Ночь -- солнечной сетки нет
-      this.causticsAlpha = 0.0;
+      // === НОЧЬ: Узкая серебристая лунная дорожка ===
+      this.isNight = true;
+
+      this.sunGlintGraphics.beginFill(0x99ccff, 0.12);
+      this.sunGlintGraphics.drawEllipse(centerX, centerY, 600, 3500);
+      this.sunGlintGraphics.endFill();
+
+      this.sunGlintGraphics.beginFill(0xe6f2ff, 0.25);
+      this.sunGlintGraphics.drawEllipse(centerX, centerY, 200, 2000);
+      this.sunGlintGraphics.endFill();
+
+      this.sunGlintAlpha = 0.6;
     }
 
-    // === Ночная биолюминесценция планктона ===
-    if (hours >= 21.0 || hours <= 4.5) {
-      // Ночь -- яркое неоновое свечение
-      this.biolumAlpha = 0.85;
-    } else if (hours > 4.5 && hours < 6.5) {
-      // Утреннее угасание
-      const t = (6.5 - hours) / 2.0;
-      this.biolumAlpha = Math.max(0, t * 0.85);
-    } else if (hours > 19.0 && hours < 21.0) {
-      // Вечернее разгорание
-      const t = (hours - 19.0) / 2.0;
-      this.biolumAlpha = Math.min(0.85, t * 0.85);
-    } else {
-      // Днём планктон не светится
-      this.biolumAlpha = 0.0;
+    // Биолюминесценция ночью
+    this.biolumGraphics.clear();
+    if (this.isNight) {
+      this.biolumGraphics.beginFill(0x00f3ff, 0.15);
+      this.drawCoastalShape(this.biolumGraphics, oceanWidth, 80);
+      this.biolumGraphics.endFill();
     }
-
-    this.causticsGraphics.alpha = this.causticsAlpha;
   }
 
   /**
-   * Кадровый апдейт анимации движения волн и каустики
+   * Рисует полосу, повторяющую изгибы береговой линии
+   */
+  private drawCoastalShape(g: PIXI.Graphics, baseX: number, widthOffset: number): void {
+    const stepY = 100;
+
+    g.moveTo(baseX - widthOffset, 0);
+    for (let y = 0; y <= this.mapHeight; y += stepY) {
+      const wavyX = baseX + Math.sin(y * 0.003) * 120 + Math.cos(y * 0.008) * 60;
+      g.lineTo(wavyX - widthOffset, y);
+    }
+    for (let y = this.mapHeight; y >= 0; y -= stepY) {
+      const wavyX = baseX + Math.sin(y * 0.003) * 120 + Math.cos(y * 0.008) * 60;
+      g.lineTo(wavyX, y);
+    }
+    g.closePath();
+  }
+
+  /**
+   * Кадровый апдейт (анимация дышащей воды и пены)
    */
   public update(deltaSeconds: number): void {
     this.animTime += deltaSeconds;
 
-    // 1. Движение каустики (плавное покачивание сетки света)
-    if (this.causticsAlpha > 0) {
-      this.causticsGraphics.x = Math.sin(this.animTime * 0.8) * 15;
-      this.causticsGraphics.y = Math.cos(this.animTime * 0.5) * 10;
-    }
+    // 1. Плавное покачивание ряби
+    this.ripplesGraphics.x = Math.sin(this.animTime * 0.5) * 12;
+    this.ripplesGraphics.y = Math.cos(this.animTime * 0.3) * 8;
 
-    // 2. Пульсация ночного биолюминесцентного планктона
-    if (this.biolumAlpha > 0) {
-      const pulse = Math.sin(this.animTime * 2.5) * 0.15;
-      this.bioluminescenceGraphics.alpha = Math.max(0, this.biolumAlpha + pulse);
-      this.bioluminescenceGraphics.x = Math.sin(this.animTime * 1.2) * 8;
-    } else {
-      this.bioluminescenceGraphics.alpha = 0;
-    }
+    // 2. Пульсация и дрейф солнечного блика
+    this.sunGlintGraphics.alpha = this.sunGlintAlpha + Math.sin(this.animTime * 1.5) * 0.05;
+    this.sunGlintGraphics.scale.set(1 + Math.sin(this.animTime * 0.8) * 0.02);
 
-    // 3. Анимация наката пены прибоя на берег (ритм каждые ~3.5 секунды)
-    const foamWave = (Math.sin(this.animTime * 1.8) + 1) / 2; // [0..1]
-    this.foamGraphics.x = foamWave * 25;
-    this.foamGraphics.alpha = 0.25 + foamWave * 0.35;
+    // 3. Органическая пенная волна прибоя вдоль линии берега
+    const foamOffset = (Math.sin(this.animTime * 1.8) + 1) * 15;
+    const oceanWidth = this.mapWidth * this.coastalRatio;
+
+    this.coastalFoamGraphics.clear();
+    this.coastalFoamGraphics.beginFill(0xffffff, 0.25 + Math.sin(this.animTime * 1.8) * 0.1);
+    this.drawCoastalShape(this.coastalFoamGraphics, oceanWidth, 20 + foamOffset);
+    this.coastalFoamGraphics.endFill();
   }
 }
