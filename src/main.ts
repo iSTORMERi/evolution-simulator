@@ -42,16 +42,15 @@ async function initApp() {
     canvas.style.touchAction = 'none';
     appContainer.appendChild(canvas);
 
-    // === УВЕЛИЧЕННАЯ ВЫСОТА МИРА ===
-    const WORLD_WIDTH = 12000;
-    const WORLD_HEIGHT = 16000;
+    // === НОВЫЕ ГИГАНТСКИЕ РАЗМЕРЫ (24000x24000) ===
+    const WORLD_WIDTH = 24000;
+    const WORLD_HEIGHT = 24000;
 
-    const worldMap = new WorldMap(WORLD_WIDTH, WORLD_HEIGHT, 0.35);
+    // Океан 50%, Суша 50%
+    const worldMap = new WorldMap(WORLD_WIDTH, WORLD_HEIGHT, 0.50);
     app.stage.addChild(worldMap.container);
 
     const camera = new CameraController(worldMap.container, canvas, WORLD_WIDTH, WORLD_HEIGHT);
-    
-    // Заполняем весь экран полностью без рамки
     camera.fillScreen(screenWidth, screenHeight);
 
     window.addEventListener('resize', () => {
