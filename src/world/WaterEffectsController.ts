@@ -1,11 +1,12 @@
 import * as PIXI from 'pixi.js';
 
 interface BreakerWaveInstance {
-  startY: number;       // Начальная Y-координата центра волны
-  lengthY: number;      // Длина фронта волны (теперь короткая)
-  progress: number;     // Прогресс движения: 0.0 -> 1.0
+  startY: number;       // Начальная Y-координата
+  lengthY: number;      // Длина фронта волны
+  progress: number;     // Прогресс: 0.0 -> 1.0
   speed: number;        // Скорость перемещения
-  maxThickness: number; // Толщина массива воды
+  maxThickness: number; // Толщина массива
+  isLarge: boolean;     // Крупная волна или мелкая
 }
 
 export class WaterEffectsController {
@@ -56,11 +57,9 @@ export class WaterEffectsController {
   public update(deltaSeconds: number): void {
     this.animTime += deltaSeconds;
 
-    // 1. Динамический спавн массовых коротких валов
     this.handleBreakerSpawns(deltaSeconds);
     this.updateBreakers(deltaSeconds);
 
-    // 2. Береговой прибой
     const wavePhase = (Math.sin(this.animTime * 1.4) + 1) / 2;
     const waveReach = Math.pow(wavePhase, 0.75) * 220;
 
@@ -73,19 +72,35 @@ export class WaterEffectsController {
     this.renderFoam(waveReach);
   }
 
-  // --- Логика спавна коротких и частых волн ---
   private handleBreakerSpawns(deltaSeconds: number): void {
     this.spawnTimer += deltaSeconds;
 
-    // Спавним волну каждые 0.4 секунды, лимит повысили до 20 штук на побережье
-    if (this.spawnTimer > 0.4 && this.activeBreakers.length < 20) {
+    // Регулярный спавн (лимит до 25 активных волн)
+    if (this.spawnTimer > 0.35 && this.activeBreakers.length < 25) {
       this.spawnTimer = 0;
+
+      // 25% шанс гигантской волны, 75% шанс мелкого/среднего барашка
+      const isLarge = Math.random() < 0.25;
+
+      const lengthY = isLarge 
+        ? 1800 + Math.random() * 1200  // Крупные: 1800-3000px
+        : 500 + Math.random() * 700;    // Мелкие: 500-1200px
+
+      const maxThickness = isLarge 
+        ? 120 + Math.random() * 60     // Толстые валы
+        : 40 + Math.random() * 45;      // Изящные мелкие гребни
+
+      const speed = isLarge 
+        ? 0.08 + Math.random() * 0.04  // Большие волны идут вальяжно и медленнее
+        : 0.14 + Math.random() * 0.08;
+
       this.activeBreakers.push({
-        startY: Math.random() * (this.mapHeight - 2000),
-        lengthY: 800 + Math.random() * 1000,    // Короткие локальные волны (800–1800px)
+        startY: Math.random() * (this.mapHeight - lengthY),
+        lengthY,
         progress: 0,
-        speed: 0.12 + Math.random() * 0.1,    // Разная динамика движения
-        maxThickness: 110 + Math.random() * 70  // МАССИВНЫЕ валы (110–180px толщиной)
+        speed,
+        maxThickness,
+        isLarge
       });
     }
   }
@@ -101,7 +116,6 @@ export class WaterEffectsController {
     }
   }
 
-  // --- Отрисовка массивных коротких валов ---
   private renderBreakers(): void {
     this.breakersGraphics.clear();
 
@@ -110,18 +124,31 @@ export class WaterEffectsController {
       const endY = Math.min(this.mapHeight, b.startY + b.lengthY);
       const stepY = 25;
 
-      const currentOffset = -600 * (1 - b.progress) + 40 * b.progress;
-      const alpha = Math.sin(b.progress * Math.PI);
-      const currentThickness = b.maxThickness * Math.sin(b.progress * Math.PI);
+      // Начинаем спавн дальше в море: от -1200px до +40px у берега
+      const currentOffset = -1200 * (1 - b.progress) + 40 * b.progress;
 
-      if (alpha <= 0.05) continue;
+      // Плавный запуск (Scale In) и плавная смерть у берега
+      // До 0.25 прогресса волна МЕДЛЕННО прорастает и нарастает
+      let fadeIn = 1.0;
+      if (b.progress < 0.25) {
+        fadeIn = Math.pow(b.progress / 0.25, 2.0); // Мягкая парабола проявления
+      } else {
+        fadeIn = Math.sin(((b.progress - 0.25) / 0.75) * Math.PI / 2 + Math.PI / 2);
+      }
 
-      // 1. МАССИВНАЯ ТЕНЬ ПОД ВОЛНОЙ (Создает глубокий объем)
-      this.breakersGraphics.beginFill(0x021324, alpha * 0.55);
+      const alpha = Math.sin(b.progress * Math.PI) * fadeIn;
+      const currentThickness = b.maxThickness * Math.sin(b.progress * Math.PI) * fadeIn;
+
+      if (alpha <= 0.02 || currentThickness < 2) continue;
+
+      // 1. СВЕТЛАЯ И МЯГКАЯ ТЕНЬ ПОД ВОЛНОЙ (Более природный бирюзово-морской оттенок)
+      const shadowColor = b.isLarge ? 0x0e5269 : 0x187087;
+      this.breakersGraphics.beginFill(shadowColor, alpha * 0.4);
+
       for (let y = startY; y <= endY; y += stepY) {
         const baseX = this.getCoastlineX(y);
         const edgeFade = Math.sin(((y - startY) / b.lengthY) * Math.PI);
-        const shadowOffset = currentOffset - currentThickness * edgeFade - 45;
+        const shadowOffset = currentOffset - currentThickness * edgeFade - (b.isLarge ? 35 : 18);
 
         if (y === startY) this.breakersGraphics.moveTo(baseX + shadowOffset, y);
         else this.breakersGraphics.lineTo(baseX + shadowOffset, y);
@@ -134,12 +161,12 @@ export class WaterEffectsController {
       this.breakersGraphics.closePath();
       this.breakersGraphics.endFill();
 
-      // 2. ТЕЛО МАССИВНОЙ ВОЛНЫ (Яркий бирюзовый гребень)
-      this.breakersGraphics.beginFill(0x40e0d0, alpha * 0.8);
+      // 2. ТЕЛО ВОЛНЫ (Яркий небесно-бирюзовый гребень)
+      this.breakersGraphics.beginFill(0x60f0d8, alpha * 0.75);
       for (let y = startY; y <= endY; y += stepY) {
         const baseX = this.getCoastlineX(y);
         const edgeFade = Math.sin(((y - startY) / b.lengthY) * Math.PI);
-        const rip = Math.sin(y * 0.012 + this.animTime * 3) * 20;
+        const rip = Math.sin(y * 0.012 + this.animTime * 3) * 15;
         const xPos = baseX + currentOffset + rip * edgeFade;
 
         if (y === startY) this.breakersGraphics.moveTo(xPos, y);
@@ -148,7 +175,7 @@ export class WaterEffectsController {
       for (let y = endY; y >= startY; y -= stepY) {
         const baseX = this.getCoastlineX(y);
         const edgeFade = Math.sin(((y - startY) / b.lengthY) * Math.PI);
-        const rip = Math.sin(y * 0.012 + this.animTime * 3) * 20;
+        const rip = Math.sin(y * 0.012 + this.animTime * 3) * 15;
         const xPos = baseX + currentOffset + rip * edgeFade - currentThickness * edgeFade;
 
         this.breakersGraphics.lineTo(xPos, y);
@@ -156,15 +183,15 @@ export class WaterEffectsController {
       this.breakersGraphics.closePath();
       this.breakersGraphics.endFill();
 
-      // 3. ПЛОТНАЯ БЕЛАЯ ПЕНА НА ГРЕБНЕ (Широкий взрыв прибоя)
-      if (b.progress > 0.25) {
-        const foamAlpha = Math.sin((b.progress - 0.25) / 0.75 * Math.PI) * 0.9;
+      // 3. БЕЛАЯ ПЕНА НА ГРЕБНЕ (Зажигается ближе к берегу)
+      if (b.progress > 0.3) {
+        const foamAlpha = Math.sin((b.progress - 0.3) / 0.7 * Math.PI) * 0.85 * fadeIn;
         this.breakersGraphics.beginFill(0xffffff, foamAlpha);
 
         for (let y = startY; y <= endY; y += stepY) {
           const baseX = this.getCoastlineX(y);
           const edgeFade = Math.sin(((y - startY) / b.lengthY) * Math.PI);
-          const foamRip = Math.cos(y * 0.02 + this.animTime * 5) * 25;
+          const foamRip = Math.cos(y * 0.02 + this.animTime * 5) * 20;
           const xPos = baseX + currentOffset + foamRip * edgeFade;
 
           if (y === startY) this.breakersGraphics.moveTo(xPos, y);
@@ -173,8 +200,7 @@ export class WaterEffectsController {
         for (let y = endY; y >= startY; y -= stepY) {
           const baseX = this.getCoastlineX(y);
           const edgeFade = Math.sin(((y - startY) / b.lengthY) * Math.PI);
-          // Толщина пены вырастает до 60px
-          const foamThickness = (35 + Math.sin(y * 0.03) * 25) * edgeFade;
+          const foamThickness = (b.isLarge ? (25 + Math.sin(y * 0.03) * 15) : (12 + Math.sin(y * 0.03) * 8)) * edgeFade;
           const xPos = baseX + currentOffset - foamThickness;
 
           this.breakersGraphics.lineTo(xPos, y);
@@ -185,7 +211,6 @@ export class WaterEffectsController {
     }
   }
 
-  // --- Базовые слои ---
   private renderWetSand(wetReach: number): void {
     this.wetSandGraphics.clear();
     this.wetSandGraphics.beginFill(0x8a724d, 0.45);
