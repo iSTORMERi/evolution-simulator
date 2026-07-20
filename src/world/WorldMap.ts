@@ -1,5 +1,3 @@
-// src/world/WorldMap.ts
-
 import * as PIXI from 'pixi.js';
 import { OCEAN_ZONES_CONFIG, LAND_COLOR } from './zoneConfig';
 
@@ -46,5 +44,18 @@ export class WorldMap {
     landGraphics.endFill();
 
     this.container.addChild(landGraphics);
+  }
+
+  // Метод автоматического подгона карты под размер экрана
+  public fitToScreen(screenWidth: number, screenHeight: number): void {
+    const scaleX = screenWidth / this.width;
+    const scaleY = screenHeight / this.height;
+    // Масштабируем карту, чтобы она целиком влезала в экран устройства
+    const scale = Math.min(scaleX, scaleY);
+    
+    this.container.scale.set(scale);
+    // Центрируем
+    this.container.x = (screenWidth - this.width * scale) / 2;
+    this.container.y = (screenHeight - this.height * scale) / 2;
   }
 }

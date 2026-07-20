@@ -1,37 +1,49 @@
 import * as PIXI from 'pixi.js';
 import { WorldMap } from './world/WorldMap';
 
-console.log('Evolution Simulator Initialized');
+console.log('Evolution Simulator Initializing...');
 
-// Получаем существующий контейнер из HTML
 const appContainer = document.getElementById('app');
 
 if (appContainer) {
-  // Очищаем приветственный текст
   appContainer.innerHTML = '';
 
-  // Инициализируем приложение Pixi.js
+  const screenWidth = window.innerWidth;
+  const screenHeight = window.innerHeight;
+
+  // Создаем приложение Pixi
   const app = new PIXI.Application({
-    width: window.innerWidth,
-    height: window.innerHeight,
+    width: screenWidth,
+    height: screenHeight,
     backgroundColor: 0x000000,
     resolution: window.devicePixelRatio || 1,
     autoDensity: true,
   });
 
-  // Вставляем canvas Pixi.js в наш appContainer
-  appContainer.appendChild(app.view as HTMLCanvasElement);
+  // Вставляем холст
+  const canvas = app.view as HTMLCanvasElement;
+  canvas.style.width = '100%';
+  canvas.style.height = '100%';
+  canvas.style.display = 'block';
+  appContainer.appendChild(canvas);
 
-  // Задаём базовые размеры виртуального мира
+  // Размеры логической карты
   const WORLD_WIDTH = 3000;
-  const WORLD_HEIGHT = 3000;
+  const WORLD_HEIGHT = 1500;
 
-  // Создаём карту (65% океан слева, 35% суша справа)
+  // Создаем карту мира
   const worldMap = new WorldMap(WORLD_WIDTH, WORLD_HEIGHT, 0.65);
+  
+  // Вписываем карту в экран смартфона/экрана
+  worldMap.fitToScreen(screenWidth, screenHeight);
+  
   app.stage.addChild(worldMap.container);
 
-  // Обработка изменения размера окна
+  // Ресайз при повороте экрана или изменении размера окна
   window.addEventListener('resize', () => {
-    app.renderer.resize(window.innerWidth, window.innerHeight);
+    const newWidth = window.innerWidth;
+    const newHeight = window.innerHeight;
+    app.renderer.resize(newWidth, newHeight);
+    worldMap.fitToScreen(newWidth, newHeight);
   });
 }
