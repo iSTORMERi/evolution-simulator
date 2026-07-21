@@ -64,7 +64,8 @@ export class CoastalWaterController {
   private getMask(y: number): number {
     if (!this.deltaWaveMask) return 1.0;
     try {
-      return this.deltaWaveMask(y);
+      const val = this.deltaWaveMask(y);
+      return isNaN(val) ? 1.0 : Math.max(0, Math.min(1, val));
     } catch (e) {
       return 1.0;
     }
@@ -126,7 +127,7 @@ export class CoastalWaterController {
 
       this.activeBreakers.push({
         startY: candidateY,
-        lengthY,
+        lengthY: Math.max(100, lengthY),
         progress: 0,
         speed,
         maxThickness,
@@ -151,7 +152,7 @@ export class CoastalWaterController {
     for (const b of this.activeBreakers) {
       const startY = Math.max(0, b.startY);
       const endY = Math.min(this.mapHeight, b.startY + b.lengthY);
-      const stepY = 40; // Увеличен шаг для мобайла
+      const stepY = 40; 
       const currentOffset = -1200 * (1 - b.progress) + 40 * b.progress;
 
       let fadeIn = 1.0;
@@ -169,12 +170,14 @@ export class CoastalWaterController {
 
       if (alpha <= 0.02 || currentThickness < 2) continue;
 
+      const safeLength = Math.max(1, b.lengthY);
+
       const shadowColor = b.isLarge ? 0x0e5269 : 0x187087;
       this.breakersGraphics.beginFill(shadowColor, alpha * 0.4);
 
       for (let y = startY; y <= endY; y += stepY) {
         const baseX = this.getCoastlineX(y);
-        const edgeFade = Math.sin(((y - startY) / b.lengthY) * Math.PI);
+        const edgeFade = Math.sin(((y - startY) / safeLength) * Math.PI);
         const shadowOffset = currentOffset - currentThickness * edgeFade - (b.isLarge ? 35 : 18);
 
         if (y === startY) this.breakersGraphics.moveTo(baseX + shadowOffset, y);
@@ -182,7 +185,7 @@ export class CoastalWaterController {
       }
       for (let y = endY; y >= startY; y -= stepY) {
         const baseX = this.getCoastlineX(y);
-        const edgeFade = Math.sin(((y - startY) / b.lengthY) * Math.PI);
+        const edgeFade = Math.sin(((y - startY) / safeLength) * Math.PI);
         this.breakersGraphics.lineTo(baseX + currentOffset - currentThickness * edgeFade, y);
       }
       this.breakersGraphics.closePath();
@@ -191,7 +194,7 @@ export class CoastalWaterController {
       this.breakersGraphics.beginFill(0x60f0d8, alpha * 0.75);
       for (let y = startY; y <= endY; y += stepY) {
         const baseX = this.getCoastlineX(y);
-        const edgeFade = Math.sin(((y - startY) / b.lengthY) * Math.PI);
+        const edgeFade = Math.sin(((y - startY) / safeLength) * Math.PI);
         const rip = Math.sin(y * 0.012 + this.animTime * 3) * 15;
         const xPos = baseX + currentOffset + rip * edgeFade;
 
@@ -200,7 +203,7 @@ export class CoastalWaterController {
       }
       for (let y = endY; y >= startY; y -= stepY) {
         const baseX = this.getCoastlineX(y);
-        const edgeFade = Math.sin(((y - startY) / b.lengthY) * Math.PI);
+        const edgeFade = Math.sin(((y - startY) / safeLength) * Math.PI);
         const rip = Math.sin(y * 0.012 + this.animTime * 3) * 15;
         const xPos = baseX + currentOffset + rip * edgeFade - currentThickness * edgeFade;
 
@@ -251,32 +254,30 @@ export class CoastalWaterController {
 
       this.seaWavesGraphics.beginFill(0xe0ffff, alpha);
       
-      let started = false;
+      const validPoints: { y: number; x1: number; x2: number }[] = [];
+
       for (let y = 0; y <= this.mapHeight; y += stepY) {
         const mask = this.getMask(y);
-        if (mask < 0.1) continue; // Пропускаем устья рек
+        if (mask < 0.1) continue; 
 
         const baseX = this.getCoastlineX(y);
         const ripple = Math.sin(y * 0.012 + this.animTime * 2.5 + i) * 20;
 
-        if (!started) {
-          this.seaWavesGraphics.moveTo(baseX + offset + ripple, y);
-          started = true;
-        } else {
-          this.seaWavesGraphics.lineTo(baseX + offset + ripple, y);
+        validPoints.push({
+          y,
+          x1: baseX + offset + ripple,
+          x2: baseX + offset + ripple - thickness
+        });
+      }
+
+      if (validPoints.length > 0) {
+        this.seaWavesGraphics.moveTo(validPoints[0].x1, validPoints[0].y);
+        for (let p = 1; p < validPoints.length; p++) {
+          this.seaWavesGraphics.lineTo(validPoints[p].x1, validPoints[p].y);
         }
-      }
-
-      for (let y = this.mapHeight; y >= 0; y -= stepY) {
-        const mask = this.getMask(y);
-        if (mask < 0.1) continue;
-
-        const baseX = this.getCoastlineX(y);
-        const ripple = Math.sin(y * 0.012 + this.animTime * 2.5 + i) * 20;
-        this.seaWavesGraphics.lineTo(baseX + offset + ripple - thickness, y);
-      }
-
-      if (started) {
+        for (let p = validPoints.length - 1; p >= 0; p--) {
+          this.seaWavesGraphics.lineTo(validPoints[p].x2, validPoints[p].y);
+        }
         this.seaWavesGraphics.closePath();
         this.seaWavesGraphics.endFill();
       }
@@ -289,32 +290,31 @@ export class CoastalWaterController {
 
     this.foamGraphics.beginFill(0xffffff, 0.65);
     
-    let started = false;
+    const validPoints: { y: number; x1: number; x2: number }[] = [];
+
     for (let y = 0; y <= this.mapHeight; y += stepY) {
       const mask = this.getMask(y);
       if (mask < 0.15) continue;
 
       const baseX = this.getCoastlineX(y);
       const ripple = Math.sin(y * 0.015 + this.animTime * 3) * 25;
-
-      if (!started) {
-        this.foamGraphics.moveTo(baseX + waveReach * mask + ripple, y);
-        started = true;
-      } else {
-        this.foamGraphics.lineTo(baseX + waveReach * mask + ripple, y);
-      }
-    }
-
-    for (let y = this.mapHeight; y >= 0; y -= stepY) {
-      const mask = this.getMask(y);
-      if (mask < 0.15) continue;
-
-      const baseX = this.getCoastlineX(y);
       const foamThickness = (50 + Math.cos(y * 0.008) * 30) * mask;
-      this.foamGraphics.lineTo(baseX + waveReach * mask - foamThickness, y);
+
+      validPoints.push({
+        y,
+        x1: baseX + waveReach * mask + ripple,
+        x2: baseX + waveReach * mask - foamThickness
+      });
     }
 
-    if (started) {
+    if (validPoints.length > 0) {
+      this.foamGraphics.moveTo(validPoints[0].x1, validPoints[0].y);
+      for (let p = 1; p < validPoints.length; p++) {
+        this.foamGraphics.lineTo(validPoints[p].x1, validPoints[p].y);
+      }
+      for (let p = validPoints.length - 1; p >= 0; p--) {
+        this.foamGraphics.lineTo(validPoints[p].x2, validPoints[p].y);
+      }
       this.foamGraphics.closePath();
       this.foamGraphics.endFill();
     }

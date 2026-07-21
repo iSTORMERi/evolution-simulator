@@ -97,14 +97,14 @@ export class DeltaGenerator {
     const { originX, originY, spreadY, numBranches, getCoastlineX } = this.config;
     const steps = 50;
 
-    for (let i = 0; i < numBranches; i++) {
-      const t = i / (numBranches - 1);
+    const safeBranchesCount = Math.max(2, numBranches);
+
+    for (let i = 0; i < safeBranchesCount; i++) {
+      const t = i / (safeBranchesCount - 1);
       const targetY = originY - spreadY / 2 + t * spreadY;
       const points: RiverPathPoint[] = [];
 
       const exactMouthX = getCoastlineX(targetY);
-
-      // Продлеваем виртуальный путь рукава чуть дальше берега в океан
       const extendedMouthX = exactMouthX - 1200;
 
       for (let s = 0; s <= steps; s++) {
@@ -117,7 +117,6 @@ export class DeltaGenerator {
         const noiseX = this.noise2D(i * 10 + stepRatio * 3, 0) * 400 * noiseFactor;
         const noiseY = this.noise2D(0, i * 10 + stepRatio * 3) * 500 * noiseFactor;
 
-        // Рукава широкие по всей длине (380-420px)
         const baseWidth = 400 * (1 - stepRatio * 0.1); 
         const widthNoise = (this.noise2D(stepRatio * 5, i) + 1) * 50;
 
@@ -140,7 +139,7 @@ export class DeltaGenerator {
     const maxRadiusY = spreadY * 0.85; 
     
     const edgeNoise = this.noise2D(x * 0.0008, y * 0.0008) * 600;
-    const effectiveRadiusY = maxRadiusY + edgeNoise;
+    const effectiveRadiusY = Math.max(1, maxRadiusY + edgeNoise);
 
     if (distFromCenterY > effectiveRadiusY) return null;
 
@@ -149,7 +148,7 @@ export class DeltaGenerator {
     if (x > originX + 1000 || x < currentCoastX - 4500) return null;
 
     let minChannelDist = Infinity;
-    let currentWidth = 400; // Базовое дефолтное значение для избежания 0
+    let currentWidth = 400;
 
     for (const branch of this.branches) {
       for (let i = 0; i < branch.points.length - 1; i++) {
@@ -164,32 +163,29 @@ export class DeltaGenerator {
       }
     }
 
-    // Безопасная ширина каналов (исключаем деление на 0/NaN)
     const safeWidth = Math.max(100, currentWidth);
 
     const detailNoise = this.noise2D(x * 0.0015, y * 0.0015);
     const macroNoise = this.noise2D(x * 0.0005, y * 0.0005);
 
     const isInWaterChannel = minChannelDist < safeWidth * 0.55;
-    const oceanProgress = Math.max(0, Math.min(1, (originX - x) / (originX - currentCoastX)));
+
+    // Безопасный расчет oceanProgress (защита от деления на 0)
+    const deltaXRange = Math.max(1, originX - currentCoastX);
+    const oceanProgress = Math.max(0, Math.min(1, (originX - x) / deltaXRange));
 
     // === РЕЧНЫЕ СТРУИ И ИХ ДИФФУЗНЫЙ ГРАДИЕНТ В ОКЕАН ===
     if (isInWaterChannel) {
       if (x < currentCoastX) {
-        // Расстояние от линии берега в глубь океана
         const distIntoOcean = currentCoastX - x;
-        const maxDischargeDist = 2600; // Длина шлейфа в океане
+        const maxDischargeDist = 2600;
 
         if (distIntoOcean > maxDischargeDist) return null;
 
-        // 1. Градиент вдоль струи (от берега в океан)
         const lengthFade = Math.pow(1 - (distIntoOcean / maxDischargeDist), 1.5);
-
-        // 2. Градиент по ширине струи (от центра рукава к его краям)
         const maxRadius = safeWidth * 0.55;
         const edgeFade = Math.pow(1 - Math.min(1, minChannelDist / maxRadius), 0.8);
 
-        // Итоговая прозрачность струи
         const streamAlpha = lengthFade * edgeFade;
 
         if (isNaN(streamAlpha) || streamAlpha < 0.02) return null;
@@ -245,7 +241,6 @@ export class DeltaGenerator {
     // === СУША И ПЕСЧАНЫЕ БАРЫ ===
     const localWetness = Math.max(0, (1 - minChannelDist / 2200) * falloff + detailNoise * 0.2);
 
-    // Песчаные островки (наносы)
     if (x < currentCoastX + 900 && minChannelDist > safeWidth * 0.55 && minChannelDist < safeWidth * 1.8 && detailNoise > 0.08) {
       return { isWater: false, biomeName: 'Barrier Island', color: 0xDFC184, salinity: 0.6, wetness: 0.2, blendAlpha: 1.0 };
     }
