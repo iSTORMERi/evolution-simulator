@@ -34,13 +34,13 @@ export class WorldMap {
     this.height = height;
     this.oceanWidthRatio = oceanWidthRatio;
 
-    // Инициализация дельты в нижней трети береговой линии (согласно красным маркерам)
+    // Инициализация дельты в нижней трети береговой линии
     const baseMouthX = this.width * this.oceanWidthRatio;
     this.deltaGenerator = new DeltaGenerator({
       originX: baseMouthX + 4500, // Внутренний исток на континенте
-      originY: this.height * 0.65, // Расположение в нижней части карты
+      originY: this.height * 0.65, // Нижняя треть карты
       mouthX: baseMouthX,
-      spreadY: 5200,              // Ширина веера рукавов
+      spreadY: 5200,              // Размах веера
       numBranches: 5,
     });
 
@@ -148,26 +148,26 @@ export class WorldMap {
         const worldX = px / scaleFactor;
         const isDefaultOcean = px < coastRenderX;
 
-        // Проверяем, находится ли точка в дельте реки
+        // Опрашиваем наш обновившийся DeltaGenerator
         const deltaInfo = this.deltaGenerator.evaluate(worldX, worldY, isDefaultOcean);
 
         const index = (py * renderWidth + px) * 4;
 
         if (deltaInfo) {
-          // Если область принадлежит дельте -- берем уникальный цвет биома дельты
+          // Закрашиваем пиксель соответствующим цветом зоны дельты
           const deltaRgb = this.hexToRgb(deltaInfo.color);
           data[index] = deltaRgb.r;
           data[index + 1] = deltaRgb.g;
           data[index + 2] = deltaRgb.b;
           data[index + 3] = 255;
         } else if (!isDefaultOcean) {
-          // Стандартная суша
+          // Обычная суша вне влияния дельты
           data[index] = landRgb.r;
           data[index + 1] = landRgb.g;
           data[index + 2] = landRgb.b;
           data[index + 3] = 255;
         } else {
-          // Стандартная океаническая гладь
+          // Океан
           const distRatio = Math.min(Math.max(px / coastRenderX, 0), 1);
           const oceanRgb = this.getOceanColor(distRatio);
 
