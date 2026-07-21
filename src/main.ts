@@ -1,3 +1,40 @@
+// --- Глобальный перехватчик ошибок для мобайла ---
+function showGlobalErrorBanner(msg: string) {
+  let div = document.getElementById('debug-error-banner');
+  if (!div) {
+    div = document.createElement('div');
+    div.id = 'debug-error-banner';
+    div.style.position = 'fixed';
+    div.style.top = '0';
+    div.style.left = '0';
+    div.style.width = '100%';
+    div.style.maxHeight = '50vh';
+    div.style.overflowY = 'auto';
+    div.style.background = 'rgba(210, 0, 0, 0.95)';
+    div.style.color = '#ffffff';
+    div.style.zIndex = '999999';
+    div.style.padding = '12px';
+    div.style.fontSize = '11px';
+    div.style.fontFamily = 'monospace';
+    div.style.wordBreak = 'break-all';
+    div.style.boxSizing = 'border-box';
+    div.style.borderBottom = '2px solid #ffffff';
+    document.body.appendChild(div);
+  }
+  div.innerText += `\n🚨 ${msg}`;
+}
+
+window.addEventListener('error', (event) => {
+  showGlobalErrorBanner(`[Error] ${event.message} at ${event.filename}:${event.lineno}:${event.colno}`);
+});
+
+window.addEventListener('unhandledrejection', (event) => {
+  const reason = event.reason;
+  const msg = reason instanceof Error ? reason.stack || reason.message : String(reason);
+  showGlobalErrorBanner(`[Unhandled Rejection] ${msg}`);
+});
+
+// --- Импорты модулей ---
 import * as PIXI from 'pixi.js';
 import { WorldMap } from './world/WorldMap';
 import { CameraController } from './world/CameraController';
@@ -8,7 +45,10 @@ console.log('Evolution Simulator Initializing...');
 
 async function initApp() {
   const appContainer = document.getElementById('app');
-  if (!appContainer) return;
+  if (!appContainer) {
+    showGlobalErrorBanner('Element #app not found in DOM');
+    return;
+  }
 
   appContainer.innerHTML = '';
 
@@ -25,7 +65,7 @@ async function initApp() {
         backgroundColor: 0x0d1117,
         resolution: window.devicePixelRatio || 1,
         autoDensity: true,
-        resizeTo: window, // 💡 Автоматически растягивает рендерер под размеры окна браузера/смартфона
+        resizeTo: window,
       });
     } else {
       // @ts-ignore
@@ -39,6 +79,10 @@ async function initApp() {
     }
 
     const canvas = (app.canvas || app.view) as HTMLCanvasElement;
+    if (!canvas) {
+      throw new Error('Failed to get Canvas element from Pixi Application');
+    }
+
     canvas.style.width = '100vw';
     canvas.style.height = '100vh';
     canvas.style.position = 'absolute';
@@ -51,7 +95,6 @@ async function initApp() {
     const WORLD_WIDTH = 24000;
     const WORLD_HEIGHT = 24000;
     
-    // 💡 Делаем океан 28% от ширины мира -- береговая линия уйдет левее, а суши справа станет гораздо больше!
     const COASTAL_RATIO = 0.28;
 
     // 1. Карта мира
@@ -61,7 +104,6 @@ async function initApp() {
     // 2. Камера
     const camera = new CameraController(worldMap.container, canvas, WORLD_WIDTH, WORLD_HEIGHT);
     
-    // Подгоняем камеру под текущий экран смартфона без черных рамок
     if (typeof camera.fillScreen === 'function') {
       camera.fillScreen(window.innerWidth, window.innerHeight);
     }
@@ -86,10 +128,12 @@ async function initApp() {
     });
 
   } catch (err) {
+    const errorMsg = err instanceof Error ? err.stack || err.message : String(err);
+    showGlobalErrorBanner(`[Init Error] ${errorMsg}`);
     appContainer.innerHTML = `
       <div style="color: #ff5555; padding: 20px; font-family: monospace;">
         <h3>Render Error:</h3>
-        <p>${err instanceof Error ? err.message : String(err)}</p>
+        <p>${errorMsg}</p>
       </div>
     `;
   }
