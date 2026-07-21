@@ -36,7 +36,7 @@ export class WorldMap {
       originX: baseOceanWidth + 5500, 
       originY: this.height * 0.65, 
       spreadY: 6800,              
-      numBranches: 6,             // Добавили 6-й рукав для большей пышности
+      numBranches: 6,             // 6 рукавов для пышности
       getCoastlineX: (y: number) => this.getCoastlineX(y, baseOceanWidth),
     });
 
@@ -65,7 +65,7 @@ export class WorldMap {
   private getOceanColor(distRatio: number): RGBColor {
     const zones = OCEAN_ZONES_CONFIG;
 
-    if (distRatio <= 0) return this.hexToRgb(zones[0].color);
+    if (isNaN(distRatio) || distRatio <= 0) return this.hexToRgb(zones[0].color);
     if (distRatio >= 1) return this.hexToRgb(zones[zones.length - 1].color);
 
     let accumulatedWidth = 0;
@@ -123,7 +123,7 @@ export class WorldMap {
     for (let py = 0; py < renderHeight; py++) {
       const worldY = py / scaleFactor;
       const coastX = this.getCoastlineX(worldY, baseOceanWidth);
-      const coastRenderX = coastX * scaleFactor;
+      const coastRenderX = Math.max(1, coastX * scaleFactor); // Защита от <= 0
 
       for (let px = 0; px < renderWidth; px++) {
         const worldX = px / scaleFactor;
@@ -132,13 +132,13 @@ export class WorldMap {
         const deltaInfo = this.deltaGenerator.evaluate(worldX, worldY, isDefaultOcean);
         const index = (py * renderWidth + px) * 4;
 
-        // Рассчитываем цвет океана для текущего X
+        // Рассчитываем цвет океана для текущего X с безопасным делением
         const distRatio = Math.min(Math.max(px / coastRenderX, 0), 1);
         const oceanRgb = this.getOceanColor(distRatio);
 
         if (deltaInfo) {
           const deltaRgb = this.hexToRgb(deltaInfo.color);
-          const alpha = deltaInfo.blendAlpha ?? 1.0;
+          const alpha = Math.max(0, Math.min(1, deltaInfo.blendAlpha ?? 1.0));
 
           if (alpha >= 0.99 || !isDefaultOcean) {
             // Плотная суша или центр реки
