@@ -23,11 +23,20 @@ export class WorldMap {
   private height: number;
   private oceanWidthRatio: number;
 
+  // Кешированные остановки цвета и LUT-таблица для ускорения генерации
+  private colorStops: ColorStop[] = [];
+  private oceanColorLut: RGBColor[] = [];
+  private readonly LUT_SIZE = 512;
+
   constructor(width: number, height: number, oceanWidthRatio: number = 0.28) {
     this.container = new PIXI.Container();
     this.width = width;
     this.height = height;
     this.oceanWidthRatio = oceanWidthRatio;
+
+    // 1. Инициализируем кеш градиента океана единовременно
+    this.initOceanColorStops();
+    this.initOceanLut();
 
     const baseOceanWidth = this.width * this.oceanWidthRatio;
 
@@ -61,25 +70,36 @@ export class WorldMap {
     };
   }
 
-  private getOceanColor(distRatio: number): RGBColor {
+  // Расчет цветных остановок градиента 1 раз при инициализации
+  private initOceanColorStops(): void {
     const zones = OCEAN_ZONES_CONFIG;
-
-    if (isNaN(distRatio) || distRatio <= 0) return this.hexToRgb(zones[0].color);
-    if (distRatio >= 1) return this.hexToRgb(zones[zones.length - 1].color);
-
     let accumulatedWidth = 0;
-    const stops: ColorStop[] = [];
+    this.colorStops = [];
 
     for (let i = 0; i < zones.length; i++) {
       const zoneCenter = accumulatedWidth + zones[i].widthRatio / 2;
-      stops.push({
+      this.colorStops.push({
         pos: zoneCenter,
         color: this.hexToRgb(zones[i].color),
       });
       accumulatedWidth += zones[i].widthRatio;
     }
+  }
 
-    if (distRatio <= stops[0].pos) return stops[0].color;
+  // Заполнение Lookup Table для O(1) поиска цвета
+  private initOceanLut(): void {
+    this.oceanColorLut = new Array(this.LUT_SIZE);
+    for (let i = 0; i < this.LUT_SIZE; i++) {
+      const distRatio = i / (this.LUT_SIZE - 1);
+      this.oceanColorLut[i] = this.calculateOceanColor(distRatio);
+    }
+  }
+
+  private calculateOceanColor(distRatio: number): RGBColor {
+    const stops = this.colorStops;
+    if (stops.length === 0) return { r: 0, g: 0, b: 0 };
+
+    if (isNaN(distRatio) || distRatio <= stops[0].pos) return stops[0].color;
     if (distRatio >= stops[stops.length - 1].pos) return stops[stops.length - 1].color;
 
     for (let i = 0; i < stops.length - 1; i++) {
@@ -99,6 +119,13 @@ export class WorldMap {
     }
 
     return stops[stops.length - 1].color;
+  }
+
+  // Мгновенное получение цвета из LUT-таблицы
+  private getOceanColor(distRatio: number): RGBColor {
+    const safeRatio = Math.max(0, Math.min(1, isNaN(distRatio) ? 0 : distRatio));
+    const index = Math.floor(safeRatio * (this.LUT_SIZE - 1));
+    return this.oceanColorLut[index];
   }
 
   private renderMap(): void {
@@ -124,12 +151,14 @@ export class WorldMap {
       const coastX = this.getCoastlineX(worldY, baseOceanWidth);
       const coastRenderX = Math.max(1, coastX * scaleFactor);
 
+      const rowOffset = py * renderWidth * 4;
+
       for (let px = 0; px < renderWidth; px++) {
         const worldX = px / scaleFactor;
         const isDefaultOcean = px < coastRenderX;
 
         const deltaInfo = this.deltaGenerator.evaluate(worldX, worldY, isDefaultOcean);
-        const index = (py * renderWidth + px) * 4;
+        const index = rowOffset + px * 4;
 
         const distRatio = Math.min(Math.max(px / coastRenderX, 0), 1);
         const oceanRgb = this.getOceanColor(distRatio);
@@ -139,7 +168,7 @@ export class WorldMap {
           const alpha = Math.max(0, Math.min(1, deltaInfo.blendAlpha ?? 1.0));
 
           if (alpha >= 0.99 || !isDefaultOcean) {
-            data[index] = deltaRgb.r;
+            data[index]     = deltaRgb.r;
             data[index + 1] = deltaRgb.g;
             data[index + 2] = deltaRgb.b;
           } else {
@@ -150,13 +179,13 @@ export class WorldMap {
           data[index + 3] = 255;
 
         } else if (!isDefaultOcean) {
-          data[index] = landRgb.r;
+          data[index]     = landRgb.r;
           data[index + 1] = landRgb.g;
           data[index + 2] = landRgb.b;
           data[index + 3] = 255;
 
         } else {
-          data[index] = oceanRgb.r;
+          data[index]     = oceanRgb.r;
           data[index + 1] = oceanRgb.g;
           data[index + 2] = oceanRgb.b;
           data[index + 3] = 255;

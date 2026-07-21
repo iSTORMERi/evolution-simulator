@@ -21,9 +21,25 @@ interface RiverPathPoint {
   width: number;
 }
 
+interface RiverSegment {
+  p1: RiverPathPoint;
+  p2: RiverPathPoint;
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+  avgWidth: number;
+  maxWidth: number;
+}
+
 interface RiverBranch {
   points: RiverPathPoint[];
+  segments: RiverSegment[];
   mouthX: number;
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
 }
 
 class FastNoise2D {
@@ -96,7 +112,6 @@ export class DeltaGenerator {
   private generateOrganicBranches() {
     const { originX, originY, spreadY, numBranches, getCoastlineX } = this.config;
     const steps = 50;
-
     const safeBranchesCount = Math.max(2, numBranches);
 
     for (let i = 0; i < safeBranchesCount; i++) {
@@ -127,17 +142,54 @@ export class DeltaGenerator {
         });
       }
 
-      this.branches.push({ points, mouthX: exactMouthX });
+      // Создаем сегменты и пространственные границы (AABB) для ускорения вычислений
+      const segments: RiverSegment[] = [];
+      let bMinX = Infinity, bMaxX = -Infinity, bMinY = Infinity, bMaxY = -Infinity;
+
+      for (let s = 0; s < points.length - 1; s++) {
+        const p1 = points[s];
+        const p2 = points[s + 1];
+        const avgWidth = (p1.width + p2.width) / 2;
+        const maxWidth = Math.max(p1.width, p2.width);
+
+        const minX = Math.min(p1.x, p2.x);
+        const maxX = Math.max(p1.x, p2.x);
+        const minY = Math.min(p1.y, p2.y);
+        const maxY = Math.max(p1.y, p2.y);
+
+        segments.push({ p1, p2, minX, maxX, minY, maxY, avgWidth, maxWidth });
+
+        if (minX < bMinX) bMinX = minX;
+        if (maxX > bMaxX) bMaxX = maxX;
+        if (minY < bMinY) bMinY = minY;
+        if (maxY > bMaxY) bMaxY = maxY;
+      }
+
+      this.branches.push({
+        points,
+        segments,
+        mouthX: exactMouthX,
+        minX: bMinX,
+        maxX: bMaxX,
+        minY: bMinY,
+        maxY: bMaxY,
+      });
     }
   }
 
   public evaluate(x: number, y: number, isOceanByDefault: boolean): DeltaPointInfo | null {
     const { originX, originY, spreadY, getCoastlineX } = this.config;
-    const currentCoastX = getCoastlineX(y);
 
+    // 1. Быстрый первичный отсев по Y без вычисления шума
     const distFromCenterY = Math.abs(y - originY);
-    const maxRadiusY = spreadY * 0.85; 
-    
+    const maxRadiusY = spreadY * 0.85;
+    if (distFromCenterY > maxRadiusY + 650) return null;
+
+    // 2. Быстрый первичный отсев по X
+    const currentCoastX = getCoastlineX(y);
+    if (x > originX + 1000 || x < currentCoastX - 4500) return null;
+
+    // 3. Вычисление точного радиуса дельты с шумом
     const edgeNoise = this.noise2D(x * 0.0008, y * 0.0008) * 600;
     const effectiveRadiusY = Math.max(1, maxRadiusY + edgeNoise);
 
@@ -145,32 +197,44 @@ export class DeltaGenerator {
 
     const falloff = Math.cos((distFromCenterY / effectiveRadiusY) * (Math.PI / 2));
 
-    if (x > originX + 1000 || x < currentCoastX - 4500) return null;
-
+    // 4. Оптимизированный поиск ближайшего русла реки с пропуском далеких веток
     let minChannelDist = Infinity;
     let currentWidth = 400;
 
     for (const branch of this.branches) {
-      for (let i = 0; i < branch.points.length - 1; i++) {
-        const p1 = branch.points[i];
-        const p2 = branch.points[i + 1];
-        const dist = this.distToSegment(x, y, p1.x, p1.y, p2.x, p2.y);
-        
+      // Отсекаем ветку целиком, если точка за пределами ее влияния
+      if (
+        x < branch.minX - 2500 || x > branch.maxX + 2500 ||
+        y < branch.minY - 2500 || y > branch.maxY + 2500
+      ) {
+        continue;
+      }
+
+      for (const seg of branch.segments) {
+        const checkDist = seg.maxWidth * 3.5;
+        if (
+          x < seg.minX - checkDist || x > seg.maxX + checkDist ||
+          y < seg.minY - checkDist || y > seg.maxY + checkDist
+        ) {
+          continue;
+        }
+
+        const dist = this.distToSegment(x, y, seg.p1.x, seg.p1.y, seg.p2.x, seg.p2.y);
         if (dist < minChannelDist) {
           minChannelDist = dist;
-          currentWidth = (p1.width + p2.width) / 2;
+          currentWidth = seg.avgWidth;
         }
       }
     }
 
     const safeWidth = Math.max(100, currentWidth);
 
+    // 5. Вычисление шумов детализации только для подходящих точек
     const detailNoise = this.noise2D(x * 0.0015, y * 0.0015);
     const macroNoise = this.noise2D(x * 0.0005, y * 0.0005);
 
     const isInWaterChannel = minChannelDist < safeWidth * 0.55;
 
-    // Безопасный расчет oceanProgress (защита от деления на 0)
     const deltaXRange = Math.max(1, originX - currentCoastX);
     const oceanProgress = Math.max(0, Math.min(1, (originX - x) / deltaXRange));
 
@@ -186,7 +250,7 @@ export class DeltaGenerator {
         const maxRadius = safeWidth * 0.55;
         const edgeFade = Math.pow(1 - Math.min(1, minChannelDist / maxRadius), 0.8);
 
-        const streamAlpha = lengthFade * edgeFade;
+        const streamAlpha = Math.max(0, Math.min(1, lengthFade * edgeFade));
 
         if (isNaN(streamAlpha) || streamAlpha < 0.02) return null;
 
@@ -221,7 +285,7 @@ export class DeltaGenerator {
         
         if (streamProximity > 0) {
           const noiseVariation = 0.8 + detailNoise * 0.4;
-          const blendAlpha = Math.pow(streamProximity * distanceFade * noiseVariation, 2.0) * 0.65;
+          const blendAlpha = Math.max(0, Math.min(1, Math.pow(streamProximity * distanceFade * noiseVariation, 2.0) * 0.65));
 
           if (!isNaN(blendAlpha) && blendAlpha > 0.03) {
             return { 
@@ -239,7 +303,7 @@ export class DeltaGenerator {
     }
 
     // === СУША И ПЕСЧАНЫЕ БАРЫ ===
-    const localWetness = Math.max(0, (1 - minChannelDist / 2200) * falloff + detailNoise * 0.2);
+    const localWetness = Math.max(0, Math.min(1, (1 - minChannelDist / 2200) * falloff + detailNoise * 0.2));
 
     if (x < currentCoastX + 900 && minChannelDist > safeWidth * 0.55 && minChannelDist < safeWidth * 1.8 && detailNoise > 0.08) {
       return { isWater: false, biomeName: 'Barrier Island', color: 0xDFC184, salinity: 0.6, wetness: 0.2, blendAlpha: 1.0 };

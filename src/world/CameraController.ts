@@ -117,8 +117,11 @@ export class CameraController {
   }
 
   public clampBounds(): void {
-    const screenWidth = window.innerWidth;
-    const screenHeight = window.innerHeight;
+    // ИСПРАВЛЕНИЕ ДЛЯ iOS: 
+    // Берем размеры самого canvas, так как window.innerHeight 
+    // скачет из-за панели адреса Safari.
+    const screenWidth = this.canvasElement.clientWidth || window.innerWidth;
+    const screenHeight = this.canvasElement.clientHeight || window.innerHeight;
 
     const scale = this.container.scale.x;
     const scaledWorldWidth = this.worldWidth * scale;
