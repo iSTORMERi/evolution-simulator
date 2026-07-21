@@ -4,55 +4,71 @@ import { CameraController } from './world/CameraController';
 import { LightingController } from './world/LightingController';
 import { TimeDebugUI } from './ui/TimeDebugUI';
 
+// Храним инстанс, чтобы корректно его очищать при перезагрузке/HMR
+let currentApp: PIXI.Application | null = null;
+
 async function initApp() {
   const appContainer = document.getElementById('app');
   if (!appContainer) return;
 
+  // Очищаем старое приложение и освобождаем WebGL-контекст
+  if (currentApp) {
+    try {
+      currentApp.destroy(true, { children: true, texture: true });
+    } catch (e) {
+      console.warn('Cleanup error:', e);
+    }
+    currentApp = null;
+  }
+
+  appContainer.innerHTML = '';
+
   const app = new PIXI.Application();
+  currentApp = app;
 
   try {
-    // 1. Инициализируем Pixi с безопасным масштабом для мобильных
     await app.init({
-      resizeTo: window,
+      width: window.innerWidth,
+      height: window.innerHeight,
       backgroundColor: 0x0d1117,
-      resolution: 1, // На мобильных зажимаем разрешение до 1, чтобы не перегружать GPU
-      autoDensity: true,
+      resolution: 1, // Ограничение Retina для экономии ОЗУ на мобайле
+      autoDensity: false,
       preference: 'webgl',
     });
 
-    appContainer.appendChild(app.canvas);
+    const canvas = app.canvas;
+    canvas.style.position = 'fixed';
+    canvas.style.top = '0';
+    canvas.style.left = '0';
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
+    canvas.style.touchAction = 'none';
 
-    // 2. Временно уменьшаем размер мира до 4000x4000 для теста GPU
+    appContainer.appendChild(canvas);
+
+    // Размеры мира для мобильных
     const WORLD_WIDTH = 4000;
     const WORLD_HEIGHT = 4000;
     const COASTAL_RATIO = 0.28;
 
-    // 3. Карта мира
     const worldMap = new WorldMap(WORLD_WIDTH, WORLD_HEIGHT, COASTAL_RATIO);
     app.stage.addChild(worldMap.container);
 
-    // 4. Камера
-    const camera = new CameraController(worldMap.container, app.canvas, WORLD_WIDTH, WORLD_HEIGHT);
+    const camera = new CameraController(worldMap.container, canvas, WORLD_WIDTH, WORLD_HEIGHT);
     if (typeof camera.fillScreen === 'function') {
       camera.fillScreen(window.innerWidth, window.innerHeight);
     }
 
-    // 5. Освещение и UI
     const lightingController = new LightingController(worldMap.container, worldMap.waterManager);
     new TimeDebugUI(lightingController);
 
-    // 6. Игровой цикл
     app.ticker.add((ticker) => {
       const deltaSeconds = ticker.deltaTime / 60;
       worldMap.update(deltaSeconds);
     });
 
   } catch (err) {
-    appContainer.innerHTML = `
-      <div style="color: red; padding: 20px; font-family: monospace;">
-        Failed to start WebGL: ${err}
-      </div>
-    `;
+    console.error('Init error:', err);
   }
 }
 
