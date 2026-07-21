@@ -34,8 +34,8 @@ export class CoastalWaterController {
     coastalRatio: number,
     deltaWaveMask?: (y: number) => number
   ) {
-    this.mapWidth = mapWidth;
-    this.mapHeight = mapHeight;
+    this.mapWidth = mapWidth || 1000;
+    this.mapHeight = mapHeight || 1000;
     this.coastalRatio = coastalRatio;
     this.deltaWaveMask = deltaWaveMask;
 
@@ -46,7 +46,6 @@ export class CoastalWaterController {
     this.breakersGraphics = new PIXI.Graphics();
     this.foamGraphics = new PIXI.Graphics();
 
-    // Слои от дна к поверхности
     this.container.addChild(this.wetSandGraphics);
     this.container.addChild(this.seaWavesGraphics);
     this.container.addChild(this.breakersGraphics);
@@ -63,7 +62,12 @@ export class CoastalWaterController {
   }
 
   private getMask(y: number): number {
-    return this.deltaWaveMask ? this.deltaWaveMask(y) : 1.0;
+    if (!this.deltaWaveMask) return 1.0;
+    try {
+      return this.deltaWaveMask(y);
+    } catch (e) {
+      return 1.0;
+    }
   }
 
   public updateTimeState(hours: number): void {
@@ -107,13 +111,10 @@ export class CoastalWaterController {
         ? 1800 + Math.random() * 1200 
         : 500 + Math.random() * 700;
 
-      const candidateY = Math.random() * (this.mapHeight - lengthY);
+      const candidateY = Math.random() * Math.max(100, this.mapHeight - lengthY);
       const midY = candidateY + lengthY / 2;
 
-      // Не спавним прибойные волны в местах, где устье рек полностью гасит прибой
-      if (this.getMask(midY) < 0.25) {
-        return;
-      }
+      if (this.getMask(midY) < 0.25) return;
 
       const maxThickness = isLarge 
         ? 120 + Math.random() * 60 
@@ -150,7 +151,7 @@ export class CoastalWaterController {
     for (const b of this.activeBreakers) {
       const startY = Math.max(0, b.startY);
       const endY = Math.min(this.mapHeight, b.startY + b.lengthY);
-      const stepY = 25;
+      const stepY = 40; // Увеличен шаг для мобайла
       const currentOffset = -1200 * (1 - b.progress) + 40 * b.progress;
 
       let fadeIn = 1.0;
@@ -207,89 +208,75 @@ export class CoastalWaterController {
       }
       this.breakersGraphics.closePath();
       this.breakersGraphics.endFill();
-
-      if (b.progress > 0.3) {
-        const foamAlpha = Math.sin((b.progress - 0.3) / 0.7 * Math.PI) * 0.85 * fadeIn * deltaMaskFactor;
-        this.breakersGraphics.beginFill(0xffffff, foamAlpha);
-
-        for (let y = startY; y <= endY; y += stepY) {
-          const baseX = this.getCoastlineX(y);
-          const edgeFade = Math.sin(((y - startY) / b.lengthY) * Math.PI);
-          const foamRip = Math.cos(y * 0.02 + this.animTime * 5) * 20;
-          const xPos = baseX + currentOffset + foamRip * edgeFade;
-
-          if (y === startY) this.breakersGraphics.moveTo(xPos, y);
-          else this.breakersGraphics.lineTo(xPos, y);
-        }
-        for (let y = endY; y >= startY; y -= stepY) {
-          const baseX = this.getCoastlineX(y);
-          const edgeFade = Math.sin(((y - startY) / b.lengthY) * Math.PI);
-          const foamThickness = (b.isLarge ? (25 + Math.sin(y * 0.03) * 15) : (12 + Math.sin(y * 0.03) * 8)) * edgeFade;
-          const xPos = baseX + currentOffset - foamThickness;
-
-          this.breakersGraphics.lineTo(xPos, y);
-        }
-        this.breakersGraphics.closePath();
-        this.breakersGraphics.endFill();
-      }
     }
   }
 
   private renderWetSand(wetReach: number): void {
     this.wetSandGraphics.clear();
-    const stepY = 30;
+    this.wetSandGraphics.beginFill(0x8a724d, 0.45);
 
-    for (let y = 0; y < this.mapHeight; y += stepY) {
-      const nextY = Math.min(this.mapHeight, y + stepY);
-      const mask = this.getMask(y + stepY / 2);
+    const stepY = 50;
+    this.wetSandGraphics.moveTo(this.getCoastlineX(0) + wetReach, 0);
 
-      if (mask <= 0.02) continue;
-
-      this.wetSandGraphics.beginFill(0x8a724d, 0.45 * mask);
-      const baseX1 = this.getCoastlineX(y);
-      const baseX2 = this.getCoastlineX(nextY);
-
-      this.wetSandGraphics.moveTo(baseX1 + wetReach, y);
-      this.wetSandGraphics.lineTo(baseX2 + wetReach, nextY);
-      this.wetSandGraphics.lineTo(baseX2 - 80, nextY);
-      this.wetSandGraphics.lineTo(baseX1 - 80, y);
-      this.wetSandGraphics.closePath();
-      this.wetSandGraphics.endFill();
+    for (let y = 0; y <= this.mapHeight; y += stepY) {
+      const baseX = this.getCoastlineX(y);
+      const mask = this.getMask(y);
+      this.wetSandGraphics.lineTo(baseX + wetReach * mask, y);
     }
+
+    for (let y = this.mapHeight; y >= 0; y -= stepY) {
+      const baseX = this.getCoastlineX(y);
+      const mask = this.getMask(y);
+      this.wetSandGraphics.lineTo(baseX - 80 * mask, y);
+    }
+
+    this.wetSandGraphics.closePath();
+    this.wetSandGraphics.endFill();
   }
 
   private renderSeaWaves(): void {
     this.seaWavesGraphics.clear();
 
     const NUM_WAVES = 3;
-    const stepY = 25;
+    const stepY = 50;
     const waveSpeed = 0.22;
 
     for (let i = 0; i < NUM_WAVES; i++) {
       const progress = (this.animTime * waveSpeed + i / NUM_WAVES) % 1.0;
       const offset = -550 * (1 - progress) + 30 * progress;
-      const baseAlpha = Math.sin(progress * Math.PI) * 0.35;
+      const alpha = Math.sin(progress * Math.PI) * 0.35;
       const thickness = 10 + progress * 30;
 
-      if (baseAlpha <= 0.01) continue;
+      if (alpha <= 0.01) continue;
 
-      for (let y = 0; y < this.mapHeight; y += stepY) {
-        const nextY = Math.min(this.mapHeight, y + stepY);
-        const mask = this.getMask(y + stepY / 2);
+      this.seaWavesGraphics.beginFill(0xe0ffff, alpha);
+      
+      let started = false;
+      for (let y = 0; y <= this.mapHeight; y += stepY) {
+        const mask = this.getMask(y);
+        if (mask < 0.1) continue; // Пропускаем устья рек
 
-        if (mask <= 0.02) continue;
+        const baseX = this.getCoastlineX(y);
+        const ripple = Math.sin(y * 0.012 + this.animTime * 2.5 + i) * 20;
 
-        this.seaWavesGraphics.beginFill(0xe0ffff, baseAlpha * mask);
+        if (!started) {
+          this.seaWavesGraphics.moveTo(baseX + offset + ripple, y);
+          started = true;
+        } else {
+          this.seaWavesGraphics.lineTo(baseX + offset + ripple, y);
+        }
+      }
 
-        const baseX1 = this.getCoastlineX(y);
-        const baseX2 = this.getCoastlineX(nextY);
-        const ripple1 = Math.sin(y * 0.012 + this.animTime * 2.5 + i) * 20;
-        const ripple2 = Math.sin(nextY * 0.012 + this.animTime * 2.5 + i) * 20;
+      for (let y = this.mapHeight; y >= 0; y -= stepY) {
+        const mask = this.getMask(y);
+        if (mask < 0.1) continue;
 
-        this.seaWavesGraphics.moveTo(baseX1 + offset + ripple1, y);
-        this.seaWavesGraphics.lineTo(baseX2 + offset + ripple2, nextY);
-        this.seaWavesGraphics.lineTo(baseX2 + offset + ripple2 - thickness, nextY);
-        this.seaWavesGraphics.lineTo(baseX1 + offset + ripple1 - thickness, y);
+        const baseX = this.getCoastlineX(y);
+        const ripple = Math.sin(y * 0.012 + this.animTime * 2.5 + i) * 20;
+        this.seaWavesGraphics.lineTo(baseX + offset + ripple - thickness, y);
+      }
+
+      if (started) {
         this.seaWavesGraphics.closePath();
         this.seaWavesGraphics.endFill();
       }
@@ -298,56 +285,38 @@ export class CoastalWaterController {
 
   private renderFoam(waveReach: number): void {
     this.foamGraphics.clear();
-    const stepY = 20;
+    const stepY = 40;
 
-    // Главная полоса пены
-    for (let y = 0; y < this.mapHeight; y += stepY) {
-      const nextY = Math.min(this.mapHeight, y + stepY);
-      const mask = this.getMask(y + stepY / 2);
+    this.foamGraphics.beginFill(0xffffff, 0.65);
+    
+    let started = false;
+    for (let y = 0; y <= this.mapHeight; y += stepY) {
+      const mask = this.getMask(y);
+      if (mask < 0.15) continue;
 
-      if (mask <= 0.02) continue;
+      const baseX = this.getCoastlineX(y);
+      const ripple = Math.sin(y * 0.015 + this.animTime * 3) * 25;
 
-      this.foamGraphics.beginFill(0xffffff, 0.65 * mask);
-
-      const baseX1 = this.getCoastlineX(y);
-      const baseX2 = this.getCoastlineX(nextY);
-      const ripple1 = Math.sin(y * 0.015 + this.animTime * 3) * 25;
-      const ripple2 = Math.sin(nextY * 0.015 + this.animTime * 3) * 25;
-      const foamThickness1 = 50 + Math.cos(y * 0.008) * 30;
-      const foamThickness2 = 50 + Math.cos(nextY * 0.008) * 30;
-
-      this.foamGraphics.moveTo(baseX1 + waveReach + ripple1, y);
-      this.foamGraphics.lineTo(baseX2 + waveReach + ripple2, nextY);
-      this.foamGraphics.lineTo(baseX2 + waveReach - foamThickness2, nextY);
-      this.foamGraphics.lineTo(baseX1 + waveReach - foamThickness1, y);
-      this.foamGraphics.closePath();
-      this.foamGraphics.endFill();
+      if (!started) {
+        this.foamGraphics.moveTo(baseX + waveReach * mask + ripple, y);
+        started = true;
+      } else {
+        this.foamGraphics.lineTo(baseX + waveReach * mask + ripple, y);
+      }
     }
 
-    // Вторичный шлейф пены
-    if (waveReach > 30) {
-      const trailOffset = waveReach * 0.55;
+    for (let y = this.mapHeight; y >= 0; y -= stepY) {
+      const mask = this.getMask(y);
+      if (mask < 0.15) continue;
 
-      for (let y = 0; y < this.mapHeight; y += stepY) {
-        const nextY = Math.min(this.mapHeight, y + stepY);
-        const mask = this.getMask(y + stepY / 2);
+      const baseX = this.getCoastlineX(y);
+      const foamThickness = (50 + Math.cos(y * 0.008) * 30) * mask;
+      this.foamGraphics.lineTo(baseX + waveReach * mask - foamThickness, y);
+    }
 
-        if (mask <= 0.02) continue;
-
-        this.foamGraphics.beginFill(0xd0f8ff, 0.40 * mask);
-
-        const baseX1 = this.getCoastlineX(y);
-        const baseX2 = this.getCoastlineX(nextY);
-        const trailRipple1 = Math.cos(y * 0.02 + this.animTime * 2) * 15;
-        const trailRipple2 = Math.cos(nextY * 0.02 + this.animTime * 2) * 15;
-
-        this.foamGraphics.moveTo(baseX1 + trailOffset + trailRipple1, y);
-        this.foamGraphics.lineTo(baseX2 + trailOffset + trailRipple2, nextY);
-        this.foamGraphics.lineTo(baseX2 + trailOffset - 35, nextY);
-        this.foamGraphics.lineTo(baseX1 + trailOffset - 35, y);
-        this.foamGraphics.closePath();
-        this.foamGraphics.endFill();
-      }
+    if (started) {
+      this.foamGraphics.closePath();
+      this.foamGraphics.endFill();
     }
   }
 }
