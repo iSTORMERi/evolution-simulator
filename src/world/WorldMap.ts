@@ -1,6 +1,7 @@
 import * as PIXI from 'pixi.js';
 import { OCEAN_ZONES_CONFIG, LAND_COLOR } from './zoneConfig';
 import { WaterManager } from './water/WaterManager';
+import { DeltaGenerator } from './DeltaGenerator';
 
 interface RGBColor {
   r: number;
@@ -15,7 +16,8 @@ interface ColorStop {
 
 export class WorldMap {
   public container: PIXI.Container;
-  public waterManager: WaterManager; // Ссылка для вызова update() извне
+  public waterManager: WaterManager;
+  public deltaGenerator: DeltaGenerator;
 
   private width: number;
   private height: number;
@@ -24,18 +26,28 @@ export class WorldMap {
   /**
    * @param width Ширина мира в пикселях
    * @param height Высота мира в пикселях
-   * @param oceanWidthRatio Доля ширины, зажимаемая океаном (по умолчанию 0.40 = 40%)
+   * @param oceanWidthRatio Доля ширины, занимаемая океаном (по умолчанию 0.28)
    */
-  constructor(width: number, height: number, oceanWidthRatio: number = 0.40) {
+  constructor(width: number, height: number, oceanWidthRatio: number = 0.28) {
     this.container = new PIXI.Container();
     this.width = width;
     this.height = height;
     this.oceanWidthRatio = oceanWidthRatio;
 
-    // 1. Рендерим статическую фоновую карту (берег + цветовые зоны океана)
+    // Инициализация дельты в нижней трети береговой линии (согласно красным маркерам)
+    const baseMouthX = this.width * this.oceanWidthRatio;
+    this.deltaGenerator = new DeltaGenerator({
+      originX: baseMouthX + 4500, // Внутренний исток на континенте
+      originY: this.height * 0.65, // Расположение в нижней части карты
+      mouthX: baseMouthX,
+      spreadY: 5200,              // Ширина веера рукавов
+      numBranches: 5,
+    });
+
+    // 1. Рендерим статическую фоновую карту (суша, океан, дельта)
     this.renderMap();
 
-    // 2. Инициализируем динамическую систему воды (прибой, волны, солнечные блики)
+    // 2. Инициализируем динамическую систему воды
     this.waterManager = new WaterManager(this.width, this.height, this.oceanWidthRatio);
     this.container.addChild(this.waterManager.container);
   }
@@ -107,13 +119,13 @@ export class WorldMap {
   }
 
   /**
-   * Зарисовка ландшафта в легкий off-screen Canvas с подгоном под текстуру
+   * Зарисовка ландшафта с наложением дельты реки
    */
   private renderMap(): void {
     const baseOceanWidth = this.width * this.oceanWidthRatio;
 
     const canvas = document.createElement('canvas');
-    const scaleFactor = 0.15; // Масштабирование оптимизирует память даже на огромных разрешениях
+    const scaleFactor = 0.15; // Оптимизация памяти
     canvas.width = Math.round(this.width * scaleFactor);
     canvas.height = Math.round(this.height * scaleFactor);
     const ctx = canvas.getContext('2d');
@@ -133,16 +145,29 @@ export class WorldMap {
       const coastRenderX = coastX * scaleFactor;
 
       for (let px = 0; px < renderWidth; px++) {
+        const worldX = px / scaleFactor;
+        const isDefaultOcean = px < coastRenderX;
+
+        // Проверяем, находится ли точка в дельте реки
+        const deltaInfo = this.deltaGenerator.evaluate(worldX, worldY, isDefaultOcean);
+
         const index = (py * renderWidth + px) * 4;
 
-        if (px >= coastRenderX) {
-          // Суша
+        if (deltaInfo) {
+          // Если область принадлежит дельте -- берем уникальный цвет биома дельты
+          const deltaRgb = this.hexToRgb(deltaInfo.color);
+          data[index] = deltaRgb.r;
+          data[index + 1] = deltaRgb.g;
+          data[index + 2] = deltaRgb.b;
+          data[index + 3] = 255;
+        } else if (!isDefaultOcean) {
+          // Стандартная суша
           data[index] = landRgb.r;
           data[index + 1] = landRgb.g;
           data[index + 2] = landRgb.b;
           data[index + 3] = 255;
         } else {
-          // Водная гладь
+          // Стандартная океаническая гладь
           const distRatio = Math.min(Math.max(px / coastRenderX, 0), 1);
           const oceanRgb = this.getOceanColor(distRatio);
 
