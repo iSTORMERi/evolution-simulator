@@ -25,6 +25,7 @@ async function initApp() {
         backgroundColor: 0x0d1117,
         resolution: window.devicePixelRatio || 1,
         autoDensity: true,
+        resizeTo: window, // 💡 Автоматически растягивает рендерер под размеры окна браузера/смартфона
       });
     } else {
       // @ts-ignore
@@ -38,16 +39,20 @@ async function initApp() {
     }
 
     const canvas = (app.canvas || app.view) as HTMLCanvasElement;
-    canvas.style.width = '100%';
-    canvas.style.height = '100%';
+    canvas.style.width = '100vw';
+    canvas.style.height = '100vh';
+    canvas.style.position = 'absolute';
+    canvas.style.top = '0';
+    canvas.style.left = '0';
     canvas.style.display = 'block';
     canvas.style.touchAction = 'none';
     appContainer.appendChild(canvas);
 
     const WORLD_WIDTH = 24000;
     const WORLD_HEIGHT = 24000;
-    // 💡 1. Меняем пропорцию океана на 0.40 (40%)
-    const COASTAL_RATIO = 0.40;
+    
+    // 💡 Делаем океан 28% от ширины мира -- береговая линия уйдет левее, а суши справа станет гораздо больше!
+    const COASTAL_RATIO = 0.28;
 
     // 1. Карта мира
     const worldMap = new WorldMap(WORLD_WIDTH, WORLD_HEIGHT, COASTAL_RATIO);
@@ -56,9 +61,10 @@ async function initApp() {
     // 2. Камера
     const camera = new CameraController(worldMap.container, canvas, WORLD_WIDTH, WORLD_HEIGHT);
     
-    // 💡 2. Убираем fillScreen(screenWidth, screenHeight), иначе она сжимает 24000px в экран смартфона!
-    // Вместо этого задаем разумный зум или используем стандартный режим камеры:
-    // camera.setZoom(0.1); // если в вашем контроллере есть метод скейла/зума
+    // Подгоняем камеру под текущий экран смартфона без черных рамок
+    if (typeof camera.fillScreen === 'function') {
+      camera.fillScreen(window.innerWidth, window.innerHeight);
+    }
 
     // 3. Освещение и UI отладки
     const lightingController = new LightingController(worldMap.container, worldMap.waterManager);
@@ -74,7 +80,9 @@ async function initApp() {
       const newWidth = window.innerWidth;
       const newHeight = window.innerHeight;
       app.renderer.resize(newWidth, newHeight);
-      // Если у вас тут стоял fillScreen, его тоже стоит убрать или заменить на обновление границ просмотра
+      if (typeof camera.fillScreen === 'function') {
+        camera.fillScreen(newWidth, newHeight);
+      }
     });
 
   } catch (err) {
