@@ -21,20 +21,28 @@ export class WorldMap {
   private height: number;
   private oceanWidthRatio: number;
 
-  constructor(width: number, height: number, oceanWidthRatio: number = 0.50) {
+  /**
+   * @param width Ширина мира в пикселях
+   * @param height Высота мира в пикселях
+   * @param oceanWidthRatio Доля ширины, зажимаемая океаном (по умолчанию 0.40 = 40%)
+   */
+  constructor(width: number, height: number, oceanWidthRatio: number = 0.40) {
     this.container = new PIXI.Container();
     this.width = width;
     this.height = height;
     this.oceanWidthRatio = oceanWidthRatio;
 
-    // 1. Рендерим статическую карту (суша + градиент океана)
+    // 1. Рендерим статическую фоновую карту (берег + цветовые зоны океана)
     this.renderMap();
 
-    // 2. Инициализируем и добавляем динамические эффекты воды
+    // 2. Инициализируем динамическую систему воды (прибой, волны, солнечные блики)
     this.waterManager = new WaterManager(this.width, this.height, this.oceanWidthRatio);
     this.container.addChild(this.waterManager.container);
   }
 
+  /**
+   * Процедурная генерация кривой береговой линии
+   */
   private getCoastlineX(y: number, baseOceanWidth: number): number {
     const wave1 = Math.sin(y * 0.0002) * 600;
     const wave2 = Math.cos(y * 0.0006) * 300;
@@ -51,6 +59,9 @@ export class WorldMap {
     };
   }
 
+  /**
+   * Расчет градиентного цвета океана по глубине
+   */
   private getOceanColor(distRatio: number): RGBColor {
     const zones = OCEAN_ZONES_CONFIG;
 
@@ -95,11 +106,14 @@ export class WorldMap {
     return stops[stops.length - 1].color;
   }
 
+  /**
+   * Зарисовка ландшафта в легкий off-screen Canvas с подгоном под текстуру
+   */
   private renderMap(): void {
     const baseOceanWidth = this.width * this.oceanWidthRatio;
 
     const canvas = document.createElement('canvas');
-    const scaleFactor = 0.15;
+    const scaleFactor = 0.15; // Масштабирование оптимизирует память даже на огромных разрешениях
     canvas.width = Math.round(this.width * scaleFactor);
     canvas.height = Math.round(this.height * scaleFactor);
     const ctx = canvas.getContext('2d');
@@ -122,11 +136,13 @@ export class WorldMap {
         const index = (py * renderWidth + px) * 4;
 
         if (px >= coastRenderX) {
+          // Суша
           data[index] = landRgb.r;
           data[index + 1] = landRgb.g;
           data[index + 2] = landRgb.b;
           data[index + 3] = 255;
         } else {
+          // Водная гладь
           const distRatio = Math.min(Math.max(px / coastRenderX, 0), 1);
           const oceanRgb = this.getOceanColor(distRatio);
 
@@ -148,14 +164,18 @@ export class WorldMap {
     this.container.addChild(sprite);
   }
 
-  // Обновление всей гидрографии карты
+  /**
+   * Анимационный апдейт динамической воды
+   */
   public update(deltaSeconds: number): void {
     if (this.waterManager) {
       this.waterManager.update(deltaSeconds);
     }
   }
 
-  // Обновление состояния освещенности водных эффектов
+  /**
+   * Синхронизация времени суток
+   */
   public updateTimeState(hours: number): void {
     if (this.waterManager) {
       this.waterManager.updateTimeState(hours);
