@@ -4,7 +4,7 @@ export interface DeltaPointInfo {
   color: number;
   salinity: number;
   wetness: number;
-  blendAlpha?: number; // 1.0 = 100% цвет дельты, 0.0 = 100% фоновый океан[span_0](start_span)[span_0](end_span)
+  blendAlpha?: number; // 1.0 = 100% цвет дельты, 0.0 = 100% фоновый океан
 }
 
 export interface DeltaConfig {
@@ -149,7 +149,7 @@ export class DeltaGenerator {
     if (x > originX + 1000 || x < currentCoastX - 4500) return null;
 
     let minChannelDist = Infinity;
-    let currentWidth = 0;
+    let currentWidth = 400; // Базовое дефолтное значение для избежания 0
 
     for (const branch of this.branches) {
       for (let i = 0; i < branch.points.length - 1; i++) {
@@ -164,10 +164,13 @@ export class DeltaGenerator {
       }
     }
 
+    // Безопасная ширина каналов (исключаем деление на 0/NaN)
+    const safeWidth = Math.max(100, currentWidth);
+
     const detailNoise = this.noise2D(x * 0.0015, y * 0.0015);
     const macroNoise = this.noise2D(x * 0.0005, y * 0.0005);
 
-    const isInWaterChannel = minChannelDist < currentWidth * 0.55;
+    const isInWaterChannel = minChannelDist < safeWidth * 0.55;
     const oceanProgress = Math.max(0, Math.min(1, (originX - x) / (originX - currentCoastX)));
 
     // === РЕЧНЫЕ СТРУИ И ИХ ДИФФУЗНЫЙ ГРАДИЕНТ В ОКЕАН ===
@@ -183,15 +186,13 @@ export class DeltaGenerator {
         const lengthFade = Math.pow(1 - (distIntoOcean / maxDischargeDist), 1.5);
 
         // 2. Градиент по ширине струи (от центра рукава к его краям)
-        // Гасит четкие "границы колбасок", делая их мягко размытыми по бокам
-        const maxRadius = currentWidth * 0.55;
-        const edgeFade = Math.pow(1 - (minChannelDist / maxRadius), 0.8);
+        const maxRadius = safeWidth * 0.55;
+        const edgeFade = Math.pow(1 - Math.min(1, minChannelDist / maxRadius), 0.8);
 
         // Итоговая прозрачность струи
         const streamAlpha = lengthFade * edgeFade;
 
-        // Отсекаем совсем незаметные пиксели, чтобы не перегружать рендер
-        if (streamAlpha < 0.02) return null;
+        if (isNaN(streamAlpha) || streamAlpha < 0.02) return null;
 
         return { 
           isWater: true, 
@@ -220,13 +221,13 @@ export class DeltaGenerator {
 
       if (oceanDepth > 0 && oceanDepth < maxPlumeReach) {
         const distanceFade = 1 - (oceanDepth / maxPlumeReach);
-        const streamProximity = Math.max(0, 1 - (minChannelDist / (currentWidth * 3.2)));
+        const streamProximity = Math.max(0, 1 - (minChannelDist / (safeWidth * 3.2)));
         
         if (streamProximity > 0) {
           const noiseVariation = 0.8 + detailNoise * 0.4;
           const blendAlpha = Math.pow(streamProximity * distanceFade * noiseVariation, 2.0) * 0.65;
 
-          if (blendAlpha > 0.03) {
+          if (!isNaN(blendAlpha) && blendAlpha > 0.03) {
             return { 
               isWater: true, 
               biomeName: 'Estuarine Plume', 
@@ -245,7 +246,7 @@ export class DeltaGenerator {
     const localWetness = Math.max(0, (1 - minChannelDist / 2200) * falloff + detailNoise * 0.2);
 
     // Песчаные островки (наносы)
-    if (x < currentCoastX + 900 && minChannelDist > currentWidth * 0.55 && minChannelDist < currentWidth * 1.8 && detailNoise > 0.08) {
+    if (x < currentCoastX + 900 && minChannelDist > safeWidth * 0.55 && minChannelDist < safeWidth * 1.8 && detailNoise > 0.08) {
       return { isWater: false, biomeName: 'Barrier Island', color: 0xDFC184, salinity: 0.6, wetness: 0.2, blendAlpha: 1.0 };
     }
 
@@ -257,11 +258,11 @@ export class DeltaGenerator {
       return { isWater: false, biomeName: 'Lowland Marsh', color: 0x5C7A29, salinity: 0.1, wetness: localWetness, blendAlpha: 1.0 };
     }
 
-    if (localWetness > 0.3 && macroNoise > 0.2 && minChannelDist > currentWidth * 2) {
+    if (localWetness > 0.3 && macroNoise > 0.2 && minChannelDist > safeWidth * 2) {
       return { isWater: false, biomeName: 'Bog / Sphagnum Moor', color: 0x7A4E29, salinity: 0.0, wetness: localWetness, blendAlpha: 1.0 };
     }
 
-    if (minChannelDist < currentWidth * 2.8 && localWetness > 0.2) {
+    if (minChannelDist < safeWidth * 2.8 && localWetness > 0.2) {
       return { isWater: false, biomeName: 'Flooded Forest / Mangrove', color: 0x1B381E, salinity: 0.2, wetness: localWetness, blendAlpha: 1.0 };
     }
 
