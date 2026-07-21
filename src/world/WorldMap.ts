@@ -34,14 +34,15 @@ export class WorldMap {
     this.height = height;
     this.oceanWidthRatio = oceanWidthRatio;
 
-    // Инициализация дельты в нижней трети береговой линии
-    const baseMouthX = this.width * this.oceanWidthRatio;
+    const baseOceanWidth = this.width * this.oceanWidthRatio;
+
+    // Инициализация дельты с динамическим рассчетом устья через getCoastlineX
     this.deltaGenerator = new DeltaGenerator({
-      originX: baseMouthX + 4500, // Внутренний исток на континенте
+      originX: baseOceanWidth + 4500, // Внутренний исток на континенте
       originY: this.height * 0.65, // Нижняя треть карты
-      mouthX: baseMouthX,
       spreadY: 5200,              // Размах веера
       numBranches: 5,
+      getCoastlineX: (y: number) => this.getCoastlineX(y, baseOceanWidth),
     });
 
     // 1. Рендерим статическую фоновую карту (суша, океан, дельта)
