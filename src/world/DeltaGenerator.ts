@@ -2,16 +2,17 @@ export interface DeltaPointInfo {
   isWater: boolean;
   biomeName: string;
   color: number;
-  salinity: number; // 0.0 (пресная) - 1.0 (морская)
-  wetness: number;  // 0.0 - 1.0
+  salinity: number;
+  wetness: number;
+  blendAlpha?: number; // 1.0 = 100% цвет дельты, 0.0 = 100% фоновый океан
 }
 
 export interface DeltaConfig {
-  originX: number;     // Точка схождения реки на континенте
-  originY: number;     // Высота истока дельты по Y
-  spreadY: number;     // Размах веера дельты по Y
-  numBranches: number; // Количество основных рукавов
-  getCoastlineX: (y: number) => number; // Динамический расчёт берега для точного впадения
+  originX: number;     
+  originY: number;     
+  spreadY: number;     
+  numBranches: number; 
+  getCoastlineX: (y: number) => number; 
 }
 
 interface RiverPathPoint {
@@ -25,7 +26,6 @@ interface RiverBranch {
   mouthX: number;
 }
 
-// Простой автономный 2D-генератор шума на основе псевдослучайных градиентов
 class FastNoise2D {
   private perm: number[] = [];
 
@@ -93,40 +93,35 @@ export class DeltaGenerator {
     return this.noiseGenerator.noise(x, y);
   }
 
-  /**
-   * Генерация извилистых рукавов, гарантированно впадающих в динамический океан
-   */
   private generateOrganicBranches() {
     const { originX, originY, spreadY, numBranches, getCoastlineX } = this.config;
-    const steps = 40;
+    const steps = 45;
 
     for (let i = 0; i < numBranches; i++) {
       const t = i / (numBranches - 1);
       const targetY = originY - spreadY / 2 + t * spreadY;
       const points: RiverPathPoint[] = [];
 
-      // Рассчитываем точную X-координату устья для береговой линии на данной высоте Y
       const exactMouthX = getCoastlineX(targetY);
 
       for (let s = 0; s <= steps; s++) {
         const stepRatio = s / steps;
         
-        // Линейный путь от истока к точному устью
         const baseX = originX + (exactMouthX - originX) * stepRatio;
         const baseY = originY + (targetY - originY) * stepRatio;
 
-        // Подавляем извилистость на самых концах (у истока и впадения), чтобы соединение было точным
         const noiseFactor = Math.sin(stepRatio * Math.PI);
-        const noiseX = this.noise2D(i * 10 + stepRatio * 3, 0) * 350 * noiseFactor;
-        const noiseY = this.noise2D(0, i * 10 + stepRatio * 3) * 450 * noiseFactor;
+        const noiseX = this.noise2D(i * 10 + stepRatio * 3, 0) * 400 * noiseFactor;
+        const noiseY = this.noise2D(0, i * 10 + stepRatio * 3) * 500 * noiseFactor;
 
-        const baseWidth = 220 * (1 - stepRatio * 0.3);
-        const widthNoise = (this.noise2D(stepRatio * 5, i) + 1) * 30;
+        // УВЕЛИЧЕНО: Стартовая ширина 360, расширяется или сохраняется к устью
+        const baseWidth = 360 * (1 - stepRatio * 0.15); 
+        const widthNoise = (this.noise2D(stepRatio * 5, i) + 1) * 45;
 
         points.push({
           x: baseX + noiseX,
           y: baseY + noiseY,
-          width: Math.max(50, baseWidth + widthNoise),
+          width: Math.max(90, baseWidth + widthNoise),
         });
       }
 
@@ -136,25 +131,21 @@ export class DeltaGenerator {
 
   public evaluate(x: number, y: number, isOceanByDefault: boolean): DeltaPointInfo | null {
     const { originX, originY, spreadY, getCoastlineX } = this.config;
-
-    // Динамический берег для текущей точки Y
     const currentCoastX = getCoastlineX(y);
 
-    // 1. Формирование органической формы зоны дельты (Falloff)
+    // Увеличенный вертикальный охват дельты
     const distFromCenterY = Math.abs(y - originY);
-    const maxRadiusY = spreadY * 0.65;
+    const maxRadiusY = spreadY * 0.75; 
     
-    const edgeNoise = this.noise2D(x * 0.0008, y * 0.0008) * 400;
+    const edgeNoise = this.noise2D(x * 0.0008, y * 0.0008) * 500;
     const effectiveRadiusY = maxRadiusY + edgeNoise;
 
     if (distFromCenterY > effectiveRadiusY) return null;
 
     const falloff = Math.cos((distFromCenterY / effectiveRadiusY) * (Math.PI / 2));
 
-    // Ограничение по X относительно плавающего берега
-    if (x > originX + 800 || x < currentCoastX - 2500) return null;
+    if (x > originX + 1000 || x < currentCoastX - 3500) return null;
 
-    // 2. Поиск ближайшего речного рукава
     let minChannelDist = Infinity;
     let currentWidth = 0;
 
@@ -171,68 +162,76 @@ export class DeltaGenerator {
       }
     }
 
-    const detailNoise = this.noise2D(x * 0.002, y * 0.002);
+    const detailNoise = this.noise2D(x * 0.0015, y * 0.0015);
     const macroNoise = this.noise2D(x * 0.0005, y * 0.0005);
 
-    const isInWaterChannel = minChannelDist < currentWidth * 0.5;
+    const isInWaterChannel = minChannelDist < currentWidth * 0.55;
     const oceanProgress = Math.max(0, Math.min(1, (originX - x) / (originX - currentCoastX)));
 
-    // 3. Рукава и протоки
+    // Основные русла рек
     if (isInWaterChannel) {
       if (x < currentCoastX) {
-        // Выход протоки в море -- эстуарный шлейф
-        return { isWater: true, biomeName: 'Plume Zone', color: 0x40E0D0, salinity: 0.6, wetness: 1.0 };
+        return { isWater: true, biomeName: 'Plume Zone', color: 0x36D7B7, salinity: 0.5, wetness: 1.0, blendAlpha: 0.95 };
       }
-      return { isWater: true, biomeName: 'River Channel', color: 0x5C6B47, salinity: oceanProgress * 0.2, wetness: 1.0 };
+      return { isWater: true, biomeName: 'River Channel', color: 0x4B6B40, salinity: oceanProgress * 0.2, wetness: 1.0, blendAlpha: 1.0 };
     }
 
-    // 4. Океаническая зона (плавные лагуны без резких прямоугольных рамок)
+    // ОКЕАН: Плавный выплеск пресной воды и взвеси
     if (isOceanByDefault) {
       const oceanDepth = currentCoastX - x;
+      const maxPlumeReach = 3200; // Увеличен вылет в океан
 
-      if (oceanDepth > 0 && oceanDepth < 1600) {
-        const distanceFade = 1 - (oceanDepth / 1600);
-        const plumeThreshold = detailNoise * 0.35 + distanceFade;
+      if (oceanDepth > 0 && oceanDepth < maxPlumeReach) {
+        const distanceFade = 1 - (oceanDepth / maxPlumeReach);
+        
+        // Порог расширения струи от рукавов
+        const channelInfluence = Math.max(0, 1 - (minChannelDist / (currentWidth * 4.5)));
+        
+        if (channelInfluence > 0) {
+          // Градиентная альфа: зависит от расстояния до берега и до центра струи
+          const rawAlpha = channelInfluence * distanceFade * (0.75 + detailNoise * 0.25);
+          const blendAlpha = Math.pow(Math.max(0, Math.min(1, rawAlpha)), 1.4); // Мягкий спад
 
-        // Органичный веер эстуарных лагун напротив рукавов
-        if (minChannelDist < currentWidth * 2.8 && plumeThreshold > 0.42) {
-          return { 
-            isWater: true, 
-            biomeName: 'Estuarine Lagoon', 
-            color: 0x2E8B57, 
-            salinity: 0.5 + (1 - distanceFade) * 0.3, 
-            wetness: 1.0 
-          };
+          if (blendAlpha > 0.02) {
+            return { 
+              isWater: true, 
+              biomeName: 'Estuarine Lagoon', 
+              color: 0x2E8B57, 
+              salinity: 0.4 + (1 - blendAlpha) * 0.4, 
+              wetness: 1.0,
+              blendAlpha: blendAlpha // Градиент смешивания!
+            };
+          }
         }
       }
       return null;
     }
 
-    // 5. Определение сухопутных биомов дельты
-    const localWetness = Math.max(0, (1 - minChannelDist / 1800) * falloff + detailNoise * 0.2);
+    // СУША: Биомы дельты
+    const localWetness = Math.max(0, (1 - minChannelDist / 2200) * falloff + detailNoise * 0.2);
 
-    if (x < currentCoastX + 800 && minChannelDist > currentWidth * 0.6 && minChannelDist < currentWidth * 1.8 && detailNoise > 0.1) {
-      return { isWater: false, biomeName: 'Barrier Island / Sandbar', color: 0xE6C280, salinity: 0.6, wetness: 0.2 };
+    if (x < currentCoastX + 900 && minChannelDist > currentWidth * 0.6 && minChannelDist < currentWidth * 2.2 && detailNoise > 0.05) {
+      return { isWater: false, biomeName: 'Barrier Island / Sandbar', color: 0xE6C280, salinity: 0.6, wetness: 0.2, blendAlpha: 1.0 };
     }
 
-    if (oceanProgress > 0.7 && localWetness > 0.35) {
-      return { isWater: false, biomeName: 'Salt Marsh', color: 0x4A6B5D, salinity: 0.7, wetness: localWetness };
+    if (oceanProgress > 0.65 && localWetness > 0.3) {
+      return { isWater: false, biomeName: 'Salt Marsh', color: 0x4A6B5D, salinity: 0.7, wetness: localWetness, blendAlpha: 1.0 };
     }
 
-    if (localWetness > 0.55) {
-      return { isWater: false, biomeName: 'Lowland Marsh', color: 0x6B8E23, salinity: 0.1, wetness: localWetness };
+    if (localWetness > 0.5) {
+      return { isWater: false, biomeName: 'Lowland Marsh', color: 0x6B8E23, salinity: 0.1, wetness: localWetness, blendAlpha: 1.0 };
     }
 
-    if (localWetness > 0.35 && macroNoise > 0.25 && minChannelDist > currentWidth * 2) {
-      return { isWater: false, biomeName: 'Bog / Sphagnum Moor', color: 0x8B5A2B, salinity: 0.0, wetness: localWetness };
+    if (localWetness > 0.3 && macroNoise > 0.2 && minChannelDist > currentWidth * 2) {
+      return { isWater: false, biomeName: 'Bog / Sphagnum Moor', color: 0x8B5A2B, salinity: 0.0, wetness: localWetness, blendAlpha: 1.0 };
     }
 
-    if (minChannelDist < currentWidth * 2.5 && localWetness > 0.25) {
-      return { isWater: false, biomeName: 'Flooded Forest / Mangrove', color: 0x1E3F20, salinity: 0.2, wetness: localWetness };
+    if (minChannelDist < currentWidth * 2.8 && localWetness > 0.2) {
+      return { isWater: false, biomeName: 'Flooded Forest / Mangrove', color: 0x1E3F20, salinity: 0.2, wetness: localWetness, blendAlpha: 1.0 };
     }
 
-    if (localWetness > 0.1) {
-      return { isWater: false, biomeName: 'Alluvial Valley', color: 0x3B7A57, salinity: 0.0, wetness: 0.4 };
+    if (localWetness > 0.08) {
+      return { isWater: false, biomeName: 'Alluvial Valley', color: 0x3B7A57, salinity: 0.0, wetness: 0.4, blendAlpha: 1.0 };
     }
 
     return null;

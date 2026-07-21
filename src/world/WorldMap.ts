@@ -23,11 +23,6 @@ export class WorldMap {
   private height: number;
   private oceanWidthRatio: number;
 
-  /**
-   * @param width Ширина мира в пикселях
-   * @param height Высота мира в пикселях
-   * @param oceanWidthRatio Доля ширины, занимаемая океаном (по умолчанию 0.28)
-   */
   constructor(width: number, height: number, oceanWidthRatio: number = 0.28) {
     this.container = new PIXI.Container();
     this.width = width;
@@ -36,26 +31,21 @@ export class WorldMap {
 
     const baseOceanWidth = this.width * this.oceanWidthRatio;
 
-    // Инициализация дельты с динамическим рассчетом устья через getCoastlineX
+    // Увеличены пропорции размаха веера (spreadY: 6800) и глубины истока
     this.deltaGenerator = new DeltaGenerator({
-      originX: baseOceanWidth + 4500, // Внутренний исток на континенте
-      originY: this.height * 0.65, // Нижняя треть карты
-      spreadY: 5200,              // Размах веера
-      numBranches: 5,
+      originX: baseOceanWidth + 5500, 
+      originY: this.height * 0.65, 
+      spreadY: 6800,              
+      numBranches: 6,             // Добавили 6-й рукав для большей пышности
       getCoastlineX: (y: number) => this.getCoastlineX(y, baseOceanWidth),
     });
 
-    // 1. Рендерим статическую фоновую карту (суша, океан, дельта)
     this.renderMap();
 
-    // 2. Инициализируем динамическую систему воды
     this.waterManager = new WaterManager(this.width, this.height, this.oceanWidthRatio);
     this.container.addChild(this.waterManager.container);
   }
 
-  /**
-   * Процедурная генерация кривой береговой линии
-   */
   private getCoastlineX(y: number, baseOceanWidth: number): number {
     const wave1 = Math.sin(y * 0.0002) * 600;
     const wave2 = Math.cos(y * 0.0006) * 300;
@@ -72,9 +62,6 @@ export class WorldMap {
     };
   }
 
-  /**
-   * Расчет градиентного цвета океана по глубине
-   */
   private getOceanColor(distRatio: number): RGBColor {
     const zones = OCEAN_ZONES_CONFIG;
 
@@ -93,12 +80,8 @@ export class WorldMap {
       accumulatedWidth += zones[i].widthRatio;
     }
 
-    if (distRatio <= stops[0].pos) {
-      return stops[0].color;
-    }
-    if (distRatio >= stops[stops.length - 1].pos) {
-      return stops[stops.length - 1].color;
-    }
+    if (distRatio <= stops[0].pos) return stops[0].color;
+    if (distRatio >= stops[stops.length - 1].pos) return stops[stops.length - 1].color;
 
     for (let i = 0; i < stops.length - 1; i++) {
       const leftStop = stops[i];
@@ -119,14 +102,11 @@ export class WorldMap {
     return stops[stops.length - 1].color;
   }
 
-  /**
-   * Зарисовка ландшафта с наложением дельты реки
-   */
   private renderMap(): void {
     const baseOceanWidth = this.width * this.oceanWidthRatio;
 
     const canvas = document.createElement('canvas');
-    const scaleFactor = 0.15; // Оптимизация памяти
+    const scaleFactor = 0.15;
     canvas.width = Math.round(this.width * scaleFactor);
     canvas.height = Math.round(this.height * scaleFactor);
     const ctx = canvas.getContext('2d');
@@ -149,29 +129,39 @@ export class WorldMap {
         const worldX = px / scaleFactor;
         const isDefaultOcean = px < coastRenderX;
 
-        // Опрашиваем наш обновившийся DeltaGenerator
         const deltaInfo = this.deltaGenerator.evaluate(worldX, worldY, isDefaultOcean);
-
         const index = (py * renderWidth + px) * 4;
 
+        // Рассчитываем цвет океана для текущего X
+        const distRatio = Math.min(Math.max(px / coastRenderX, 0), 1);
+        const oceanRgb = this.getOceanColor(distRatio);
+
         if (deltaInfo) {
-          // Закрашиваем пиксель соответствующим цветом зоны дельты
           const deltaRgb = this.hexToRgb(deltaInfo.color);
-          data[index] = deltaRgb.r;
-          data[index + 1] = deltaRgb.g;
-          data[index + 2] = deltaRgb.b;
+          const alpha = deltaInfo.blendAlpha ?? 1.0;
+
+          if (alpha >= 0.99 || !isDefaultOcean) {
+            // Плотная суша или центр реки
+            data[index] = deltaRgb.r;
+            data[index + 1] = deltaRgb.g;
+            data[index + 2] = deltaRgb.b;
+          } else {
+            // ГРАДИЕНТНОЕ СМЕШИВАНИЕ: Речная вода/взвесь + цвет океана
+            data[index]     = Math.round(deltaRgb.r * alpha + oceanRgb.r * (1 - alpha));
+            data[index + 1] = Math.round(deltaRgb.g * alpha + oceanRgb.g * (1 - alpha));
+            data[index + 2] = Math.round(deltaRgb.b * alpha + oceanRgb.b * (1 - alpha));
+          }
           data[index + 3] = 255;
+
         } else if (!isDefaultOcean) {
-          // Обычная суша вне влияния дельты
+          // Обычная суша
           data[index] = landRgb.r;
           data[index + 1] = landRgb.g;
           data[index + 2] = landRgb.b;
           data[index + 3] = 255;
-        } else {
-          // Океан
-          const distRatio = Math.min(Math.max(px / coastRenderX, 0), 1);
-          const oceanRgb = this.getOceanColor(distRatio);
 
+        } else {
+          // Чистый океан
           data[index] = oceanRgb.r;
           data[index + 1] = oceanRgb.g;
           data[index + 2] = oceanRgb.b;
@@ -190,18 +180,12 @@ export class WorldMap {
     this.container.addChild(sprite);
   }
 
-  /**
-   * Анимационный апдейт динамической воды
-   */
   public update(deltaSeconds: number): void {
     if (this.waterManager) {
       this.waterManager.update(deltaSeconds);
     }
   }
 
-  /**
-   * Синхронизация времени суток
-   */
   public updateTimeState(hours: number): void {
     if (this.waterManager) {
       this.waterManager.updateTimeState(hours);
