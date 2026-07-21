@@ -31,12 +31,11 @@ export class WorldMap {
 
     const baseOceanWidth = this.width * this.oceanWidthRatio;
 
-    // Увеличены пропорции размаха веера (spreadY: 6800) и глубины истока
     this.deltaGenerator = new DeltaGenerator({
       originX: baseOceanWidth + 5500, 
       originY: this.height * 0.65, 
       spreadY: 6800,              
-      numBranches: 6,             // 6 рукавов для пышности
+      numBranches: 6,             
       getCoastlineX: (y: number) => this.getCoastlineX(y, baseOceanWidth),
     });
 
@@ -123,7 +122,7 @@ export class WorldMap {
     for (let py = 0; py < renderHeight; py++) {
       const worldY = py / scaleFactor;
       const coastX = this.getCoastlineX(worldY, baseOceanWidth);
-      const coastRenderX = Math.max(1, coastX * scaleFactor); // Защита от <= 0
+      const coastRenderX = Math.max(1, coastX * scaleFactor);
 
       for (let px = 0; px < renderWidth; px++) {
         const worldX = px / scaleFactor;
@@ -132,7 +131,6 @@ export class WorldMap {
         const deltaInfo = this.deltaGenerator.evaluate(worldX, worldY, isDefaultOcean);
         const index = (py * renderWidth + px) * 4;
 
-        // Рассчитываем цвет океана для текущего X с безопасным делением
         const distRatio = Math.min(Math.max(px / coastRenderX, 0), 1);
         const oceanRgb = this.getOceanColor(distRatio);
 
@@ -141,12 +139,10 @@ export class WorldMap {
           const alpha = Math.max(0, Math.min(1, deltaInfo.blendAlpha ?? 1.0));
 
           if (alpha >= 0.99 || !isDefaultOcean) {
-            // Плотная суша или центр реки
             data[index] = deltaRgb.r;
             data[index + 1] = deltaRgb.g;
             data[index + 2] = deltaRgb.b;
           } else {
-            // ГРАДИЕНТНОЕ СМЕШИВАНИЕ: Речная вода/взвесь + цвет океана
             data[index]     = Math.round(deltaRgb.r * alpha + oceanRgb.r * (1 - alpha));
             data[index + 1] = Math.round(deltaRgb.g * alpha + oceanRgb.g * (1 - alpha));
             data[index + 2] = Math.round(deltaRgb.b * alpha + oceanRgb.b * (1 - alpha));
@@ -154,14 +150,12 @@ export class WorldMap {
           data[index + 3] = 255;
 
         } else if (!isDefaultOcean) {
-          // Обычная суша
           data[index] = landRgb.r;
           data[index + 1] = landRgb.g;
           data[index + 2] = landRgb.b;
           data[index + 3] = 255;
 
         } else {
-          // Чистый океан
           data[index] = oceanRgb.r;
           data[index + 1] = oceanRgb.g;
           data[index + 2] = oceanRgb.b;
