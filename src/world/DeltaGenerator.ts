@@ -4,7 +4,7 @@ export interface DeltaPointInfo {
   color: number;
   salinity: number;
   wetness: number;
-  blendAlpha?: number; // 1.0 = 100% цвет дельты, 0.0 = 100% фоновый океан
+  blendAlpha?: number; // 1.0 = 100% цвет дельты, 0.0 = 100% фоновый океан[span_0](start_span)[span_0](end_span)
 }
 
 export interface DeltaConfig {
@@ -104,7 +104,7 @@ export class DeltaGenerator {
 
       const exactMouthX = getCoastlineX(targetY);
 
-      // Продлеваем виртуальный путь рукава чуть дальше берега в океан, чтобы не было обрыва
+      // Продлеваем виртуальный путь рукава чуть дальше берега в океан
       const extendedMouthX = exactMouthX - 1200;
 
       for (let s = 0; s <= steps; s++) {
@@ -137,7 +137,7 @@ export class DeltaGenerator {
     const currentCoastX = getCoastlineX(y);
 
     const distFromCenterY = Math.abs(y - originY);
-    const maxRadiusY = spreadY * 0.8; 
+    const maxRadiusY = spreadY * 0.85; 
     
     const edgeNoise = this.noise2D(x * 0.0008, y * 0.0008) * 600;
     const effectiveRadiusY = maxRadiusY + edgeNoise;
@@ -170,24 +170,36 @@ export class DeltaGenerator {
     const isInWaterChannel = minChannelDist < currentWidth * 0.55;
     const oceanProgress = Math.max(0, Math.min(1, (originX - x) / (originX - currentCoastX)));
 
-    // РЕЧНЫЕ РУКАВА И ИХ МЯГКИЙ ВЫХОД В ОКЕАН
+    // === РЕЧНЫЕ СТРУИ И ИХ ДИФФУЗНЫЙ ГРАДИЕНТ В ОКЕАН ===
     if (isInWaterChannel) {
       if (x < currentCoastX) {
         // Расстояние от линии берега в глубь океана
         const distIntoOcean = currentCoastX - x;
-        const maxDischargeDist = 2800; // Протяженность речной струи
-        
-        // Плавный затухающий градиент (1.0 у устья -> 0.0 в глубокой воде)
-        const rawFade = Math.max(0, 1 - (distIntoOcean / maxDischargeDist));
-        const blendAlpha = Math.pow(rawFade, 1.3);
+        const maxDischargeDist = 2600; // Длина шлейфа в океане
+
+        if (distIntoOcean > maxDischargeDist) return null;
+
+        // 1. Градиент вдоль струи (от берега в океан)
+        const lengthFade = Math.pow(1 - (distIntoOcean / maxDischargeDist), 1.5);
+
+        // 2. Градиент по ширине струи (от центра рукава к его краям)
+        // Гасит четкие "границы колбасок", делая их мягко размытыми по бокам
+        const maxRadius = currentWidth * 0.55;
+        const edgeFade = Math.pow(1 - (minChannelDist / maxRadius), 0.8);
+
+        // Итоговая прозрачность струи
+        const streamAlpha = lengthFade * edgeFade;
+
+        // Отсекаем совсем незаметные пиксели, чтобы не перегружать рендер
+        if (streamAlpha < 0.02) return null;
 
         return { 
           isWater: true, 
           biomeName: 'River Discharge Stream', 
-          color: 0x3B5E33, // Единый темно-зеленый цвет русла
-          salinity: 0.1 + (1 - blendAlpha) * 0.5, 
+          color: 0x3B5E33, 
+          salinity: 0.1 + (1 - streamAlpha) * 0.7, 
           wetness: 1.0, 
-          blendAlpha: Math.max(0.08, blendAlpha) 
+          blendAlpha: streamAlpha 
         };
       }
 
@@ -201,29 +213,27 @@ export class DeltaGenerator {
       };
     }
 
-    // МЯГКИЙ ЭСТУАРНЫЙ ШЛЕЙФ (Вместо бирюзовых "пузырей")
+    // === МЯГКИЙ ЭСТУАРНЫЙ ОРЕОЛ ВОКРУГ СТРУЙ ===
     if (isOceanByDefault) {
       const oceanDepth = currentCoastX - x;
-      const maxPlumeReach = 3800;
+      const maxPlumeReach = 3400;
 
       if (oceanDepth > 0 && oceanDepth < maxPlumeReach) {
         const distanceFade = 1 - (oceanDepth / maxPlumeReach);
-        
-        // Ореол вокруг вытекающих струй
-        const streamProximity = Math.max(0, 1 - (minChannelDist / (currentWidth * 3.8)));
+        const streamProximity = Math.max(0, 1 - (minChannelDist / (currentWidth * 3.2)));
         
         if (streamProximity > 0) {
           const noiseVariation = 0.8 + detailNoise * 0.4;
-          const blendAlpha = Math.pow(streamProximity * distanceFade * noiseVariation, 1.5);
+          const blendAlpha = Math.pow(streamProximity * distanceFade * noiseVariation, 2.0) * 0.65;
 
           if (blendAlpha > 0.03) {
             return { 
               isWater: true, 
               biomeName: 'Estuarine Plume', 
-              color: 0x2D5A43, // Болотно-иловый смешанный цвет
+              color: 0x2D5A43, 
               salinity: 0.3 + (1 - blendAlpha) * 0.5, 
               wetness: 1.0,
-              blendAlpha: Math.min(0.85, blendAlpha)
+              blendAlpha: blendAlpha
             };
           }
         }
@@ -231,7 +241,7 @@ export class DeltaGenerator {
       return null;
     }
 
-    // СУША И ПЕСЧАНЫЕ БАРЫ
+    // === СУША И ПЕСЧАНЫЕ БАРЫ ===
     const localWetness = Math.max(0, (1 - minChannelDist / 2200) * falloff + detailNoise * 0.2);
 
     // Песчаные островки (наносы)

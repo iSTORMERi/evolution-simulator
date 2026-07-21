@@ -17,7 +17,7 @@ export class WaterManager {
     // Передаем маску затухания (0.0 в центре дельты, 1.0 вне дельты)
     const deltaWaveMask = (y: number) => this.getDeltaWaveMaskFactor(y);
 
-    // Инициализируем контроллеры с учётом маски дельты
+    // Инициализируем контроллеры с учётом расширенной маски дельты
     this.coastalController = new CoastalWaterController(
       mapWidth,
       mapHeight,
@@ -40,19 +40,22 @@ export class WaterManager {
   /**
    * Вычисляет фактор затухания океанических волн/пены напротив устья дельты.
    * @param y Координата Y на карте
-   * @returns 0.0 (полное отсутствие волн в центре дельты) ... 1.0 (обычные волны)
+   * @returns 0.0 (полное отсутствие волн в центре и на рукавах дельты) ... 1.0 (обычные волны)
    */
   public getDeltaWaveMaskFactor(y: number): number {
-    const deltaOriginY = this.mapHeight * 0.65; // Центр дельты
-    const deltaSpreadY = 6800;                 // Размах веера дельты
+    const deltaOriginY = this.mapHeight * 0.65; // Центр дельты[span_1](start_span)[span_1](end_span)
+    
+    // Расширили размах гашения волн до 11000px, чтобы с запасом перекрыть крайние рукава
+    const deltaSpreadY = 11000;                 
 
     const distToCenterY = Math.abs(y - deltaOriginY);
     const deltaRadius = deltaSpreadY * 0.5;
 
-    // В зоне дельты речной поток гасит прибой: плавно сводим альфу/амплитуду волны к 0
+    // В зоне дельты речной поток гасит прибой: плавно сводим альфу к 0[span_2](start_span)[span_2](end_span)
     if (distToCenterY < deltaRadius) {
       const factor = distToCenterY / deltaRadius;
-      return factor * factor; // Мягкий квадратичный спад
+      // Используем степень 2.5 для создания широкого и уплощенного "окна тишины"
+      return Math.pow(factor, 2.5);
     }
 
     return 1.0;
