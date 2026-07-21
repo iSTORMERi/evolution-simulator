@@ -280,3 +280,4 @@ export class DeltaGenerator {
     t = Math.max(0, Math.min(1, t));
     return Math.hypot(px - (x1 + t * (x2 - x1)), py - (y1 + t * (y2 - y1)));
   } 
+}
