@@ -12,7 +12,6 @@ export class WorldMap {
 
   private mapSprite?: PIXI.Sprite;
   
-  // Canvas в памяти для быстрой выборки пикселей из маски
   private maskCanvas: HTMLCanvasElement;
   private maskCtx: CanvasRenderingContext2D | null;
   private maskData?: ImageData;
@@ -35,30 +34,35 @@ export class WorldMap {
    */
   private async initMap(): Promise<void> {
     try {
-      // 1. Загрузка визуальной текстуры (относительный путь без ведущего '/')
-      const visualTexture = await PIXI.Assets.load('assets/ocean_visual.jpeg');
+      // 1. Загрузка визуальной текстуры (обновлено до .png)
+      const visualTexture = await PIXI.Assets.load('assets/ocean_visual.png');
       this.mapSprite = new PIXI.Sprite(visualTexture);
       this.mapSprite.width = this.worldWidth;
       this.mapSprite.height = this.worldHeight;
       this.container.addChild(this.mapSprite);
 
-      // 2. Безопасная загрузка маски зон через PixiJS (обход CORS/GitHub Pages ограничений)
+      // 2. Безопасная загрузка маски зон через PixiJS
       const maskTexture = await PIXI.Assets.load('assets/ocean_zones_mask.png');
       const maskSource = maskTexture.source.resource as HTMLImageElement | HTMLCanvasElement;
 
-      // Располагаем маску на фоновом Canvas
       this.maskCanvas.width = maskTexture.width;
       this.maskCanvas.height = maskTexture.height;
 
       if (this.maskCtx) {
         this.maskCtx.drawImage(maskSource, 0, 0);
-        // Кешируем пиксельные данные для мгновенного доступа
+        
+        // Считываем сырой массив пикселей
         this.maskData = this.maskCtx.getImageData(
           0, 
           0, 
           this.maskCanvas.width, 
           this.maskCanvas.height
         );
+
+        // 🧹 Очистка памяти для предотвращения падений Safari на мобильных устройствах
+        this.maskCanvas.width = 0;
+        this.maskCanvas.height = 0;
+        this.maskCtx = null;
       }
 
       this.isLoaded = true;
@@ -93,22 +97,23 @@ export class WorldMap {
   }
 
   /**
-   * Главная функция игры: Определение зоны и её параметров по игровой координате (X, Y)
+   * Определение зоны и её параметров по игровой координате (X, Y)
    */
   public getZoneAt(worldX: number, worldY: number): ZoneConfig {
     if (!this.isLoaded || !this.maskData) {
       return OCEAN_ZONES_CONFIG[0]; // Возвращаем дефолтную зону до загрузки
     }
 
-    // Перевод мировых координат в координаты пикселей маски
+    // Перевод мировых координат в проценты (0..1)
     const normalizedX = Math.max(0, Math.min(1, worldX / this.worldWidth));
     const normalizedY = Math.max(0, Math.min(1, worldY / this.worldHeight));
 
-    const pixelX = Math.floor(normalizedX * (this.maskCanvas.width - 1));
-    const pixelY = Math.floor(normalizedY * (this.maskCanvas.height - 1));
+    // Проекция на пиксели маски (используем свойства самого maskData)
+    const pixelX = Math.floor(normalizedX * (this.maskData.width - 1));
+    const pixelY = Math.floor(normalizedY * (this.maskData.height - 1));
 
-    // Считывание RGBA пикселя
-    const index = (pixelY * this.maskCanvas.width + pixelX) * 4;
+    // Считывание RGBA пикселя из массива
+    const index = (pixelY * this.maskData.width + pixelX) * 4;
     const r = this.maskData.data[index];
     const g = this.maskData.data[index + 1];
     const b = this.maskData.data[index + 2];
@@ -136,10 +141,10 @@ export class WorldMap {
   }
 
   public update(_deltaSeconds: number): void {
-    // В будущем здесь можно добавить анимации воды или частиц
+    // Резерв для анимаций водных эффектов / частиц
   }
 
   public updateTimeState(_hours: number): void {
-    // Логика смены времени суток/освещения при необходимости
+    // Резерв для эффектов смены дня и ночи
   }
 }
