@@ -3,6 +3,7 @@
 import * as PIXI from 'pixi.js';
 import { OCEAN_ZONES_CONFIG, LAND_ZONE_CONFIG } from './zoneConfig';
 import { ZoneConfig } from './types';
+import { ShoreEffects, OpenWaterEffects } from './water';
 
 export class WorldMap {
   public container: PIXI.Container;
@@ -18,6 +19,10 @@ export class WorldMap {
 
   private isLoaded: boolean = false;
 
+  // Модули спецэффектов воды
+  private shoreEffects: ShoreEffects;
+  private openWaterEffects: OpenWaterEffects;
+
   constructor(width: number, height: number) {
     this.container = new PIXI.Container();
     this.worldWidth = width;
@@ -25,6 +30,10 @@ export class WorldMap {
 
     this.maskCanvas = document.createElement('canvas');
     this.maskCtx = this.maskCanvas.getContext('2d', { willReadFrequently: true });
+
+    // Инициализация спецэффектов воды
+    this.shoreEffects = new ShoreEffects();
+    this.openWaterEffects = new OpenWaterEffects();
 
     this.initMap();
   }
@@ -34,12 +43,16 @@ export class WorldMap {
    */
   private async initMap(): Promise<void> {
     try {
-      // 1. Загрузка визуальной текстуры (обновлено до .png)
+      // 1. Загрузка визуальной текстуры
       const visualTexture = await PIXI.Assets.load('assets/ocean_visual.png');
       this.mapSprite = new PIXI.Sprite(visualTexture);
       this.mapSprite.width = this.worldWidth;
       this.mapSprite.height = this.worldHeight;
       this.container.addChild(this.mapSprite);
+
+      // Добавляем эффекты воды поверх картинки карты
+      this.container.addChild(this.openWaterEffects.container);
+      this.container.addChild(this.shoreEffects.container);
 
       // 2. Безопасная загрузка маски зон через PixiJS
       const maskTexture = await PIXI.Assets.load('assets/ocean_zones_mask.png');
@@ -66,11 +79,40 @@ export class WorldMap {
       }
 
       this.isLoaded = true;
-      console.log('WorldMap: Визуальная карта и маска зон успешно загружены.');
+
+      // Автоматическое определение береговой линии и инициализация эффектов
+      const shorePoints = this.getShorelinePoints();
+      this.shoreEffects.initShoreline(shorePoints);
+      this.openWaterEffects.init(shorePoints);
+
+      console.log('WorldMap: Карта, маска и эффекты воды успешно загружены.');
 
     } catch (error) {
       console.error('WorldMap: Ошибка при загрузке карт из assets/:', error);
     }
+  }
+
+  /**
+   * Сканирование маски для автоматического построения координат береговой линии
+   */
+  public getShorelinePoints(): { x: number; y: number }[] {
+    if (!this.maskData) return [];
+
+    const points: { x: number; y: number }[] = [];
+    const stepY = 30; // Шаг сканирования по высоте (чем меньше, тем точнее повторяется изгиб)
+
+    for (let y = 0; y < this.worldHeight; y += stepY) {
+      // Ищем границу перехода от суши к воде справа налево
+      for (let x = this.worldWidth; x >= 0; x -= 15) {
+        const zone = this.getZoneAt(x, y);
+        if (zone.id !== 'land') {
+          points.push({ x, y });
+          break;
+        }
+      }
+    }
+
+    return points;
   }
 
   /**
@@ -82,7 +124,7 @@ export class WorldMap {
   }
 
   /**
-   * Вычисление расстояния между двумя цветами (для допуска по погрешности сжатия)
+   * Вычисление расстояния между двумя цветами
    */
   private colorDistance(hex1: string, hex2: string): number {
     const r1 = parseInt(hex1.substring(1, 3), 16);
@@ -104,15 +146,12 @@ export class WorldMap {
       return OCEAN_ZONES_CONFIG[0]; // Возвращаем дефолтную зону до загрузки
     }
 
-    // Перевод мировых координат в проценты (0..1)
     const normalizedX = Math.max(0, Math.min(1, worldX / this.worldWidth));
     const normalizedY = Math.max(0, Math.min(1, worldY / this.worldHeight));
 
-    // Проекция на пиксели маски (используем свойства самого maskData)
     const pixelX = Math.floor(normalizedX * (this.maskData.width - 1));
     const pixelY = Math.floor(normalizedY * (this.maskData.height - 1));
 
-    // Считывание RGBA пикселя из массива
     const index = (pixelY * this.maskData.width + pixelX) * 4;
     const r = this.maskData.data[index];
     const g = this.maskData.data[index + 1];
@@ -140,8 +179,12 @@ export class WorldMap {
     return closestZone;
   }
 
-  public update(_deltaSeconds: number): void {
-    // Резерв для анимаций водных эффектов / частиц
+  public update(deltaSeconds: number): void {
+    if (!this.isLoaded) return;
+
+    // Обновляем анимацию волн и прибоя на каждом кадре
+    this.openWaterEffects.update(deltaSeconds);
+    this.shoreEffects.update(deltaSeconds);
   }
 
   public updateTimeState(_hours: number): void {
