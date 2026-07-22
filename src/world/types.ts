@@ -27,7 +27,7 @@ export interface EnvironmentalParameters {
 export interface ZoneConfig {
   type: OceanZoneType;
   name: string;
-  color: number;
-  widthRatio: number;
+  color: number;       // Числовой HEX (например, 0x010048) для рендера/Pixi.js
+  hexColor: string;    // Строковый HEX (например, '#010048') для сверки пикселей маски
   params: EnvironmentalParameters;
 }

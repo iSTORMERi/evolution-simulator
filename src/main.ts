@@ -1,3 +1,5 @@
+// src/main.ts
+
 import * as PIXI from 'pixi.js';
 import { WorldMap } from './world/WorldMap';
 import { CameraController } from './world/CameraController';
@@ -10,7 +12,7 @@ async function initApp() {
   const appContainer = document.getElementById('app');
   if (!appContainer) return;
 
-  // Очистка предыдущего инстанса при перезагрузке (защита от утечек памяти)
+  // Очистка предыдущего инстанса при перезагрузке
   if (currentApp) {
     try {
       currentApp.destroy(true, { children: true, texture: true, baseTexture: true });
@@ -26,18 +28,16 @@ async function initApp() {
   currentApp = app;
 
   try {
-    // Делегируем ресайз самому PixiJS
     await app.init({
       resizeTo: window,
       backgroundColor: 0x0d1117,
-      resolution: Math.min(window.devicePixelRatio || 1, 2), // Безопасное ограничение DPR для iOS
+      resolution: Math.min(window.devicePixelRatio || 1, 2),
       autoDensity: true,
       preference: 'webgl',
     });
 
     const canvas = app.canvas;
     
-    // Используем проценты для корректной работы в мобильных браузерах (без 100vw/vh)
     canvas.style.position = 'fixed';
     canvas.style.top = '0';
     canvas.style.left = '0';
@@ -48,24 +48,23 @@ async function initApp() {
 
     appContainer.appendChild(canvas);
 
-    // Оптимальный размер для мобильных GPU
+    // Размеры игрового мира
     const WORLD_WIDTH = 8000;  
     const WORLD_HEIGHT = 8000;
-    const COASTAL_RATIO = 0.28;
 
-    // 1. Создание мира
-    const worldMap = new WorldMap(WORLD_WIDTH, WORLD_HEIGHT, COASTAL_RATIO);
+    // 1. Создание мира (без устаревшего COASTAL_RATIO)
+    const worldMap = new WorldMap(WORLD_WIDTH, WORLD_HEIGHT);
     app.stage.addChild(worldMap.container);
 
-    // 2. Инициализация камеры (без ручного вмешательства в pivot/position)
+    // 2. Инициализация камеры
     const camera = new CameraController(worldMap.container, canvas, WORLD_WIDTH, WORLD_HEIGHT);
     
     if (typeof camera.fillScreen === 'function') {
       camera.fillScreen(app.screen.width, app.screen.height);
     }
 
-    // 3. Освещение и UI
-    const lightingController = new LightingController(worldMap.container, worldMap.waterManager);
+    // 3. Освещение и UI (передаем только контейнер)
+    const lightingController = new LightingController(worldMap.container);
     new TimeDebugUI(lightingController);
 
     // 4. Главный игровой цикл
@@ -74,9 +73,8 @@ async function initApp() {
       worldMap.update(deltaSeconds);
     });
 
-    // Обработка поворота экрана / ресайза
+    // Обработка ресайза
     window.addEventListener('resize', () => {
-      // app.screen уже обновлен благодаря resizeTo: window
       if (typeof camera.fillScreen === 'function') {
         camera.fillScreen(app.screen.width, app.screen.height);
       }
