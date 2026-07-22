@@ -35,28 +35,23 @@ export class WorldMap {
    */
   private async initMap(): Promise<void> {
     try {
-      // 1. Загрузка визуальной текстуры
-      const visualTexture = await PIXI.Assets.load('/assets/ocean_visual.jpeg');
+      // 1. Загрузка визуальной текстуры (относительный путь без ведущего '/')
+      const visualTexture = await PIXI.Assets.load('assets/ocean_visual.jpeg');
       this.mapSprite = new PIXI.Sprite(visualTexture);
       this.mapSprite.width = this.worldWidth;
       this.mapSprite.height = this.worldHeight;
       this.container.addChild(this.mapSprite);
 
-      // 2. Загрузка и подготовка маски зон для считывания координат
-      const maskImage = new Image();
-      maskImage.src = '/assets/ocean_zones_mask.png';
-      
-      await new Promise<void>((resolve, reject) => {
-        maskImage.onload = () => resolve();
-        maskImage.onerror = (err) => reject(err);
-      });
+      // 2. Безопасная загрузка маски зон через PixiJS (обход CORS/GitHub Pages ограничений)
+      const maskTexture = await PIXI.Assets.load('assets/ocean_zones_mask.png');
+      const maskSource = maskTexture.source.resource as HTMLImageElement | HTMLCanvasElement;
 
       // Располагаем маску на фоновом Canvas
-      this.maskCanvas.width = maskImage.naturalWidth;
-      this.maskCanvas.height = maskImage.naturalHeight;
+      this.maskCanvas.width = maskTexture.width;
+      this.maskCanvas.height = maskTexture.height;
 
       if (this.maskCtx) {
-        this.maskCtx.drawImage(maskImage, 0, 0);
+        this.maskCtx.drawImage(maskSource, 0, 0);
         // Кешируем пиксельные данные для мгновенного доступа
         this.maskData = this.maskCtx.getImageData(
           0, 
@@ -70,7 +65,7 @@ export class WorldMap {
       console.log('WorldMap: Визуальная карта и маска зон успешно загружены.');
 
     } catch (error) {
-      console.error('WorldMap: Ошибка при загрузке карт из /assets/:', error);
+      console.error('WorldMap: Ошибка при загрузке карт из assets/:', error);
     }
   }
 
@@ -141,7 +136,7 @@ export class WorldMap {
   }
 
   public update(_deltaSeconds: number): void {
-    // Здесь можно вызывать обновленя анимаций, если они понадобятся
+    // В будущем здесь можно добавить анимации воды или частиц
   }
 
   public updateTimeState(_hours: number): void {
