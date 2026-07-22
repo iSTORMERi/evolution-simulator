@@ -85,7 +85,7 @@ export class WorldMap {
       this.shoreEffects.initShoreline(shorePoints);
       this.openWaterEffects.init(shorePoints);
 
-      console.log('WorldMap: Карта, маска и эффекты воды успешно загружены.');
+      console.log(`WorldMap: Карта и эффекты загружены. Найдено точек берега: ${shorePoints.length}`);
 
     } catch (error) {
       console.error('WorldMap: Ошибка при загрузке карт из assets/:', error);
@@ -99,13 +99,13 @@ export class WorldMap {
     if (!this.maskData) return [];
 
     const points: { x: number; y: number }[] = [];
-    const stepY = 30; // Шаг сканирования по высоте (чем меньше, тем точнее повторяется изгиб)
+    const stepY = 25; // Шаг сканирования по высоте (чем меньше, тем точнее повторяется изгиб)
 
     for (let y = 0; y < this.worldHeight; y += stepY) {
       // Ищем границу перехода от суши к воде справа налево
       for (let x = this.worldWidth; x >= 0; x -= 15) {
         const zone = this.getZoneAt(x, y);
-        if (zone.id !== 'land') {
+        if (zone.id !== LAND_ZONE_CONFIG.id) {
           points.push({ x, y });
           break;
         }
