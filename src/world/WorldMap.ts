@@ -47,10 +47,11 @@ export class WorldMap {
       this.mapSprite.height = this.worldHeight;
       this.container.addChild(this.mapSprite);
 
-      // Правильный порядок слоев: сначала глубина, затем бегущие волны, поверх -- кромка берега
+      // --- ИСПРАВЛЕНИЕ 1: Новый порядок слоев ---
+      // Сначала глубина -> затем береговая пена/песок -> ПОВЕРХ них бегущие волны
       this.container.addChild(this.openWaterEffects.container);
-      this.container.addChild(this.waves.container);
       this.container.addChild(this.shoreEffects.container);
+      this.container.addChild(this.waves.container);
 
       // 2. Безопасная загрузка маски через нативный HTML Image (обходит баги Pixi v8)
       const img = new Image();
@@ -127,9 +128,9 @@ export class WorldMap {
   }
 
   public getShorelinePoints(): { x: number; y: number }[] {
-    const points: { x: number; y: number }[] = [];
+    const rawPoints: { x: number; y: number }[] = [];
     
-    if (!this.maskData) return points;
+    if (!this.maskData) return rawPoints;
 
     const maskW = this.maskData.width;
     const maskH = this.maskData.height;
@@ -158,18 +159,47 @@ export class WorldMap {
       }
 
       if (foundShoreX !== -1) {
-        // Смещаем координату немного влево (-5 пикселей маски), 
-        // чтобы линия гарантированно находилась в воде
         const waterOffsetX = Math.max(0, foundShoreX - 5);
         
         const worldX = (waterOffsetX / maskW) * this.worldWidth;
         const worldY = (py / maskH) * this.worldHeight;
-        points.push({ x: worldX, y: worldY });
+        rawPoints.push({ x: worldX, y: worldY });
       }
     }
 
+    if (rawPoints.length < 2) return rawPoints;
+
+    // --- ИСПРАВЛЕНИЕ 2: Запас точек сверху и снизу за пределами экрана ---
+    const margin = 250; // Запас в пикселях за границы экрана
+
+    // Точка-продление наверх
+    const first = rawPoints[0];
+    const second = rawPoints[1];
+    const topDirX = first.x - second.x;
+    const topDirY = first.y - second.y;
+    const topLen = Math.hypot(topDirX, topDirY) || 1;
+    
+    const extendedTop = {
+      x: first.x + (topDirX / topLen) * margin,
+      y: first.y - margin,
+    };
+
+    // Точка-продление вниз
+    const last = rawPoints[rawPoints.length - 1];
+    const prevLast = rawPoints[rawPoints.length - 2];
+    const botDirX = last.x - prevLast.x;
+    const botDirY = last.y - prevLast.y;
+    const botLen = Math.hypot(botDirX, botDirY) || 1;
+
+    const extendedBottom = {
+      x: last.x + (botDirX / botLen) * margin,
+      y: last.y + margin,
+    };
+
+    const extendedPoints = [extendedTop, ...rawPoints, extendedBottom];
+
     // Возвращаем сглаженный массив точек
-    return this.smoothLine(points, 4);
+    return this.smoothLine(extendedPoints, 4);
   }
 
   private rgbToHex(r: number, g: number, b: number): string {
