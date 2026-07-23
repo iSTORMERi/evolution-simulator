@@ -7,15 +7,23 @@ export interface ShorePoint {
   y: number;
 }
 
+interface FoamParticle {
+  x: number;
+  y: number;
+  radius: number;
+  alpha: number;
+  life: number; // время жизни пузырька на песке
+}
+
 export class ShoreEffects {
   public container: PIXI.Container;
 
-  private oceanFillGraphics: PIXI.Graphics; 
-  private wetSandGraphics: PIXI.Graphics;
-  private waveShadowGraphics: PIXI.Graphics;
-  private waterBaseGraphics: PIXI.Graphics;
-  private foamGraphics: PIXI.Graphics;
-  private laceGraphics: PIXI.Graphics;
+  // Слои эффектов
+  private oceanBaseGraphics: PIXI.Graphics; // Стационарная лазурная подложка
+  private wetSandGraphics: PIXI.Graphics;   // Широкая зона мокрого песка
+  private shallowWaterGraphics: PIXI.Graphics; // Движущийся широкий пласт лазурной воды
+  private foamLaceGraphics: PIXI.Graphics;   // Переплетенные косы пены
+  private residualFoamGraphics: PIXI.Graphics; // Остаточные островки пены на песке и в воде
 
   private time: number = 0;
   private shorePoints: ShorePoint[] = [];
@@ -23,22 +31,18 @@ export class ShoreEffects {
   constructor() {
     this.container = new PIXI.Container();
 
-    this.oceanFillGraphics = new PIXI.Graphics();
+    this.oceanBaseGraphics = new PIXI.Graphics();
     this.wetSandGraphics = new PIXI.Graphics();
-    this.waveShadowGraphics = new PIXI.Graphics();
-    this.waterBaseGraphics = new PIXI.Graphics();
-    this.foamGraphics = new PIXI.Graphics();
-    this.laceGraphics = new PIXI.Graphics();
+    this.shallowWaterGraphics = new PIXI.Graphics();
+    this.foamLaceGraphics = new PIXI.Graphics();
+    this.residualFoamGraphics = new PIXI.Graphics();
 
-    // Порядок слоев: 
-    // 1. Статичный океан -> 2. Мокрый песок -> 3. Кружево -> 
-    // 4. Тень вала -> 5. Бирюзовая подложка -> 6. Пена
-    this.container.addChild(this.oceanFillGraphics);
+    // Иерархия слоев от нижней к верхней
+    this.container.addChild(this.oceanBaseGraphics);
     this.container.addChild(this.wetSandGraphics);
-    this.container.addChild(this.laceGraphics);
-    this.container.addChild(this.waveShadowGraphics);
-    this.container.addChild(this.waterBaseGraphics);
-    this.container.addChild(this.foamGraphics);
+    this.container.addChild(this.shallowWaterGraphics);
+    this.container.addChild(this.residualFoamGraphics);
+    this.container.addChild(this.foamLaceGraphics);
   }
 
   public initShoreline(shorePoints: ShorePoint[]): void {
@@ -50,98 +54,120 @@ export class ShoreEffects {
 
     if (this.shorePoints.length === 0) return;
 
-    this.oceanFillGraphics.clear();
+    this.oceanBaseGraphics.clear();
     this.wetSandGraphics.clear();
-    this.waveShadowGraphics.clear();
-    this.waterBaseGraphics.clear();
-    this.foamGraphics.clear();
-    this.laceGraphics.clear();
+    this.shallowWaterGraphics.clear();
+    this.foamLaceGraphics.clear();
+    this.residualFoamGraphics.clear();
 
-    // Динамика наката
-    const rawCycle = Math.sin(this.time * 1.1);
-    const swashPhase = Math.pow((rawCycle + 1) / 2, 0.65); 
-    const waveAdvance = swashPhase * 50; 
+    // === 1. РАСЧЕТ ДИНАМИКИ ВОЛНЫ (Накат / Откат) ===
+    // Асимметричная фаза: быстрый накат, медленный откат
+    const cycle = Math.sin(this.time * 0.9);
+    const swash = Math.pow((cycle + 1) / 2, 0.7); // 0.0 (полный откат) -> 1.0 (максимальный накат)
+    
+    const maxSwashDistance = 55; // Насколько далеко волна заходит на песок
+    const waveOffset = swash * maxSwashDistance;
 
-    // 0. ФИКСИРОВАННАЯ ПОДЛОЖКА ОКЕАНА (Точный пипетки-цвет 0x1dcadb, широкая заливка влево)
+    // === 2. СТАЦИОНАРНАЯ ЛАЗУРНАЯ ПОДЛОЖКА (Закрывает зазоры, цвет прибрежной лазури) ===
     for (let i = 0; i < this.shorePoints.length; i++) {
       const pt = this.shorePoints[i];
-      const baseOffset = -50 + Math.sin(pt.y * 0.003) * 4;
+      const organicCurve = Math.sin(pt.y * 0.002) * 8;
+      const offset = -40 + organicCurve; // Уходит глубоко в сторону моря
       
-      if (i === 0) this.oceanFillGraphics.moveTo(pt.x + baseOffset, pt.y);
-      else this.oceanFillGraphics.lineTo(pt.x + baseOffset, pt.y);
+      if (i === 0) this.oceanBaseGraphics.moveTo(pt.x + offset, pt.y);
+      else this.oceanBaseGraphics.lineTo(pt.x + offset, pt.y);
     }
-    // Используем идеальный лазурный оттенок прибрежной зоны и ширину 180px
-    this.oceanFillGraphics.stroke({ color: 0x1dcadb, width: 180, alpha: 1.0 });
+    // Широкий плотный массив цвета прибрежной лазурной воды
+    this.oceanBaseGraphics.stroke({ color: 0x24cad8, width: 160, alpha: 0.95 });
 
-    // 1. МОКРЫЙ ПЕСОК (Сдвинут вправо на светлую кайму суши!)
+
+    // === 3. ЗОНА МОКРОГО ПЕСКА (Широкая полоса на границе суши) ===
     for (let i = 0; i < this.shorePoints.length; i++) {
       const pt = this.shorePoints[i];
-      const organicNoise = Math.sin(pt.y * 0.003 + this.time * 0.2) * 8;
-      // offset +48 выносит мокрый песок точно на светлую полосу песка
-      const offset = 48 + organicNoise; 
+      // Медленно меняющийся рельеф намокания
+      const wetNoise = Math.sin(pt.y * 0.004 + this.time * 0.15) * 12;
+      const offset = 35 + wetNoise; // Располагается прямо на светлом песке
       
       if (i === 0) this.wetSandGraphics.moveTo(pt.x + offset, pt.y);
       else this.wetSandGraphics.lineTo(pt.x + offset, pt.y);
     }
-    // Сочный тёмный след намокания (ширина 70px)
-    this.wetSandGraphics.stroke({ color: 0x221508, width: 70, alpha: 0.38 });
+    // Сочная широкая полоса темного мокрого песка (ширина 90px)
+    this.wetSandGraphics.stroke({ color: 0x22160a, width: 90, alpha: 0.32 });
 
-    // 2. ОСТАТОЧНОЕ КРУЖЕВО ПЕНЫ
-    const laceAlpha = Math.max(0, Math.sin(this.time * 1.1 + 0.3) * 0.75); 
-    if (laceAlpha > 0.05) {
+
+    // === 4. ДВИЖУЩИЙСЯ ПЛАСТ МЕЛКОВОДНОЙ ВОДЫ (Лазурный массив) ===
+    for (let i = 0; i < this.shorePoints.length; i++) {
+      const pt = this.shorePoints[i];
+      const waterNoise = Math.sin(pt.y * 0.003 + this.time * 0.8) * 10 + Math.sin(pt.y * 0.01) * 5;
+      const offset = waveOffset + waterNoise - 15;
+
+      if (i === 0) this.shallowWaterGraphics.moveTo(pt.x + offset, pt.y);
+      else this.shallowWaterGraphics.lineTo(pt.x + offset, pt.y);
+    }
+    // Яркая полупрозрачная лазурная вода, затапливающая берег (ширина 80px)
+    this.shallowWaterGraphics.stroke({ color: 0x42e3f0, width: 80, alpha: 0.45 });
+
+
+    // === 5. ОСТАТОЧНАЯ ПЕНА (В море до наката и на песке после отката) ===
+    // А) Пена в море (заметна на фазе отката/затишья)
+    const seaFoamAlpha = (1 - swash) * 0.4;
+    if (seaFoamAlpha > 0.05) {
+      for (let i = 0; i < this.shorePoints.length; i += 3) {
+        const pt = this.shorePoints[i];
+        const seaNoise = Math.sin(pt.y * 0.03 + this.time) * 12;
+        const seaOffset = -15 + seaNoise;
+        this.residualFoamGraphics.circle(pt.x + seaOffset, pt.y, 2 + Math.abs(Math.sin(pt.y)) * 3);
+      }
+      this.residualFoamGraphics.fill({ color: 0xe0ffff, alpha: seaFoamAlpha });
+    }
+
+    // Б) Остаточное кружево на песке (остается впереди, когда волна уходит назад)
+    const shoreLaceAlpha = Math.max(0, (1 - swash) * 0.65);
+    if (shoreLaceAlpha > 0.05) {
       for (let i = 0; i < this.shorePoints.length; i += 2) {
         const pt = this.shorePoints[i];
-        const bubbleNoise = Math.sin(pt.y * 0.04) * 10;
-        const laceOffset = 45 + bubbleNoise; 
+        const sandLaceNoise = Math.sin(pt.y * 0.05) * 14;
+        const laceOffset = 42 + sandLaceNoise; // Вынесена далеко на берег
         
-        const radius = 2.0 + Math.abs(Math.sin(pt.y * 0.1)) * 4.0;
-        this.laceGraphics.circle(pt.x + laceOffset, pt.y, radius);
+        const bubbleSize = 2.5 + Math.sin(pt.y * 0.2) * 2;
+        this.residualFoamGraphics.circle(pt.x + laceOffset, pt.y, bubbleSize);
       }
-      this.laceGraphics.fill({ color: 0xffffff, alpha: laceAlpha });
+      this.residualFoamGraphics.fill({ color: 0xffffff, alpha: shoreLaceAlpha });
     }
 
-    // 3. МЯГКАЯ ТЕНЬ НАБЕГАЮЩЕГО ВАЛА
-    for (let i = 0; i < this.shorePoints.length; i++) {
+
+    // === 6. КОРСЕТ / КОСЫ ПЕНЫ (Неоднородная сетка из переплетающихся линий) ===
+    // Вместо 1 линии рисуем 3 перекрещивающиеся нити с разными частотами шума:
+    const strandConfigs = [
+      { width: 18, alpha: 0.85, speed: 1.0, freq1: 0.003, freq2: 0.015, shift: 0 },   // Главный фронт
+      { width: 10, alpha: 0.65, speed: 1.3, freq1: 0.006, freq2: 0.025, shift: -8 },  // Внутренняя коса
+      { width: 7,  alpha: 0.50, speed: 0.8, freq1: 0.002, freq2: 0.030, shift: +6 },  // Внешняя рваная жила
+    ];
+
+    strandConfigs.forEach(config => {
+      for (let i = 0; i < this.shorePoints.length; i++) {
+        const pt = this.shorePoints[i];
+        
+        // Сложный интерферирующий шум для создания ажурных "кос"
+        const wave1 = Math.sin(pt.y * config.freq1 + this.time * config.speed * 1.2) * 14;
+        const wave2 = Math.cos(pt.y * config.freq2 + this.time * config.speed * 1.8) * 8;
+        const offset = waveOffset + wave1 + wave2 + config.shift;
+
+        if (i === 0) this.foamLaceGraphics.moveTo(pt.x + offset, pt.y);
+        else this.foamLaceGraphics.lineTo(pt.x + offset, pt.y);
+      }
+      this.foamLaceGraphics.stroke({ color: 0xf2ffff, width: config.width, alpha: config.alpha });
+    });
+
+    // Белоснежные яркие акценты в узлах переплетения пены
+    for (let i = 0; i < this.shorePoints.length; i += 2) {
       const pt = this.shorePoints[i];
-      const multiNoise = Math.sin(pt.y * 0.003 + this.time * 0.7) * 10 + Math.sin(pt.y * 0.01) * 5;
-      const offset = waveAdvance + multiNoise - 22;
+      const crestNoise = Math.sin(pt.y * 0.003 + this.time * 1.2) * 14 + Math.cos(pt.y * 0.015 + this.time * 1.8) * 8;
+      const offset = waveOffset + crestNoise + 2;
 
-      if (i === 0) this.waveShadowGraphics.moveTo(pt.x + offset, pt.y);
-      else this.waveShadowGraphics.lineTo(pt.x + offset, pt.y);
+      if (i === 0) this.foamLaceGraphics.moveTo(pt.x + offset, pt.y);
+      else this.foamLaceGraphics.lineTo(pt.x + offset, pt.y);
     }
-    this.waveShadowGraphics.stroke({ color: 0x022c36, width: 50, alpha: 0.35 });
-
-    // 4. ПРОЗРАЧНАЯ БИРЮЗОВАЯ ВОДЯНАЯ ПОДУШКА
-    for (let i = 0; i < this.shorePoints.length; i++) {
-      const pt = this.shorePoints[i];
-      const multiNoise = Math.sin(pt.y * 0.003 + this.time * 0.7) * 10 + Math.sin(pt.y * 0.01) * 5;
-      const offset = waveAdvance + multiNoise - 8;
-
-      if (i === 0) this.waterBaseGraphics.moveTo(pt.x + offset, pt.y);
-      else this.waterBaseGraphics.lineTo(pt.x + offset, pt.y);
-    }
-    this.waterBaseGraphics.stroke({ color: 0x22abbf, width: 40, alpha: 0.55 });
-
-    // 5. РВАНАЯ ПЕНА ПРИБОЯ (Языки)
-    for (let i = 0; i < this.shorePoints.length; i++) {
-      const pt = this.shorePoints[i];
-      const foamTongues = Math.sin(pt.y * 0.003 + this.time * 1.2) * 10 + Math.sin(pt.y * 0.012 + this.time * 2.0) * 8;
-      const offset = waveAdvance + foamTongues;
-
-      if (i === 0) this.foamGraphics.moveTo(pt.x + offset, pt.y);
-      else this.foamGraphics.lineTo(pt.x + offset, pt.y);
-    }
-    this.foamGraphics.stroke({ color: 0xe4f7f7, width: 34, alpha: 0.82 });
-
-    // 6. БЕЛОСНЕЖНЫЙ ГРЕБЕНЬ
-    for (let i = 0; i < this.shorePoints.length; i++) {
-      const pt = this.shorePoints[i];
-      const crestTongues = Math.sin(pt.y * 0.003 + this.time * 1.2) * 10 + Math.cos(pt.y * 0.015 + this.time * 2.2) * 6;
-      const offset = waveAdvance + crestTongues + 3;
-
-      if (i === 0) this.foamGraphics.moveTo(pt.x + offset, pt.y);
-      else this.foamGraphics.lineTo(pt.x + offset, pt.y);
-    }
-    this.foamGraphics.stroke({ color: 0xffffff, width: 12, alpha: 0.95 });
+    this.foamLaceGraphics.stroke({ color: 0xffffff, width: 6, alpha: 0.95 });
   }
 }
