@@ -54,15 +54,14 @@ export class WorldMap {
       this.mapSprite.height = this.worldHeight;
       this.container.addChild(this.mapSprite);
 
-      // 2. Строгий порядок визуальных слоев:
-      // Карта -> Береговые эффекты -> Волны поверх берега -> Прицел
+      // 2. Порядок слоев: Карта -> Берег -> Волны -> Прицел
       this.container.addChild(this.shoreEffects.container);
       this.container.addChild(this.waves.container);
 
       this.initTargetMarker();
       this.container.addChild(this.targetMarker);
 
-      // 3. Загрузка маски через нативный HTML Image (абсолютная стабильность для чтения пикселей)
+      // 3. Загрузка маски через HTML Image для чтения пикселей
       const img = new Image();
       img.src = 'assets/ocean_zones_mask.png';
       
@@ -76,16 +75,18 @@ export class WorldMap {
 
       if (this.maskCtx) {
         this.maskCtx.drawImage(img, 0, 0);
-        // СОХРАНЯЕМ maskData и НЕ сбрасываем width/height холста!
         this.maskData = this.maskCtx.getImageData(0, 0, img.width, img.height);
         
-        // 4. Передаём в Pixi Texture запечённый Canvas для моментальной отдачи маски в GPU
+        // 4. Передаём в Pixi Texture запечённый Canvas с четким сэмплированием (nearest)
         try {
-          const maskPixiTexture = PIXI.Texture.from(this.maskCanvas);
+          const maskPixiTexture = PIXI.Texture.from(this.maskCanvas, {
+            scaleMode: 'nearest',
+          });
+          
           this.highlightFilter = new BiomeHighlightFilter(maskPixiTexture, img.width, img.height);
           this.mapSprite.filters = [this.highlightFilter];
         } catch (shaderError) {
-          console.warn('WorldMap: Ошибка при инициализации шейдера подсветки (пропущено для сохранения эффектов):', shaderError);
+          console.warn('WorldMap: Ошибка при инициализации шейдера подсветки:', shaderError);
         }
       }
 
@@ -102,41 +103,35 @@ export class WorldMap {
   }
 
   /**
-   * Крупный, высококонтрастный оранжево-янтарный маркер прицела
+   * Крупный, жирный, минималистичный оранжевый маркер
    */
   private initTargetMarker(): void {
     const g = this.targetMarker;
     g.clear();
-    
-    // 1. Контрастная тёмная подложка (чтобы выделяться на светлом песке и бирюзовой воде)
-    g.circle(0, 0, 24);
-    g.stroke({ width: 5, color: 0x0f172a, alpha: 0.6 });
 
-    // 2. Внешнее оранжевое кольцо
+    // 1. Внешняя тёмная контрастная тень (слой 1)
     g.circle(0, 0, 22);
-    g.stroke({ width: 3.5, color: 0xff5500, alpha: 1.0 });
+    g.stroke({ width: 8, color: 0x0f172a, alpha: 0.5 });
 
-    // 3. Белая обводка внутри кольца для свечения
-    g.circle(0, 0, 18);
-    g.stroke({ width: 1.5, color: 0xffffff, alpha: 0.9 });
-    
-    // 4. Яркая точка по центру
+    // 2. Жирное белое внешнее кольцо (слой 2)
+    g.circle(0, 0, 20);
+    g.stroke({ width: 6, color: 0xffffff, alpha: 0.95 });
+
+    // 3. Основное яркое оранжевое кольцо (слой 3)
+    g.circle(0, 0, 20);
+    g.stroke({ width: 3.5, color: 0xff4500, alpha: 1.0 });
+
+    // 4. Тёмная тень вокруг центральной точки
+    g.circle(0, 0, 8);
+    g.fill({ color: 0x0f172a, alpha: 0.6 });
+
+    // 5. Белая подложка под точку
     g.circle(0, 0, 7);
-    g.fill({ color: 0xff5500, alpha: 1.0 });
-    g.circle(0, 0, 3);
     g.fill({ color: 0xffffff, alpha: 1.0 });
-    
-    // 5. Лучи прицела (Тень + яркий оранжевый луч)
-    const drawCross = (color: number, width: number, alpha: number) => {
-      g.moveTo(-32, 0).lineTo(-12, 0);
-      g.moveTo(12, 0).lineTo(32, 0);
-      g.moveTo(0, -32).lineTo(0, -12);
-      g.moveTo(0, 12).lineTo(0, 32);
-      g.stroke({ width, color, alpha });
-    };
 
-    drawCross(0x0f172a, 5, 0.6); // Тень
-    drawCross(0xff5500, 3, 1.0); // Оранжевая линия
+    // 6. Сочная оранжевая центральная точка
+    g.circle(0, 0, 5);
+    g.fill({ color: 0xff4500, alpha: 1.0 });
   }
 
   /**
