@@ -71,7 +71,7 @@ export class WorldMap {
 
       this.isLoaded = true;
 
-      // 3. Сканируем берег
+      // 3. Сканируем берег и сглаживаем его
       const shorePoints = this.getShorelinePoints();
       this.shoreEffects.initShoreline(shorePoints);
       this.openWaterEffects.init(shorePoints);
@@ -82,8 +82,45 @@ export class WorldMap {
   }
 
   /**
-   * Улучшенный алгоритм сканирования берега на основе детекции контраста
+   * Сглаживание ломаной линии (Алгоритм обрезки углов Чайкина)
    */
+  private smoothLine(points: { x: number; y: number }[], iterations: number = 3): { x: number; y: number }[] {
+    if (points.length < 3) return points;
+
+    let currentPoints = points;
+
+    for (let i = 0; i < iterations; i++) {
+      const newPoints: { x: number; y: number }[] = [];
+      
+      // Сохраняем первую точку
+      newPoints.push(currentPoints[0]);
+
+      for (let j = 0; j < currentPoints.length - 1; j++) {
+        const p0 = currentPoints[j];
+        const p1 = currentPoints[j + 1];
+
+        // Создаем две новые точки на 25% и 75% отрезка
+        const q = {
+          x: 0.75 * p0.x + 0.25 * p1.x,
+          y: 0.75 * p0.y + 0.25 * p1.y
+        };
+        const r = {
+          x: 0.25 * p0.x + 0.75 * p1.x,
+          y: 0.25 * p0.y + 0.75 * p1.y
+        };
+
+        newPoints.push(q);
+        newPoints.push(r);
+      }
+
+      // Сохраняем последнюю точку
+      newPoints.push(currentPoints[currentPoints.length - 1]);
+      currentPoints = newPoints;
+    }
+
+    return currentPoints;
+  }
+
   public getShorelinePoints(): { x: number; y: number }[] {
     const points: { x: number; y: number }[] = [];
     
@@ -93,46 +130,42 @@ export class WorldMap {
     const maskH = this.maskData.height;
     const data = this.maskData.data;
 
-    // Шаг сканирования по высоте маски (~100-150 точек по всей длине)
+    // Шаг сканирования по высоте маски (~150 точек для хорошей детализации)
     const stepY = Math.max(2, Math.floor(maskH / 150)); 
-    // Шаг сканирования по ширине маски для высокой точности
     const stepX = 2; 
 
     for (let py = 0; py < maskH; py += stepY) {
       let foundShoreX = -1;
 
       // Сканируем с правой границы (суша) налево (в сторону океана)
-      for (let px = maskW - 1; px >= stepX; px -= stepX) {
-        const currIndex = (py * maskW + px) * 4;
-        const prevIndex = (py * maskW + (px - stepX)) * 4;
+      for (let px = maskW - 1; px >= 0; px -= stepX) {
+        const index = (py * maskW + px) * 4;
+        
+        const r = data[index];
+        const g = data[index + 1];
+        const b = data[index + 2];
 
-        const r1 = data[currIndex];
-        const g1 = data[currIndex + 1];
-        const b1 = data[currIndex + 2];
-
-        const r2 = data[prevIndex];
-        const g2 = data[prevIndex + 1];
-        const b2 = data[prevIndex + 2];
-
-        // Расчет контраста между соседними пикселями
-        const colorDelta = Math.sqrt((r1 - r2) ** 2 + (g1 - g2) ** 2 + (b1 - b2) ** 2);
-
-        // Перепад контраста > 35 сигнализирует о переходе границы зон (песок -> вода)
-        if (colorDelta > 35) {
+        // Детектор воды: синий канал должен заметно преобладать над красным
+        // Песок имеет много красного/зеленого, вода - синего.
+        if (b > r + 20) {
           foundShoreX = px;
           break;
         }
       }
 
-      // Перевод пиксельных координат маски в мировые координаты PixiJS (8000x8000)
       if (foundShoreX !== -1) {
-        const worldX = (foundShoreX / maskW) * this.worldWidth;
+        // Смещаем координату немного влево (-5 пикселей маски), 
+        // чтобы линия гарантированно находилась в воде
+        const waterOffsetX = Math.max(0, foundShoreX - 5);
+        
+        const worldX = (waterOffsetX / maskW) * this.worldWidth;
         const worldY = (py / maskH) * this.worldHeight;
         points.push({ x: worldX, y: worldY });
       }
     }
 
-    return points;
+    // Возвращаем сглаженный массив точек
+    return this.smoothLine(points, 4);
   }
 
   private rgbToHex(r: number, g: number, b: number): string {
