@@ -3,7 +3,7 @@
 import * as PIXI from 'pixi.js';
 import { OCEAN_ZONES_CONFIG, LAND_ZONE_CONFIG } from './zoneConfig';
 import { ZoneConfig } from './types';
-import { ShoreEffects, OpenWaterEffects, Waves } from './water';
+import { ShoreEffects, Waves } from './water';
 
 export class WorldMap {
   public container: PIXI.Container;
@@ -20,7 +20,6 @@ export class WorldMap {
   private isLoaded: boolean = false;
 
   private shoreEffects: ShoreEffects;
-  private openWaterEffects: OpenWaterEffects;
   private waves: Waves;
 
   constructor(width: number, height: number) {
@@ -32,7 +31,6 @@ export class WorldMap {
     this.maskCtx = this.maskCanvas.getContext('2d', { willReadFrequently: true });
 
     this.shoreEffects = new ShoreEffects();
-    this.openWaterEffects = new OpenWaterEffects();
     this.waves = new Waves();
 
     this.initMap();
@@ -47,9 +45,7 @@ export class WorldMap {
       this.mapSprite.height = this.worldHeight;
       this.container.addChild(this.mapSprite);
 
-      // --- ИСПРАВЛЕНИЕ 1: Новый порядок слоев ---
-      // Сначала глубина -> затем береговая пена/песок -> ПОВЕРХ них бегущие волны
-      this.container.addChild(this.openWaterEffects.container);
+      // Порядок слоев: береговые эффекты -> ПОВЕРХ них волны
       this.container.addChild(this.shoreEffects.container);
       this.container.addChild(this.waves.container);
 
@@ -79,7 +75,6 @@ export class WorldMap {
       // 3. Сканируем берег и сглаживаем его
       const shorePoints = this.getShorelinePoints();
       this.shoreEffects.initShoreline(shorePoints);
-      this.openWaterEffects.init(shorePoints);
       this.waves.initShoreline(shorePoints);
 
     } catch (error) {
@@ -169,8 +164,8 @@ export class WorldMap {
 
     if (rawPoints.length < 2) return rawPoints;
 
-    // --- ИСПРАВЛЕНИЕ 2: Запас точек сверху и снизу за пределами экрана ---
-    const margin = 250; // Запас в пикселях за границы экрана
+    // Запас точек сверху и снизу за пределами экрана
+    const margin = 250; 
 
     // Точка-продление наверх
     const first = rawPoints[0];
@@ -257,7 +252,6 @@ export class WorldMap {
 
   public update(deltaSeconds: number): void {
     if (!this.isLoaded) return;
-    this.openWaterEffects.update(deltaSeconds);
     this.waves.update(deltaSeconds);
     this.shoreEffects.update(deltaSeconds);
   }
