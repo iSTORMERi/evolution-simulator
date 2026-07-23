@@ -23,7 +23,7 @@ export class WorldMap {
   private shoreEffects: ShoreEffects;
   private waves: Waves;
 
-  // Поля для подсветки и маркера точки тапа
+  // Поля для подсветки и маркера прицела
   private highlightFilter?: BiomeHighlightFilter;
   private targetMarker: PIXI.Graphics;
 
@@ -47,48 +47,54 @@ export class WorldMap {
 
   private async initMap(): Promise<void> {
     try {
-      // 1. Загружаем визуальную текстуру карты
+      // 1. Загрузка визуальной текстуры карты (PixiJS)
       const visualTexture = await PIXI.Assets.load('assets/ocean_visual.png');
       this.mapSprite = new PIXI.Sprite(visualTexture);
       this.mapSprite.width = this.worldWidth;
       this.mapSprite.height = this.worldHeight;
       this.container.addChild(this.mapSprite);
 
-      // 2. Загружаем маску биомов через Pixi Assets (надежно для WebGL)
-      const maskPixiTexture: PIXI.Texture = await PIXI.Assets.load('assets/ocean_zones_mask.png');
-      
-      const imgWidth = maskPixiTexture.width;
-      const imgHeight = maskPixiTexture.height;
-
-      // Получаем фоновый ресурс для чтения пикселей на CPU
-      const sourceImage = maskPixiTexture.source.resource;
-
-      this.maskCanvas.width = imgWidth;
-      this.maskCanvas.height = imgHeight;
-
-      if (this.maskCtx) {
-        this.maskCtx.drawImage(sourceImage, 0, 0);
-        this.maskData = this.maskCtx.getImageData(0, 0, imgWidth, imgHeight);
-      }
-
-      // Настраиваем шейдерный фильтр подсветки
-      this.highlightFilter = new BiomeHighlightFilter(maskPixiTexture, imgWidth, imgHeight);
-      this.mapSprite.filters = [this.highlightFilter];
-
-      this.isLoaded = true;
-
-      // 3. Рассчитываем береговую линию и запускаем эффекты волн/пены
-      const shorePoints = this.getShorelinePoints();
-      this.shoreEffects.initShoreline(shorePoints);
-      this.waves.initShoreline(shorePoints);
-
-      // Монтируем слои в строго правильном порядке поверх основного сплайна
+      // 2. Строгий порядок визуальных слоев:
+      // Карта -> Береговые эффекты -> Волны поверх берега -> Прицел
       this.container.addChild(this.shoreEffects.container);
       this.container.addChild(this.waves.container);
 
-      // Маркер прицела добавляем на самый верхний слой
       this.initTargetMarker();
       this.container.addChild(this.targetMarker);
+
+      // 3. Загрузка маски через нативный HTML Image (абсолютная стабильность для чтения пикселей)
+      const img = new Image();
+      img.src = 'assets/ocean_zones_mask.png';
+      
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error('Mask image not found'));
+      });
+
+      this.maskCanvas.width = img.width;
+      this.maskCanvas.height = img.height;
+
+      if (this.maskCtx) {
+        this.maskCtx.drawImage(img, 0, 0);
+        // СОХРАНЯЕМ maskData и НЕ сбрасываем width/height холста!
+        this.maskData = this.maskCtx.getImageData(0, 0, img.width, img.height);
+        
+        // 4. Безопасная инициализация шейдера подсветки
+        try {
+          const maskPixiTexture = PIXI.Texture.from(img);
+          this.highlightFilter = new BiomeHighlightFilter(maskPixiTexture, img.width, img.height);
+          this.mapSprite.filters = [this.highlightFilter];
+        } catch (shaderError) {
+          console.warn('WorldMap: Ошибка при инициализации шейдера подсветки (пропущено для сохранения эффектов):', shaderError);
+        }
+      }
+
+      this.isLoaded = true;
+
+      // 5. Построение берега и запуск эффектов волн и пены
+      const shorePoints = this.getShorelinePoints();
+      this.shoreEffects.initShoreline(shorePoints);
+      this.waves.initShoreline(shorePoints);
 
     } catch (error) {
       console.error('WorldMap: Ошибка при загрузке ассетов:', error);
@@ -107,7 +113,7 @@ export class WorldMap {
     g.circle(0, 0, 5);
     g.fill({ color: 0x0ea5e9, alpha: 1.0 });
     
-    // Крестовина прицела
+    // Прицел
     g.moveTo(-20, 0).lineTo(-8, 0);
     g.moveTo(8, 0).lineTo(20, 0);
     g.moveTo(0, -20).lineTo(0, -8);
@@ -131,20 +137,31 @@ export class WorldMap {
     }
   }
 
+  /**
+   * Сглаживание ломаной линии (Алгоритм обрезки углов Чайкина)
+   */
   private smoothLine(points: { x: number; y: number }[], iterations: number = 3): { x: number; y: number }[] {
     if (points.length < 3) return points;
+
     let currentPoints = points;
 
     for (let i = 0; i < iterations; i++) {
       const newPoints: { x: number; y: number }[] = [];
+      
       newPoints.push(currentPoints[0]);
 
       for (let j = 0; j < currentPoints.length - 1; j++) {
         const p0 = currentPoints[j];
         const p1 = currentPoints[j + 1];
 
-        const q = { x: 0.75 * p0.x + 0.25 * p1.x, y: 0.75 * p0.y + 0.25 * p1.y };
-        const r = { x: 0.25 * p0.x + 0.75 * p1.x, y: 0.25 * p0.y + 0.75 * p1.y };
+        const q = {
+          x: 0.75 * p0.x + 0.25 * p1.x,
+          y: 0.75 * p0.y + 0.25 * p1.y
+        };
+        const r = {
+          x: 0.25 * p0.x + 0.75 * p1.x,
+          y: 0.25 * p0.y + 0.75 * p1.y
+        };
 
         newPoints.push(q);
         newPoints.push(r);
@@ -159,23 +176,28 @@ export class WorldMap {
 
   public getShorelinePoints(): { x: number; y: number }[] {
     const rawPoints: { x: number; y: number }[] = [];
+    
     if (!this.maskData) return rawPoints;
 
     const maskW = this.maskData.width;
     const maskH = this.maskData.height;
     const data = this.maskData.data;
 
+    // Шаг сканирования по высоте маски (~150 точек для детализации)
     const stepY = Math.max(2, Math.floor(maskH / 150)); 
     const stepX = 2; 
 
     for (let py = 0; py < maskH; py += stepY) {
       let foundShoreX = -1;
 
+      // Сканируем с правой границы (суша) налево (в сторону океана)
       for (let px = maskW - 1; px >= 0; px -= stepX) {
         const index = (py * maskW + px) * 4;
+        
         const r = data[index];
         const b = data[index + 2];
 
+        // Детектор воды: синий канал преобладает над красным
         if (b > r + 20) {
           foundShoreX = px;
           break;
@@ -184,6 +206,7 @@ export class WorldMap {
 
       if (foundShoreX !== -1) {
         const waterOffsetX = Math.max(0, foundShoreX - 5);
+        
         const worldX = (waterOffsetX / maskW) * this.worldWidth;
         const worldY = (py / maskH) * this.worldHeight;
         rawPoints.push({ x: worldX, y: worldY });
@@ -193,6 +216,8 @@ export class WorldMap {
     if (rawPoints.length < 2) return rawPoints;
 
     const margin = 250; 
+
+    // Точка-продление наверх
     const first = rawPoints[0];
     const second = rawPoints[1];
     const topDirX = first.x - second.x;
@@ -204,6 +229,7 @@ export class WorldMap {
       y: first.y - margin,
     };
 
+    // Точка-продление вниз
     const last = rawPoints[rawPoints.length - 1];
     const prevLast = rawPoints[rawPoints.length - 2];
     const botDirX = last.x - prevLast.x;
@@ -215,7 +241,9 @@ export class WorldMap {
       y: last.y + margin,
     };
 
-    return this.smoothLine([extendedTop, ...rawPoints, extendedBottom], 4);
+    const extendedPoints = [extendedTop, ...rawPoints, extendedBottom];
+
+    return this.smoothLine(extendedPoints, 4);
   }
 
   private rgbToHex(r: number, g: number, b: number): string {
