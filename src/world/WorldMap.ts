@@ -23,7 +23,7 @@ export class WorldMap {
   private shoreEffects: ShoreEffects;
   private waves: Waves;
 
-  // Новые поля для подсветки и маркера точки тапа
+  // Поля для подсветки и маркера точки тапа
   private highlightFilter?: BiomeHighlightFilter;
   private targetMarker: PIXI.Graphics;
 
@@ -47,48 +47,48 @@ export class WorldMap {
 
   private async initMap(): Promise<void> {
     try {
+      // 1. Загружаем визуальную текстуру карты
       const visualTexture = await PIXI.Assets.load('assets/ocean_visual.png');
       this.mapSprite = new PIXI.Sprite(visualTexture);
       this.mapSprite.width = this.worldWidth;
       this.mapSprite.height = this.worldHeight;
       this.container.addChild(this.mapSprite);
 
-      this.container.addChild(this.shoreEffects.container);
-      this.container.addChild(this.waves.container);
-
-      // Добавляем маркер точки поверх слоев карты
-      this.initTargetMarker();
-      this.container.addChild(this.targetMarker);
-
-      const img = new Image();
-      img.src = 'assets/ocean_zones_mask.png';
+      // 2. Загружаем маску биомов через Pixi Assets (надежно для WebGL)
+      const maskPixiTexture: PIXI.Texture = await PIXI.Assets.load('assets/ocean_zones_mask.png');
       
-      await new Promise<void>((resolve, reject) => {
-        img.onload = () => resolve();
-        img.onerror = () => reject(new Error('Mask image not found'));
-      });
+      const imgWidth = maskPixiTexture.width;
+      const imgHeight = maskPixiTexture.height;
 
-      this.maskCanvas.width = img.width;
-      this.maskCanvas.height = img.height;
+      // Получаем фоновый ресурс для чтения пикселей на CPU
+      const sourceImage = maskPixiTexture.source.resource;
+
+      this.maskCanvas.width = imgWidth;
+      this.maskCanvas.height = imgHeight;
 
       if (this.maskCtx) {
-        this.maskCtx.drawImage(img, 0, 0);
-        this.maskData = this.maskCtx.getImageData(0, 0, img.width, img.height);
-        
-        // Создаем Pixi-текстуру маски для шейдера
-        const maskPixiTexture = PIXI.Texture.from(img);
-        this.highlightFilter = new BiomeHighlightFilter(maskPixiTexture, img.width, img.height);
-        this.mapSprite.filters = [this.highlightFilter];
-
-        this.maskCanvas.width = 0;
-        this.maskCanvas.height = 0;
+        this.maskCtx.drawImage(sourceImage, 0, 0);
+        this.maskData = this.maskCtx.getImageData(0, 0, imgWidth, imgHeight);
       }
+
+      // Настраиваем шейдерный фильтр подсветки
+      this.highlightFilter = new BiomeHighlightFilter(maskPixiTexture, imgWidth, imgHeight);
+      this.mapSprite.filters = [this.highlightFilter];
 
       this.isLoaded = true;
 
+      // 3. Рассчитываем береговую линию и запускаем эффекты волн/пены
       const shorePoints = this.getShorelinePoints();
       this.shoreEffects.initShoreline(shorePoints);
       this.waves.initShoreline(shorePoints);
+
+      // Монтируем слои в строго правильном порядке поверх основного сплайна
+      this.container.addChild(this.shoreEffects.container);
+      this.container.addChild(this.waves.container);
+
+      // Маркер прицела добавляем на самый верхний слой
+      this.initTargetMarker();
+      this.container.addChild(this.targetMarker);
 
     } catch (error) {
       console.error('WorldMap: Ошибка при загрузке ассетов:', error);
