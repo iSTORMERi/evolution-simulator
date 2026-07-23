@@ -3,47 +3,48 @@
 import * as PIXI from 'pixi.js';
 import { ShorePoint } from './ShoreEffects';
 
-interface WaveBreaker {
+interface WaterCaustic {
   x: number;
   y: number;
-  radius: number;
-  progress: number; // 0..1 (от рождения до затухания)
+  size: number;
+  alpha: number;
   speed: number;
-  maxTravel: number; // Дистанция движения к берегу
+  phase: number;
 }
 
 export class OpenWaterEffects {
   public container: PIXI.Container;
 
-  private breakersGraphics: PIXI.Graphics;
-  private waveBreakers: WaveBreaker[] = [];
+  private oceanGraphics: PIXI.Graphics;
   private shorePoints: ShorePoint[] = [];
+  private caustics: WaterCaustic[] = [];
+  private time: number = 0;
 
   constructor() {
     this.container = new PIXI.Container();
-    this.breakersGraphics = new PIXI.Graphics();
-    this.container.addChild(this.breakersGraphics);
+    this.oceanGraphics = new PIXI.Graphics();
+    this.container.addChild(this.oceanGraphics);
   }
 
   public init(shorePoints: ShorePoint[]): void {
     this.shorePoints = shorePoints;
-    this.spawnBreakers();
+    this.initCaustics();
   }
 
-  private spawnBreakers(): void {
-    this.waveBreakers = [];
-    // Увеличили количество барашков до 15 для большей плотности эффектов
-    for (let i = 0; i < 15; i++) {
+  private initCaustics(): void {
+    this.caustics = [];
+    // Генерируем мягкие свечения/блики в глубокой воде
+    for (let i = 0; i < 20; i++) {
       if (this.shorePoints.length === 0) break;
 
       const randomPoint = this.shorePoints[Math.floor(Math.random() * this.shorePoints.length)];
-      this.waveBreakers.push({
-        x: randomPoint.x - 200 - Math.random() * 400, // Глубокая вода левее берега
-        y: randomPoint.y + (Math.random() - 0.5) * 200,
-        radius: 70 + Math.random() * 60, // Увеличенный радиус дуги
-        progress: Math.random(),
-        speed: 0.15 + Math.random() * 0.1,
-        maxTravel: 100 + Math.random() * 80,
+      this.caustics.push({
+        x: randomPoint.x - 300 - Math.random() * 500, // Глубокая часть океана
+        y: randomPoint.y + (Math.random() - 0.5) * 400,
+        size: 30 + Math.random() * 50,
+        alpha: 0.1 + Math.random() * 0.2,
+        speed: 0.5 + Math.random() * 0.8,
+        phase: Math.random() * Math.PI * 2,
       });
     }
   }
@@ -51,38 +52,18 @@ export class OpenWaterEffects {
   public update(deltaSeconds: number): void {
     if (this.shorePoints.length === 0) return;
 
-    this.breakersGraphics.clear();
+    this.time += deltaSeconds;
+    this.oceanGraphics.clear();
 
-    for (const arc of this.waveBreakers) {
-      arc.progress += deltaSeconds * arc.speed;
+    // Рендер мягких светлых бликов каустики на глубине
+    for (const c of this.caustics) {
+      const pulse = Math.sin(this.time * c.speed + c.phase);
+      const currentAlpha = c.alpha * (0.6 + pulse * 0.4);
+      const currentSize = c.size + pulse * 6;
 
-      if (arc.progress > 1) {
-        arc.progress = 0;
-        const randomPoint = this.shorePoints[Math.floor(Math.random() * this.shorePoints.length)];
-        arc.x = randomPoint.x - 250 - Math.random() * 350;
-        arc.y = randomPoint.y + (Math.random() - 0.5) * 200;
-        arc.radius = 70 + Math.random() * 60;
-      }
-
-      // Движение барашка волны в сторону берега (влево -> вправо)
-      const currentX = arc.x + arc.progress * arc.maxTravel;
-      // Плавное появление и затухание через синус
-      const alpha = Math.sin(arc.progress * Math.PI); 
-
-      // Динамическое расширение дуги по мере приближения к берегу
-      const currentRadius = arc.radius + arc.progress * 15;
-
-      // 1. Тёмная тень передней кромки волны
-      this.breakersGraphics.arc(currentX - 4, arc.y, currentRadius, -0.6, 0.6);
-      this.breakersGraphics.stroke({ color: 0x053340, width: 8, alpha: alpha * 0.45 });
-
-      // 2. Бирюзовая подложка воды
-      this.breakersGraphics.arc(currentX - 1, arc.y, currentRadius, -0.55, 0.55);
-      this.breakersGraphics.stroke({ color: 0x229bb3, width: 6, alpha: alpha * 0.6 });
-
-      // 3. Белоснежный гребень пены
-      this.breakersGraphics.arc(currentX, arc.y, currentRadius, -0.5, 0.5);
-      this.breakersGraphics.stroke({ color: 0xffffff, width: 4.5, alpha: alpha * 0.9 });
+      // Мягкое очертание глубокого блика
+      this.oceanGraphics.ellipse(c.x, c.y, currentSize, currentSize * 0.6);
+      this.oceanGraphics.fill({ color: 0x6ee2f5, alpha: currentAlpha });
     }
   }
 }
