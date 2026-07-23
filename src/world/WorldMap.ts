@@ -81,36 +81,54 @@ export class WorldMap {
     }
   }
 
+  /**
+   * Улучшенный алгоритм сканирования берега на основе детекции контраста
+   */
   public getShorelinePoints(): { x: number; y: number }[] {
     const points: { x: number; y: number }[] = [];
-    const stepY = 25; 
     
-    if (this.maskData) {
-      for (let y = 0; y < this.worldHeight; y += stepY) {
-        let foundLand = false;
-        // Сканируем справа налево
-        for (let x = this.worldWidth; x >= 0; x -= 15) {
-          const zone = this.getZoneAt(x, y);
-          
-          if (zone.id === LAND_ZONE_CONFIG.id) {
-            foundLand = true; // Подтверждаем, что нашли сушу
-          } else if (foundLand) {
-            // Как только после суши встретили воду - ставим точку берега
-            points.push({ x, y });
-            break;
-          }
+    if (!this.maskData) return points;
+
+    const maskW = this.maskData.width;
+    const maskH = this.maskData.height;
+    const data = this.maskData.data;
+
+    // Шаг сканирования по высоте маски (~100-150 точек по всей длине)
+    const stepY = Math.max(2, Math.floor(maskH / 150)); 
+    // Шаг сканирования по ширине маски для высокой точности
+    const stepX = 2; 
+
+    for (let py = 0; py < maskH; py += stepY) {
+      let foundShoreX = -1;
+
+      // Сканируем с правой границы (суша) налево (в сторону океана)
+      for (let px = maskW - 1; px >= stepX; px -= stepX) {
+        const currIndex = (py * maskW + px) * 4;
+        const prevIndex = (py * maskW + (px - stepX)) * 4;
+
+        const r1 = data[currIndex];
+        const g1 = data[currIndex + 1];
+        const b1 = data[currIndex + 2];
+
+        const r2 = data[prevIndex];
+        const g2 = data[prevIndex + 1];
+        const b2 = data[prevIndex + 2];
+
+        // Расчет контраста между соседними пикселями
+        const colorDelta = Math.sqrt((r1 - r2) ** 2 + (g1 - g2) ** 2 + (b1 - b2) ** 2);
+
+        // Перепад контраста > 35 сигнализирует о переходе границы зон (песок -> вода)
+        if (colorDelta > 35) {
+          foundShoreX = px;
+          break;
         }
       }
-    }
 
-    // 🔥 ПРЕДОХРАНИТЕЛЬ: Если маска не сработала, рисуем тестовую линию, 
-    // чтобы ты точно увидел работу эффектов на экране
-    if (points.length < 5) {
-      console.warn('WorldMap: Берег по маске не найден! Рисуем тестовую линию берега.');
-      for (let y = 0; y < this.worldHeight; y += stepY) {
-        // Примерно повторяем изгиб твоего берега со скриншота (около 75% экрана по ширине)
-        const fakeX = this.worldWidth * 0.75 + Math.sin(y * 0.001) * 300;
-        points.push({ x: fakeX, y });
+      // Перевод пиксельных координат маски в мировые координаты PixiJS (8000x8000)
+      if (foundShoreX !== -1) {
+        const worldX = (foundShoreX / maskW) * this.worldWidth;
+        const worldY = (py / maskH) * this.worldHeight;
+        points.push({ x: worldX, y: worldY });
       }
     }
 
@@ -152,7 +170,6 @@ export class WorldMap {
 
     const sampledHex = this.rgbToHex(r, g, b);
 
-    // Увеличили допуск погрешности цветов с 30 до 80 на случай артефактов сжатия png
     if (this.colorDistance(sampledHex, LAND_ZONE_CONFIG.hexColor) < 80) {
       return LAND_ZONE_CONFIG;
     }

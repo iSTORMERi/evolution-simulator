@@ -9,6 +9,7 @@ interface WaveBreaker {
   radius: number;
   progress: number; // 0..1 (от рождения до затухания)
   speed: number;
+  maxTravel: number; // Дистанция движения к берегу
 }
 
 export class OpenWaterEffects {
@@ -31,16 +32,18 @@ export class OpenWaterEffects {
 
   private spawnBreakers(): void {
     this.waveBreakers = [];
-    for (let i = 0; i < 10; i++) {
+    // Увеличили количество барашков до 15 для большей плотности эффектов
+    for (let i = 0; i < 15; i++) {
       if (this.shorePoints.length === 0) break;
 
       const randomPoint = this.shorePoints[Math.floor(Math.random() * this.shorePoints.length)];
       this.waveBreakers.push({
-        x: randomPoint.x - 100 - Math.random() * 200, // Глубокая вода левее берега
-        y: randomPoint.y + (Math.random() - 0.5) * 300,
-        radius: 50 + Math.random() * 40,
+        x: randomPoint.x - 200 - Math.random() * 400, // Глубокая вода левее берега
+        y: randomPoint.y + (Math.random() - 0.5) * 200,
+        radius: 70 + Math.random() * 60, // Увеличенный радиус дуги
         progress: Math.random(),
-        speed: 0.12 + Math.random() * 0.08,
+        speed: 0.15 + Math.random() * 0.1,
+        maxTravel: 100 + Math.random() * 80,
       });
     }
   }
@@ -48,7 +51,6 @@ export class OpenWaterEffects {
   public update(deltaSeconds: number): void {
     if (this.shorePoints.length === 0) return;
 
-    // В PixiJS v8 метод clear() полностью очищает геометрию, beginPath() не требуется
     this.breakersGraphics.clear();
 
     for (const arc of this.waveBreakers) {
@@ -57,21 +59,30 @@ export class OpenWaterEffects {
       if (arc.progress > 1) {
         arc.progress = 0;
         const randomPoint = this.shorePoints[Math.floor(Math.random() * this.shorePoints.length)];
-        arc.x = randomPoint.x - 120 - Math.random() * 150;
-        arc.y = randomPoint.y + (Math.random() - 0.5) * 300;
+        arc.x = randomPoint.x - 250 - Math.random() * 350;
+        arc.y = randomPoint.y + (Math.random() - 0.5) * 200;
+        arc.radius = 70 + Math.random() * 60;
       }
 
-      // Движение барашка волны в сторону берега
-      const currentX = arc.x + arc.progress * 80;
-      const alpha = Math.sin(arc.progress * Math.PI); // Прозрачность: 0 -> 1 -> 0
+      // Движение барашка волны в сторону берега (влево -> вправо)
+      const currentX = arc.x + arc.progress * arc.maxTravel;
+      // Плавное появление и затухание через синус
+      const alpha = Math.sin(arc.progress * Math.PI); 
 
-      // Тень волны
-      this.breakersGraphics.arc(currentX - 3, arc.y, arc.radius, -0.6, 0.6);
-      this.breakersGraphics.stroke({ color: 0x0f4d5c, width: 5, alpha: alpha * 0.4 });
+      // Динамическое расширение дуги по мере приближения к берегу
+      const currentRadius = arc.radius + arc.progress * 15;
 
-      // Белый гребень
-      this.breakersGraphics.arc(currentX, arc.y, arc.radius, -0.5, 0.5);
-      this.breakersGraphics.stroke({ color: 0xffffff, width: 2.5, alpha: alpha * 0.8 });
+      // 1. Тёмная тень передней кромки волны
+      this.breakersGraphics.arc(currentX - 4, arc.y, currentRadius, -0.6, 0.6);
+      this.breakersGraphics.stroke({ color: 0x053340, width: 8, alpha: alpha * 0.45 });
+
+      // 2. Бирюзовая подложка воды
+      this.breakersGraphics.arc(currentX - 1, arc.y, currentRadius, -0.55, 0.55);
+      this.breakersGraphics.stroke({ color: 0x229bb3, width: 6, alpha: alpha * 0.6 });
+
+      // 3. Белоснежный гребень пены
+      this.breakersGraphics.arc(currentX, arc.y, currentRadius, -0.5, 0.5);
+      this.breakersGraphics.stroke({ color: 0xffffff, width: 4.5, alpha: alpha * 0.9 });
     }
   }
 }
