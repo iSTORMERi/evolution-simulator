@@ -84,6 +84,8 @@ export class BiomeScanner {
         this.toggleButton.style.backgroundColor = 'rgba(15, 23, 42, 0.75)';
         this.toggleButton.style.borderColor = 'rgba(255, 255, 255, 0.4)';
         this.hideTooltip();
+        // Снимаем подсветку и убираем маркер
+        this.worldMap.highlightZone(null);
       }
     });
 
@@ -92,9 +94,12 @@ export class BiomeScanner {
     this.worldMap.container.on('pointerdown', (event) => {
       if (!this.isActive) return;
 
-      // Берем локальные мировые координаты
+      // Берем мировые координаты тапа
       const localPos = event.getLocalPosition(this.worldMap.container);
       const zone = this.worldMap.getZoneAt(localPos.x, localPos.y);
+
+      // Включаем шейдерную подсветку биома и ставим прицел в точку клика
+      this.worldMap.highlightZone(zone.hexColor, localPos.x, localPos.y);
 
       // Экранные координаты для позиционирования HTML-плашки
       const screenX = event.global.x;
