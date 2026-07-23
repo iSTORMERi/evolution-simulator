@@ -79,9 +79,9 @@ export class WorldMap {
         // СОХРАНЯЕМ maskData и НЕ сбрасываем width/height холста!
         this.maskData = this.maskCtx.getImageData(0, 0, img.width, img.height);
         
-        // 4. Безопасная инициализация шейдера подсветки
+        // 4. Передаём в Pixi Texture запечённый Canvas для моментальной отдачи маски в GPU
         try {
-          const maskPixiTexture = PIXI.Texture.from(img);
+          const maskPixiTexture = PIXI.Texture.from(this.maskCanvas);
           this.highlightFilter = new BiomeHighlightFilter(maskPixiTexture, img.width, img.height);
           this.mapSprite.filters = [this.highlightFilter];
         } catch (shaderError) {
@@ -101,24 +101,42 @@ export class WorldMap {
     }
   }
 
+  /**
+   * Крупный, высококонтрастный оранжево-янтарный маркер прицела
+   */
   private initTargetMarker(): void {
     const g = this.targetMarker;
     g.clear();
     
-    // Внешнее светящееся кольцо
-    g.circle(0, 0, 14);
-    g.stroke({ width: 2, color: 0x38bdf8, alpha: 0.8 });
+    // 1. Контрастная тёмная подложка (чтобы выделяться на светлом песке и бирюзовой воде)
+    g.circle(0, 0, 24);
+    g.stroke({ width: 5, color: 0x0f172a, alpha: 0.6 });
+
+    // 2. Внешнее оранжевое кольцо
+    g.circle(0, 0, 22);
+    g.stroke({ width: 3.5, color: 0xff5500, alpha: 1.0 });
+
+    // 3. Белая обводка внутри кольца для свечения
+    g.circle(0, 0, 18);
+    g.stroke({ width: 1.5, color: 0xffffff, alpha: 0.9 });
     
-    // Внутренняя точка
-    g.circle(0, 0, 5);
-    g.fill({ color: 0x0ea5e9, alpha: 1.0 });
+    // 4. Яркая точка по центру
+    g.circle(0, 0, 7);
+    g.fill({ color: 0xff5500, alpha: 1.0 });
+    g.circle(0, 0, 3);
+    g.fill({ color: 0xffffff, alpha: 1.0 });
     
-    // Прицел
-    g.moveTo(-20, 0).lineTo(-8, 0);
-    g.moveTo(8, 0).lineTo(20, 0);
-    g.moveTo(0, -20).lineTo(0, -8);
-    g.moveTo(0, 8).lineTo(0, 20);
-    g.stroke({ width: 2, color: 0x38bdf8, alpha: 0.9 });
+    // 5. Лучи прицела (Тень + яркий оранжевый луч)
+    const drawCross = (color: number, width: number, alpha: number) => {
+      g.moveTo(-32, 0).lineTo(-12, 0);
+      g.moveTo(12, 0).lineTo(32, 0);
+      g.moveTo(0, -32).lineTo(0, -12);
+      g.moveTo(0, 12).lineTo(0, 32);
+      g.stroke({ width, color, alpha });
+    };
+
+    drawCross(0x0f172a, 5, 0.6); // Тень
+    drawCross(0xff5500, 3, 1.0); // Оранжевая линия
   }
 
   /**
