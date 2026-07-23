@@ -7,12 +7,12 @@ interface FrontWave {
   id: number;
   startIndex: number;
   endIndex: number;
-  offset: number;     // Дистанция от берега (в пикселях)
-  maxOffset: number;  // Начальная дистанция спавна (например, 120px)
+  offset: number;     // Дистанция от берега
+  maxOffset: number;  // Начальная дистанция спавна (глубокая вода)
   speed: number;
-  alpha: number;
   length: number;
   isMajor: boolean;
+  foamPhase: number;  // Фаза анимации пены при ударе о берег
 }
 
 export class Waves {
@@ -22,7 +22,7 @@ export class Waves {
   private activeWaves: FrontWave[] = [];
 
   private spawnTimer: number = 0;
-  private maxActiveWaves: number = 8; // Много плотных фронтов
+  private maxActiveWaves: number = 22; // Плотный массивный поток волн
 
   constructor() {
     this.container = new PIXI.Container();
@@ -34,9 +34,9 @@ export class Waves {
     this.shorePoints = shorePoints;
     this.activeWaves = [];
     
-    // При старте заполняем сразу несколькими волнами на разной дистанции
+    // Заполняем весь океан волнами сразу при загрузке
     if (this.shorePoints.length > 10) {
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 14; i++) {
         this.spawnWave(true);
       }
     }
@@ -45,23 +45,24 @@ export class Waves {
   public update(deltaSeconds: number): void {
     if (!this.shorePoints || this.shorePoints.length < 10) return;
 
-    // Таймер спавна
+    // Частый спавн волн
     this.spawnTimer += deltaSeconds;
-    if (this.spawnTimer >= 0.4 && this.activeWaves.length < this.maxActiveWaves) {
+    if (this.spawnTimer >= 0.15 && this.activeWaves.length < this.maxActiveWaves) {
       this.spawnWave(false);
       this.spawnTimer = 0;
     }
 
     this.graphics.clear();
 
-    // Обновляем и рендерим волны
     for (let i = this.activeWaves.length - 1; i >= 0; i--) {
       const wave = this.activeWaves[i];
 
-      // Волна движется К БЕРЕГУ (уменьшаем offset до 0)
+      // Движение к берегу
       wave.offset -= deltaSeconds * wave.speed;
+      wave.foamPhase += deltaSeconds * 5;
 
-      if (wave.offset <= 5) {
+      // Убираем волну, когда она полностью растворилась на суше
+      if (wave.offset <= 2) {
         this.activeWaves.splice(i, 1);
         continue;
       }
@@ -74,18 +75,19 @@ export class Waves {
     const totalPoints = this.shorePoints.length;
     if (totalPoints < 15) return;
 
-    // Длина волны вдоль берега (в количестве точек)
-    const wavePointLength = Math.floor(25 + Math.random() * 45); 
+    // Волны теперь очень длинные (массивные фронты)
+    const wavePointLength = Math.floor(40 + Math.random() * (totalPoints * 0.75)); 
     const maxStartIndex = totalPoints - wavePointLength - 1;
     if (maxStartIndex <= 0) return;
 
     const startIndex = Math.floor(Math.random() * maxStartIndex);
     const endIndex = startIndex + wavePointLength;
 
-    const maxOffset = 100 + Math.random() * 80; // Начинают в 100-180px от берега
-    const initialOffset = randomProgress ? Math.random() * maxOffset : maxOffset;
+    // Спавн ГОРАЗДО дальше в океане (до 500px от берега)
+    const maxOffset = 250 + Math.random() * 250; 
+    const initialOffset = randomProgress ? 10 + Math.random() * maxOffset : maxOffset;
 
-    const isMajor = Math.random() < 0.4;
+    const isMajor = Math.random() < 0.5; // Каждый второй фронт -- гигантский
 
     this.activeWaves.push({
       id: Math.random(),
@@ -93,69 +95,97 @@ export class Waves {
       endIndex,
       offset: initialOffset,
       maxOffset,
-      speed: 25 + Math.random() * 15, // Скорость движения к берегу
-      alpha: 1,
+      speed: 30 + Math.random() * 20,
       length: wavePointLength,
       isMajor,
+      foamPhase: Math.random() * Math.PI * 2,
     });
   }
 
   private renderParallelWave(wave: FrontWave): void {
-    const points: { x: number; y: number; edgeAlpha: number }[] = [];
+    const points: { x: number; y: number; edgeAlpha: number; nx: number; ny: number }[] = [];
 
-    // Вычисляем параллельные точки со смещением влево (в океан)
+    // Вычисляем точки со смещением строго по нормали берега
     for (let i = wave.startIndex; i <= wave.endIndex; i++) {
       const curr = this.shorePoints[i];
       const prev = this.shorePoints[Math.max(0, i - 1)];
       const next = this.shorePoints[Math.min(this.shorePoints.length - 1, i + 1)];
 
-      // Касательный вектор вдоль берега
       const dx = next.x - prev.x;
       const dy = next.y - prev.y;
       const len = Math.hypot(dx, dy) || 1;
 
-      // Нормаль наружу (в сторону воды, т.е. влево)
+      // Нормаль в сторону океана
       const nx = -dy / len;
       const ny = dx / len;
 
-      // Прозрачность по краям волны (затухание на концах дуги)
       const relativeIdx = i - wave.startIndex;
       const edgeFactor = Math.sin((relativeIdx / wave.length) * Math.PI);
 
-      // Координата с перпендикулярным сдвигом в океан
       points.push({
         x: curr.x + nx * wave.offset,
         y: curr.y + ny * wave.offset,
         edgeAlpha: edgeFactor,
+        nx,
+        ny
       });
     }
 
     if (points.length < 2) return;
 
-    // Прогресс движения (1 -> зарождение в глубине, 0 -> прибой у берега)
+    // Прогресс движения (1 = глубина, 0 = берег)
     const progress = wave.offset / wave.maxOffset;
     
-    // Прозрачность волны (плавное появление и затухание у самого берега)
+    // Плавное зарождение в глубине
     let globalAlpha = 1;
-    if (progress > 0.85) {
-      globalAlpha = (1 - progress) / 0.15; // Появление
-    } else if (progress < 0.15) {
-      globalAlpha = progress / 0.15; // Затухание у берега
+    if (progress > 0.8) {
+      globalAlpha = (1 - progress) / 0.2;
     }
 
-    // Рендерим линию сглаженными отрезками
-    // 1. Тёмная глубинная тень
-    this.drawCurvedLine(points, globalAlpha * (wave.isMajor ? 0.5 : 0.3), 0x053340, wave.isMajor ? 12 : 7, 0);
+    // РЕЖИМ 1: Движение массивного вала в океане (offset > 40px)
+    if (wave.offset > 40) {
+      // 1. Мощная тень перед волной
+      const shadowWidth = wave.isMajor ? 36 : 22;
+      this.drawStroke(points, globalAlpha * 0.45, 0x032833, shadowWidth, 0);
 
-    // 2. Бирюзовое гребневое тело
-    this.drawCurvedLine(points, globalAlpha * 0.75, 0x2ecbe0, wave.isMajor ? 6 : 4, 1.5);
+      // 2. Толстое бирюзовое тело
+      const bodyWidth = wave.isMajor ? 20 : 12;
+      this.drawStroke(points, globalAlpha * 0.8, 0x22abbf, bodyWidth, 3);
 
-    // 3. Белоснежная пена на вершине
-    this.drawCurvedLine(points, globalAlpha * 0.9, 0xffffff, wave.isMajor ? 3.5 : 2, 3);
+      // 3. Белоснежный широкий гребень
+      const crestWidth = wave.isMajor ? 12 : 7;
+      this.drawStroke(points, globalAlpha * 0.95, 0xffffff, crestWidth, 6);
+    } 
+    // РЕЖИМ 2: Превращение в МАССИВНЫЙ СГУСТОК ПЕНЫ у берега (offset <= 40px)
+    else {
+      const foamProgress = 1 - (wave.offset / 40); // 0 -> 1 (разбивание о берег)
+      const foamAlpha = globalAlpha * (1 - foamProgress * 0.7); // Плавное исчезновение
+
+      // А: Широкое белое пятно расплывающейся пены
+      const foamWidth = (wave.isMajor ? 28 : 18) + foamProgress * 30; // Расширяется при прибое
+      this.drawStroke(points, foamAlpha * 0.85, 0xffffff, foamWidth, 0);
+
+      // Б: Текстурные пузыри/штрихи внутри пены
+      for (let i = 0; i < points.length - 1; i += 2) {
+        const p = points[i];
+        if (p.edgeAlpha < 0.2) continue;
+
+        const jitter = Math.sin(wave.foamPhase + i) * 6;
+        const fx = p.x + p.nx * jitter;
+        const fy = p.y + p.ny * jitter;
+        const bubbleRadius = (3 + Math.random() * 4) * (1 + foamProgress);
+
+        this.graphics.circle(fx, fy, bubbleRadius);
+        this.graphics.fill({ color: 0xffffff, alpha: foamAlpha * 0.75 });
+      }
+
+      // В: Бирюзовый край уходящей воды под пеной
+      this.drawStroke(points, foamAlpha * 0.5, 0x41d8eb, foamWidth * 0.5, -4);
+    }
   }
 
-  private drawCurvedLine(
-    points: { x: number; y: number; edgeAlpha: number }[],
+  private drawStroke(
+    points: { x: number; y: number; edgeAlpha: number; nx: number; ny: number }[],
     baseAlpha: number,
     color: number,
     lineWidth: number,
@@ -168,11 +198,15 @@ export class Waves {
       const p2 = points[i + 1];
 
       const segmentAlpha = baseAlpha * ((p1.edgeAlpha + p2.edgeAlpha) / 2);
-
       if (segmentAlpha < 0.02) continue;
 
-      this.graphics.moveTo(p1.x + advanceOffset, p1.y);
-      this.graphics.lineTo(p2.x + advanceOffset, p2.y);
+      const x1 = p1.x + p1.nx * advanceOffset;
+      const y1 = p1.y + p1.ny * advanceOffset;
+      const x2 = p2.x + p2.nx * advanceOffset;
+      const y2 = p2.y + p2.ny * advanceOffset;
+
+      this.graphics.moveTo(x1, y1);
+      this.graphics.lineTo(x2, y2);
       this.graphics.stroke({ color, width: lineWidth, alpha: segmentAlpha });
     }
   }
