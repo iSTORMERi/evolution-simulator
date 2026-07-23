@@ -4,7 +4,6 @@ import * as PIXI from 'pixi.js';
 import { OCEAN_ZONES_CONFIG, LAND_ZONE_CONFIG } from './zoneConfig';
 import { ZoneConfig } from './types';
 import { ShoreEffects, Waves } from './water';
-import { BiomeHighlightFilter } from './BiomeHighlightFilter';
 
 export class WorldMap {
   public container: PIXI.Container;
@@ -18,16 +17,19 @@ export class WorldMap {
   private maskCtx: CanvasRenderingContext2D | null;
   private maskData?: ImageData;
 
+  // Canvas и спрайт для подсвечивающего оверлея
+  private highlightCanvas: HTMLCanvasElement;
+  private highlightCtx: CanvasRenderingContext2D | null;
+  private highlightSprite?: PIXI.Sprite;
+
   private isLoaded: boolean = false;
 
   private shoreEffects: ShoreEffects;
   private waves: Waves;
 
-  // Поля для подсветки и маркера
-  private highlightFilter?: BiomeHighlightFilter;
   private targetMarker: PIXI.Graphics;
   
-  // Кэш для цвета, если вызов выделения произошел до запекания маски
+  // Кэш для цвета подсветки, если клик произошел до загрузки ассетов
   private pendingHighlightColor: string | null = null;
 
   constructor(width: number, height: number) {
@@ -35,13 +37,17 @@ export class WorldMap {
     this.worldWidth = width;
     this.worldHeight = height;
 
+    // Контекст для маски (определение биомов)
     this.maskCanvas = document.createElement('canvas');
     this.maskCtx = this.maskCanvas.getContext('2d', { willReadFrequently: true });
+
+    // Контекст для рисования подсвечивающей заливки
+    this.highlightCanvas = document.createElement('canvas');
+    this.highlightCtx = this.highlightCanvas.getContext('2d');
 
     this.shoreEffects = new ShoreEffects();
     this.waves = new Waves();
 
-    // Создаем маркер точки тапа
     this.targetMarker = new PIXI.Graphics();
     this.targetMarker.visible = false;
 
@@ -50,21 +56,27 @@ export class WorldMap {
 
   private async initMap(): Promise<void> {
     try {
-      // 1. Загрузка визуальной текстуры карты (PixiJS)
+      // 1. Загрузка визуальной карты
       const visualTexture = await PIXI.Assets.load('assets/ocean_visual.png');
       this.mapSprite = new PIXI.Sprite(visualTexture);
       this.mapSprite.width = this.worldWidth;
       this.mapSprite.height = this.worldHeight;
       this.container.addChild(this.mapSprite);
 
-      // 2. Порядок слоев: Карта -> Берег -> Волны -> Маркер
+      // 2. Спрайт оверлея подсветки (помещается сразу поверх карты)
+      this.highlightSprite = new PIXI.Sprite();
+      this.highlightSprite.width = this.worldWidth;
+      this.highlightSprite.height = this.worldHeight;
+      this.container.addChild(this.highlightSprite);
+
+      // 3. Слои берега, волн и маркера
       this.container.addChild(this.shoreEffects.container);
       this.container.addChild(this.waves.container);
 
       this.initTargetMarker();
       this.container.addChild(this.targetMarker);
 
-      // 3. Загрузка маски через HTML Image для чтения пикселей
+      // 4. Загрузка маски биомов
       const img = new Image();
       img.src = 'assets/ocean_zones_mask.png';
       
@@ -76,32 +88,20 @@ export class WorldMap {
       this.maskCanvas.width = img.width;
       this.maskCanvas.height = img.height;
 
+      this.highlightCanvas.width = img.width;
+      this.highlightCanvas.height = img.height;
+
       if (this.maskCtx) {
         this.maskCtx.drawImage(img, 0, 0);
         this.maskData = this.maskCtx.getImageData(0, 0, img.width, img.height);
-        
-        // 4. Явное создание текстуры из Canvas
-        try {
-          const canvasSource = new PIXI.CanvasSource({
-            resource: this.maskCanvas,
-            scaleMode: 'nearest',
-          });
-          
-          const maskPixiTexture = new PIXI.Texture({ source: canvasSource });
-          
-          this.highlightFilter = new BiomeHighlightFilter(maskPixiTexture, img.width, img.height);
-          this.mapSprite.filters = [this.highlightFilter];
-
-          // Если клик случился до инициализации фильтра, применяем отложенную подсветку
-          if (this.pendingHighlightColor !== null) {
-            this.highlightFilter.setHighlightedZone(this.pendingHighlightColor);
-          }
-        } catch (shaderError) {
-          console.warn('WorldMap: Ошибка при инициализации шейдера подсветки:', shaderError);
-        }
       }
 
       this.isLoaded = true;
+
+      // Применяем отложенную подсветку, если пользователь тапал во время загрузки
+      if (this.pendingHighlightColor !== null) {
+        this.applyHighlightOverlay(this.pendingHighlightColor);
+      }
 
       // 5. Построение берега и запуск эффектов волн и пены
       const shorePoints = this.getShorelinePoints();
@@ -113,18 +113,13 @@ export class WorldMap {
     }
   }
 
-  /**
-   * Чистая, крупная монолитная охристо-оранжевая точка
-   */
   private initTargetMarker(): void {
     const g = this.targetMarker;
     g.clear();
 
-    // Мягкая контрастная тень под точкой
     g.circle(0, 2, 14);
     g.fill({ color: 0x000000, alpha: 0.35 });
 
-    // Единая монолитная охряно-оранжевая точка (#E65100)
     g.circle(0, 0, 13);
     g.fill({ color: 0xE65100, alpha: 1.0 });
   }
@@ -135,8 +130,8 @@ export class WorldMap {
   public highlightZone(hexColor: string | null, worldX?: number, worldY?: number): void {
     this.pendingHighlightColor = hexColor;
 
-    if (this.highlightFilter) {
-      this.highlightFilter.setHighlightedZone(hexColor);
+    if (this.isLoaded) {
+      this.applyHighlightOverlay(hexColor);
     }
 
     if (hexColor && worldX !== undefined && worldY !== undefined) {
@@ -148,8 +143,53 @@ export class WorldMap {
   }
 
   /**
-   * Сглаживание ломаной линии (Алгоритм обрезки углов Чайкина)
+   * Генерация подсвечивающего оверлея через Canvas 2D
    */
+  private applyHighlightOverlay(hexColor: string | null): void {
+    if (!this.highlightCtx || !this.maskData || !this.highlightSprite) return;
+
+    const w = this.maskCanvas.width;
+    const h = this.maskCanvas.height;
+
+    // Сброс предыдущей заливки
+    this.highlightCtx.clearRect(0, 0, w, h);
+
+    if (!hexColor) {
+      this.highlightSprite.texture = PIXI.Texture.EMPTY;
+      return;
+    }
+
+    const cleanHex = hexColor.replace('#', '');
+    const targetR = parseInt(cleanHex.substring(0, 2), 16);
+    const targetG = parseInt(cleanHex.substring(2, 4), 16);
+    const targetB = parseInt(cleanHex.substring(4, 6), 16);
+
+    const maskPixels = this.maskData.data;
+    const overlayImgData = this.highlightCtx.createImageData(w, h);
+    const overlayPixels = overlayImgData.data;
+
+    // Закрашиваем совпавшие пиксели неоново-бирюзовым цветом с полупрозрачностью
+    for (let i = 0; i < maskPixels.length; i += 4) {
+      const r = maskPixels[i];
+      const g = maskPixels[i + 1];
+      const b = maskPixels[i + 2];
+
+      const dist = Math.sqrt((r - targetR) ** 2 + (g - targetG) ** 2 + (b - targetB) ** 2);
+
+      if (dist < 55) { // Допуск на совпадение цветовых оттенков
+        overlayPixels[i]     = 0;   // R
+        overlayPixels[i + 1] = 220; // G (Сочная бирюза)
+        overlayPixels[i + 2] = 255; // B
+        overlayPixels[i + 3] = 110; // Alpha (~43% прозрачности)
+      }
+    }
+
+    this.highlightCtx.putImageData(overlayImgData, 0, 0);
+
+    // Обновляем текстуру спрайта в PixiJS
+    this.highlightSprite.texture = PIXI.Texture.from(this.highlightCanvas);
+  }
+
   private smoothLine(points: { x: number; y: number }[], iterations: number = 3): { x: number; y: number }[] {
     if (points.length < 3) return points;
 
@@ -157,21 +197,14 @@ export class WorldMap {
 
     for (let i = 0; i < iterations; i++) {
       const newPoints: { x: number; y: number }[] = [];
-      
       newPoints.push(currentPoints[0]);
 
       for (let j = 0; j < currentPoints.length - 1; j++) {
         const p0 = currentPoints[j];
         const p1 = currentPoints[j + 1];
 
-        const q = {
-          x: 0.75 * p0.x + 0.25 * p1.x,
-          y: 0.75 * p0.y + 0.25 * p1.y
-        };
-        const r = {
-          x: 0.25 * p0.x + 0.75 * p1.x,
-          y: 0.25 * p0.y + 0.75 * p1.y
-        };
+        const q = { x: 0.75 * p0.x + 0.25 * p1.x, y: 0.75 * p0.y + 0.25 * p1.y };
+        const r = { x: 0.25 * p0.x + 0.75 * p1.x, y: 0.25 * p0.y + 0.75 * p1.y };
 
         newPoints.push(q);
         newPoints.push(r);
@@ -186,7 +219,6 @@ export class WorldMap {
 
   public getShorelinePoints(): { x: number; y: number }[] {
     const rawPoints: { x: number; y: number }[] = [];
-    
     if (!this.maskData) return rawPoints;
 
     const maskW = this.maskData.width;
@@ -201,7 +233,6 @@ export class WorldMap {
 
       for (let px = maskW - 1; px >= 0; px -= stepX) {
         const index = (py * maskW + px) * 4;
-        
         const r = data[index];
         const b = data[index + 2];
 
@@ -213,7 +244,6 @@ export class WorldMap {
 
       if (foundShoreX !== -1) {
         const waterOffsetX = Math.max(0, foundShoreX - 5);
-        
         const worldX = (waterOffsetX / maskW) * this.worldWidth;
         const worldY = (py / maskH) * this.worldHeight;
         rawPoints.push({ x: worldX, y: worldY });
@@ -223,7 +253,6 @@ export class WorldMap {
     if (rawPoints.length < 2) return rawPoints;
 
     const margin = 250; 
-
     const first = rawPoints[0];
     const second = rawPoints[1];
     const topDirX = first.x - second.x;
