@@ -26,6 +26,9 @@ export class WorldMap {
   // Поля для подсветки и маркера
   private highlightFilter?: BiomeHighlightFilter;
   private targetMarker: PIXI.Graphics;
+  
+  // Кэш для цвета, если вызов выделения произошел до запекания маски
+  private pendingHighlightColor: string | null = null;
 
   constructor(width: number, height: number) {
     this.container = new PIXI.Container();
@@ -77,14 +80,22 @@ export class WorldMap {
         this.maskCtx.drawImage(img, 0, 0);
         this.maskData = this.maskCtx.getImageData(0, 0, img.width, img.height);
         
-        // 4. Передаём в Pixi Texture запечённый Canvas
+        // 4. Явное создание текстуры из Canvas
         try {
-          const maskPixiTexture = PIXI.Texture.from(this.maskCanvas, {
+          const canvasSource = new PIXI.CanvasSource({
+            resource: this.maskCanvas,
             scaleMode: 'nearest',
           });
           
+          const maskPixiTexture = new PIXI.Texture({ source: canvasSource });
+          
           this.highlightFilter = new BiomeHighlightFilter(maskPixiTexture, img.width, img.height);
           this.mapSprite.filters = [this.highlightFilter];
+
+          // Если клик случился до инициализации фильтра, применяем отложенную подсветку
+          if (this.pendingHighlightColor !== null) {
+            this.highlightFilter.setHighlightedZone(this.pendingHighlightColor);
+          }
         } catch (shaderError) {
           console.warn('WorldMap: Ошибка при инициализации шейдера подсветки:', shaderError);
         }
@@ -122,6 +133,8 @@ export class WorldMap {
    * Подсветка зоны и установка точки прицела
    */
   public highlightZone(hexColor: string | null, worldX?: number, worldY?: number): void {
+    this.pendingHighlightColor = hexColor;
+
     if (this.highlightFilter) {
       this.highlightFilter.setHighlightedZone(hexColor);
     }

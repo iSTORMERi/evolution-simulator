@@ -49,8 +49,8 @@ void main() {
             finalColor = vec4(highlight, color.a);
         }
     } else {
-        // Затемняем неактивные биомы, чтобы активный сразу бросался в глаза
-        finalColor = vec4(color.rgb * 0.55, color.a);
+        // Оставляем неактивные биомы как есть (без затемнения карты)
+        finalColor = color;
     }
 }
 `;
@@ -84,15 +84,27 @@ export class BiomeHighlightFilter extends PIXI.Filter {
   public setHighlightedZone(hexColor: string | null): void {
     if (!hexColor) {
       this.group.uniforms.uEnabled = 0.0;
+      this.group.update();
       return;
     }
 
-    // Парсим hex (#RRGGBB) в нормализованные RGB float [0..1]
-    const r = parseInt(hexColor.substring(1, 3), 16) / 255;
-    const g = parseInt(hexColor.substring(3, 5), 16) / 255;
-    const b = parseInt(hexColor.substring(5, 7), 16) / 255;
+    // Чистим HEX строку от лишних символов (например, #)
+    const cleanHex = hexColor.replace('#', '');
+    
+    if (cleanHex.length !== 6) {
+      console.warn('Некорректный формат цвета биома:', hexColor);
+      return;
+    }
+
+    // Парсим hex (RRGGBB) в нормализованные RGB float [0..1]
+    const r = parseInt(cleanHex.substring(0, 2), 16) / 255;
+    const g = parseInt(cleanHex.substring(2, 4), 16) / 255;
+    const b = parseInt(cleanHex.substring(4, 6), 16) / 255;
 
     this.group.uniforms.uTargetColor = new Float32Array([r, g, b]);
     this.group.uniforms.uEnabled = 1.0;
+    
+    // Принудительно уведомляем PixiJS об изменении униформов
+    this.group.update();
   }
 }
