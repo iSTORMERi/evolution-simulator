@@ -5,6 +5,7 @@ import { WorldMap } from './world/WorldMap';
 import { CameraController } from './world/CameraController';
 import { LightingController } from './world/LightingController';
 import { TimeDebugUI } from './ui/TimeDebugUI';
+import { BiomeScanner } from './ui/BiomeScanner';
 
 let currentApp: PIXI.Application | null = null;
 let resizeHandler: (() => void) | null = null;
@@ -74,7 +75,10 @@ async function initApp() {
     const lightingController = new LightingController(worldMap.container);
     new TimeDebugUI(lightingController);
 
-    // 4. Главный игровой цикл
+    // 4. Инициализация сканера биомов
+    new BiomeScanner(worldMap);
+
+    // 5. Главный игровой цикл
     app.ticker.add((ticker) => {
       // Честное время кадра в секундах (работает корректно на 60Hz, 120Hz и 144Hz)
       const deltaSeconds = ticker.deltaMS / 1000;
