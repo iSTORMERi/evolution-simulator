@@ -23,7 +23,7 @@ export class WorldMap {
   private shoreEffects: ShoreEffects;
   private waves: Waves;
 
-  // Поля для подсветки и маркера прицела
+  // Поля для подсветки и маркера
   private highlightFilter?: BiomeHighlightFilter;
   private targetMarker: PIXI.Graphics;
 
@@ -54,7 +54,7 @@ export class WorldMap {
       this.mapSprite.height = this.worldHeight;
       this.container.addChild(this.mapSprite);
 
-      // 2. Порядок слоев: Карта -> Берег -> Волны -> Прицел
+      // 2. Порядок слоев: Карта -> Берег -> Волны -> Маркер
       this.container.addChild(this.shoreEffects.container);
       this.container.addChild(this.waves.container);
 
@@ -77,7 +77,7 @@ export class WorldMap {
         this.maskCtx.drawImage(img, 0, 0);
         this.maskData = this.maskCtx.getImageData(0, 0, img.width, img.height);
         
-        // 4. Передаём в Pixi Texture запечённый Canvas с четким сэмплированием (nearest)
+        // 4. Передаём в Pixi Texture запечённый Canvas
         try {
           const maskPixiTexture = PIXI.Texture.from(this.maskCanvas, {
             scaleMode: 'nearest',
@@ -103,35 +103,19 @@ export class WorldMap {
   }
 
   /**
-   * Крупный, жирный, минималистичный оранжевый маркер
+   * Чистая, крупная монолитная охристо-оранжевая точка
    */
   private initTargetMarker(): void {
     const g = this.targetMarker;
     g.clear();
 
-    // 1. Внешняя тёмная контрастная тень (слой 1)
-    g.circle(0, 0, 22);
-    g.stroke({ width: 8, color: 0x0f172a, alpha: 0.5 });
+    // Мягкая контрастная тень под точкой
+    g.circle(0, 2, 14);
+    g.fill({ color: 0x000000, alpha: 0.35 });
 
-    // 2. Жирное белое внешнее кольцо (слой 2)
-    g.circle(0, 0, 20);
-    g.stroke({ width: 6, color: 0xffffff, alpha: 0.95 });
-
-    // 3. Основное яркое оранжевое кольцо (слой 3)
-    g.circle(0, 0, 20);
-    g.stroke({ width: 3.5, color: 0xff4500, alpha: 1.0 });
-
-    // 4. Тёмная тень вокруг центральной точки
-    g.circle(0, 0, 8);
-    g.fill({ color: 0x0f172a, alpha: 0.6 });
-
-    // 5. Белая подложка под точку
-    g.circle(0, 0, 7);
-    g.fill({ color: 0xffffff, alpha: 1.0 });
-
-    // 6. Сочная оранжевая центральная точка
-    g.circle(0, 0, 5);
-    g.fill({ color: 0xff4500, alpha: 1.0 });
+    // Единая монолитная охряно-оранжевая точка (#E65100)
+    g.circle(0, 0, 13);
+    g.fill({ color: 0xE65100, alpha: 1.0 });
   }
 
   /**
@@ -196,21 +180,18 @@ export class WorldMap {
     const maskH = this.maskData.height;
     const data = this.maskData.data;
 
-    // Шаг сканирования по высоте маски (~150 точек для детализации)
     const stepY = Math.max(2, Math.floor(maskH / 150)); 
     const stepX = 2; 
 
     for (let py = 0; py < maskH; py += stepY) {
       let foundShoreX = -1;
 
-      // Сканируем с правой границы (суша) налево (в сторону океана)
       for (let px = maskW - 1; px >= 0; px -= stepX) {
         const index = (py * maskW + px) * 4;
         
         const r = data[index];
         const b = data[index + 2];
 
-        // Детектор воды: синий канал преобладает над красным
         if (b > r + 20) {
           foundShoreX = px;
           break;
@@ -230,7 +211,6 @@ export class WorldMap {
 
     const margin = 250; 
 
-    // Точка-продление наверх
     const first = rawPoints[0];
     const second = rawPoints[1];
     const topDirX = first.x - second.x;
@@ -242,7 +222,6 @@ export class WorldMap {
       y: first.y - margin,
     };
 
-    // Точка-продление вниз
     const last = rawPoints[rawPoints.length - 1];
     const prevLast = rawPoints[rawPoints.length - 2];
     const botDirX = last.x - prevLast.x;
