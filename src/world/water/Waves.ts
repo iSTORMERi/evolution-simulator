@@ -22,7 +22,7 @@ export class Waves {
 
   private rippleTimer: number = 0;
   private majorTimer: number = 0;
-  private maxActiveWaves: number = 14; // Достаточно для плотного живописного океана
+  private maxActiveWaves: number = 14;
 
   constructor() {
     this.container = new PIXI.Container();
@@ -35,7 +35,6 @@ export class Waves {
     this.activeWaves = [];
     
     if (this.shorePoints.length > 10) {
-      // Спавним стартовый набор: пару крупных и несколько мелких
       for (let i = 0; i < 2; i++) this.spawnWave(true, false);
       for (let i = 0; i < 5; i++) this.spawnWave(true, true);
     }
@@ -70,7 +69,7 @@ export class Waves {
         continue;
       }
 
-      this.renderMassiveWave(wave);
+      this.renderCleanWave(wave);
     }
   }
 
@@ -84,16 +83,14 @@ export class Waves {
     let speed: number;
 
     if (isRipple) {
-      // Параметры мелких волн-барашков
-      scale = 0.25 + Math.random() * 0.3;          // Маленький размер
-      lengthRatio = 0.08 + Math.random() * 0.12;   // Короткие дуги (8–20% от длины берега)
-      maxOffset = 100 + Math.random() * 180;       // Зарождаются ближе к берегу
+      scale = 0.25 + Math.random() * 0.3;          
+      lengthRatio = 0.08 + Math.random() * 0.12;   
+      maxOffset = 100 + Math.random() * 180;       
       speed = 22 + Math.random() * 15;
     } else {
-      // Параметры крупных валов
-      scale = 1.0 + Math.random() * 0.4;           // Впечатляющий массивный размер
-      lengthRatio = 0.3 + Math.random() * 0.2;     // Длинные фронты
-      maxOffset = 300 + Math.random() * 150;       // Далекий спавн в глубине
+      scale = 1.0 + Math.random() * 0.4;           
+      lengthRatio = 0.3 + Math.random() * 0.2;     
+      maxOffset = 300 + Math.random() * 150;       
       speed = 18 + Math.random() * 8;
     }
 
@@ -118,7 +115,7 @@ export class Waves {
     });
   }
 
-  private renderMassiveWave(wave: Wave): void {
+  private renderCleanWave(wave: Wave): void {
     const total = wave.endIndex - wave.startIndex;
     if (total < 2) return;
 
@@ -132,7 +129,7 @@ export class Waves {
       lifeFade = progress / 0.12;
     }
 
-    // Динамический рост толщины
+    // Динамический рост толщины волны
     const growthFactor = Math.sin((1 - progress) * Math.PI * 0.85);
     const baseThickness = (6 + growthFactor * 26) * wave.scale;
 
@@ -152,7 +149,7 @@ export class Waves {
       const ny = dx / len;
 
       const relIndex = (i - wave.startIndex) / total;
-      const shapeFactor = Math.sin(relIndex * Math.PI); // Форма капли/линзы
+      const shapeFactor = Math.sin(relIndex * Math.PI); // Идеальная гладкая форма капли/дуги
       const pointThickness = baseThickness * shapeFactor;
 
       frontEdge.push({
@@ -168,21 +165,8 @@ export class Waves {
 
     if (frontEdge.length < 2) return;
 
-    // --- 1. ТЕНЬ ВОЛНЫ ---
-    this.graphics.beginPath();
-    this.graphics.moveTo(frontEdge[0].x, frontEdge[0].y);
-    for (let i = 1; i < frontEdge.length; i++) {
-      this.graphics.lineTo(frontEdge[i].x, frontEdge[i].y);
-    }
-    const shadowOffset = wave.isRipple ? 2 : 4;
-    for (let i = backEdge.length - 1; i >= 0; i--) {
-      this.graphics.lineTo(backEdge[i].x + shadowOffset, backEdge[i].y + shadowOffset);
-    }
-    this.graphics.closePath();
-    this.graphics.fill({ color: 0x02232d, alpha: (wave.isRipple ? 0.2 : 0.35) * lifeFade });
-
-    // --- 2. БИРЮЗОВОЕ ТЕЛО ---
-    const bodyAlpha = Math.max(0, (progress - 0.08) / 0.92) * 0.8 * lifeFade;
+    // --- 1. БИРЮЗОВОЕ ТЕЛО ВОЛНЫ (ЧИСТЫЙ ЦВЕТ БЕЗ ТЁМНЫХ ТЕНЕЙ) ---
+    const bodyAlpha = Math.max(0, (progress - 0.08) / 0.92) * 0.75 * lifeFade;
     if (bodyAlpha > 0.02) {
       this.graphics.beginPath();
       this.graphics.moveTo(frontEdge[0].x, frontEdge[0].y);
@@ -193,10 +177,11 @@ export class Waves {
         this.graphics.lineTo(backEdge[i].x, backEdge[i].y);
       }
       this.graphics.closePath();
-      this.graphics.fill({ color: 0x22c2d6, alpha: bodyAlpha });
+      // Светлый, сочный лазурный цвет
+      this.graphics.fill({ color: 0x3cd2e6, alpha: bodyAlpha });
     }
 
-    // --- 3. БЕЛАЯ ПЕНА ---
+    // --- 2. БЕЛОСНЕЖНАЯ ПЕНА ПРИБОЯ ---
     const foamFactor = progress < 0.35 ? (1 - progress / 0.35) : 0;
     const foamAlpha = (0.35 + foamFactor * 0.6) * lifeFade;
 

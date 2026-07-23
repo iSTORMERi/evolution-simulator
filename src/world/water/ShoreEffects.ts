@@ -13,7 +13,6 @@ export class ShoreEffects {
   private wetSandGraphics: PIXI.Graphics;       // Огромный массив мокрого песка
   private shallowWaterGraphics: PIXI.Graphics; // Прозрачный пласт набегающей воды
   private foamLaceGraphics: PIXI.Graphics;     // Переплетенные косы пены
-  private residualFoamGraphics: PIXI.Graphics; // Пузыри и кружево пены
 
   private time: number = 0;
   private shorePoints: ShorePoint[] = [];
@@ -23,13 +22,11 @@ export class ShoreEffects {
 
     this.wetSandGraphics = new PIXI.Graphics();
     this.shallowWaterGraphics = new PIXI.Graphics();
-    this.residualFoamGraphics = new PIXI.Graphics();
     this.foamLaceGraphics = new PIXI.Graphics();
 
-    // Слои: 1. Мокрый песок -> 2. Вода -> 3. Пузыри -> 4. Косы пены
+    // Слои: 1. Мокрый песок -> 2. Вода -> 3. Косы пены
     this.container.addChild(this.wetSandGraphics);
     this.container.addChild(this.shallowWaterGraphics);
-    this.container.addChild(this.residualFoamGraphics);
     this.container.addChild(this.foamLaceGraphics);
   }
 
@@ -44,7 +41,6 @@ export class ShoreEffects {
 
     this.wetSandGraphics.clear();
     this.shallowWaterGraphics.clear();
-    this.residualFoamGraphics.clear();
     this.foamLaceGraphics.clear();
 
     // Расчет движения волны
@@ -52,7 +48,7 @@ export class ShoreEffects {
     const swash = Math.pow((cycle + 1) / 2, 0.7); // 0.0 -> 1.0
     const waveAdvance = swash * 55;
 
-    // === 1. МАССИВНАЯ ЗОНА МОКРОГО ПЕСКА (Увеличенная в разы) ===
+    // === 1. МАССИВНАЯ ЗОНА МОКРОГО ПЕСКА ===
     for (let i = 0; i < this.shorePoints.length; i++) {
       const pt = this.shorePoints[i];
       const wetNoise = Math.sin(pt.y * 0.002 + this.time * 0.15) * 16;
@@ -65,7 +61,7 @@ export class ShoreEffects {
     // Ширина 220px укрывает весь прибрежный песок сочной тёмной влажностью
     this.wetSandGraphics.stroke({ color: 0x221508, width: 220, alpha: 0.35 });
 
-    // === 2. ДВИЖУЩАЯСЯ ЛАЗУРНАЯ ВОДА (Без лишних задних полос) ===
+    // === 2. ДВИЖУЩАЯСЯ ЛАЗУРНАЯ ВОДА ===
     for (let i = 0; i < this.shorePoints.length; i++) {
       const pt = this.shorePoints[i];
       const waterNoise = Math.sin(pt.y * 0.003 + this.time * 0.8) * 10 + Math.sin(pt.y * 0.01) * 5;
@@ -76,34 +72,7 @@ export class ShoreEffects {
     }
     this.shallowWaterGraphics.stroke({ color: 0x42e3f0, width: 75, alpha: 0.4 });
 
-    // === 3. ОСТАТОЧНЫЕ ПУЗЫРИ ПЕНЫ НА ПЕСКЕ И В МОРЕ ===
-    // В море до наката
-    const seaFoamAlpha = (1 - swash) * 0.45;
-    if (seaFoamAlpha > 0.05) {
-      for (let i = 0; i < this.shorePoints.length; i += 3) {
-        const pt = this.shorePoints[i];
-        const seaNoise = Math.sin(pt.y * 0.03 + this.time) * 12;
-        const seaOffset = -10 + seaNoise;
-        this.residualFoamGraphics.circle(pt.x + seaOffset, pt.y, 2 + Math.abs(Math.sin(pt.y)) * 3);
-      }
-      this.residualFoamGraphics.fill({ color: 0xe0ffff, alpha: seaFoamAlpha });
-    }
-
-    // На песке после отката
-    const shoreLaceAlpha = Math.max(0, (1 - swash) * 0.7);
-    if (shoreLaceAlpha > 0.05) {
-      for (let i = 0; i < this.shorePoints.length; i += 2) {
-        const pt = this.shorePoints[i];
-        const sandLaceNoise = Math.sin(pt.y * 0.04) * 16;
-        const laceOffset = 50 + sandLaceNoise;
-        
-        const bubbleSize = 2.5 + Math.sin(pt.y * 0.2) * 2.5;
-        this.residualFoamGraphics.circle(pt.x + laceOffset, pt.y, bubbleSize);
-      }
-      this.residualFoamGraphics.fill({ color: 0xffffff, alpha: shoreLaceAlpha });
-    }
-
-    // === 4. ПЕРЕПЛЕТЁННЫЕ КОСЫ ПЕНЫ ===
+    // === 3. ОСНОВНЫЕ ПЕРЕПЛЕТЁННЫЕ КОСЫ ПЕНЫ И ФРОНТ ПРИБОЯ ===
     const strandConfigs = [
       { width: 16, alpha: 0.85, speed: 1.0, freq1: 0.003, freq2: 0.015, shift: 0 },
       { width: 10, alpha: 0.65, speed: 1.3, freq1: 0.006, freq2: 0.025, shift: -7 },
