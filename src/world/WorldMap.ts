@@ -3,7 +3,7 @@
 import * as PIXI from 'pixi.js';
 import { OCEAN_ZONES_CONFIG, LAND_ZONE_CONFIG } from './zoneConfig';
 import { ZoneConfig } from './types';
-import { ShoreEffects, OpenWaterEffects } from './water';
+import { ShoreEffects, OpenWaterEffects, Waves } from './water';
 
 export class WorldMap {
   public container: PIXI.Container;
@@ -21,6 +21,7 @@ export class WorldMap {
 
   private shoreEffects: ShoreEffects;
   private openWaterEffects: OpenWaterEffects;
+  private waves: Waves;
 
   constructor(width: number, height: number) {
     this.container = new PIXI.Container();
@@ -32,6 +33,7 @@ export class WorldMap {
 
     this.shoreEffects = new ShoreEffects();
     this.openWaterEffects = new OpenWaterEffects();
+    this.waves = new Waves();
 
     this.initMap();
   }
@@ -45,7 +47,9 @@ export class WorldMap {
       this.mapSprite.height = this.worldHeight;
       this.container.addChild(this.mapSprite);
 
+      // Правильный порядок слоев: сначала глубина, затем бегущие волны, поверх -- кромка берега
       this.container.addChild(this.openWaterEffects.container);
+      this.container.addChild(this.waves.container);
       this.container.addChild(this.shoreEffects.container);
 
       // 2. Безопасная загрузка маски через нативный HTML Image (обходит баги Pixi v8)
@@ -75,6 +79,7 @@ export class WorldMap {
       const shorePoints = this.getShorelinePoints();
       this.shoreEffects.initShoreline(shorePoints);
       this.openWaterEffects.init(shorePoints);
+      this.waves.initShoreline(shorePoints);
 
     } catch (error) {
       console.error('WorldMap: Ошибка при загрузке ассетов:', error);
@@ -146,7 +151,6 @@ export class WorldMap {
         const b = data[index + 2];
 
         // Детектор воды: синий канал должен заметно преобладать над красным
-        // Песок имеет много красного/зеленого, вода - синего.
         if (b > r + 20) {
           foundShoreX = px;
           break;
@@ -224,6 +228,7 @@ export class WorldMap {
   public update(deltaSeconds: number): void {
     if (!this.isLoaded) return;
     this.openWaterEffects.update(deltaSeconds);
+    this.waves.update(deltaSeconds);
     this.shoreEffects.update(deltaSeconds);
   }
 
