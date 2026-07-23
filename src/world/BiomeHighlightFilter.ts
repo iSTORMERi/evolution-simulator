@@ -2,7 +2,6 @@
 
 import * as PIXI from 'pixi.js';
 
-// Универсальный GLSL 100 ES, совместимый с iOS Safari и всеми версиями WebGL
 const fragmentShader = `
 precision highp float;
 
@@ -41,15 +40,15 @@ void main() {
         bool isEdge = (dLeft >= 0.22) || (dRight >= 0.22) || (dTop >= 0.22) || (dBot >= 0.22);
 
         if (isEdge) {
-            // Яркий неоново-бирюзовый контур выделенного биома
+            // Неоновый бирюзовый контур выделенного биома
             gl_FragColor = vec4(0.1, 0.95, 1.0, 1.0);
         } else {
-            // Сочная подсвечивающая заливка для выбранной зоны
+            // Подсвечивающая заливка для выбранной зоны
             vec3 highlight = mix(color.rgb, vec3(0.0, 0.65, 1.0), 0.45);
             gl_FragColor = vec4(highlight, color.a);
         }
     } else {
-        // Оставляем неактивные биомы без изменений
+        // Оставляем остальные биомы без изменений
         gl_FragColor = color;
     }
 }
@@ -64,17 +63,19 @@ export class BiomeHighlightFilter extends PIXI.Filter {
       fragment: fragmentShader,
     });
 
+    // В PixiJS v8 в UniformGroup передаются только чистые значения (numbers, arrays)
     const group = new PIXI.UniformGroup({
-      uMaskTexture: { value: maskTexture, type: 't' },
       uTargetColor: { value: new Float32Array([0, 0, 0]), type: 'vec3' },
       uEnabled: { value: 0.0, type: 'f' },
       uTextureSize: { value: new Float32Array([maskWidth, maskHeight]), type: 'vec2' },
     });
 
+    // Текстура маски передается напрямую в resources через source
     super({
       glProgram,
       resources: {
         highlightUniforms: group,
+        uMaskTexture: maskTexture.source,
       },
     });
 
