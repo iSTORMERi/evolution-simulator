@@ -48,6 +48,7 @@ export class OpenWaterEffects {
   public update(deltaSeconds: number): void {
     if (this.shorePoints.length === 0) return;
 
+    // В PixiJS v8 метод clear() полностью очищает геометрию, beginPath() не требуется
     this.breakersGraphics.clear();
 
     for (const arc of this.waveBreakers) {
@@ -65,12 +66,10 @@ export class OpenWaterEffects {
       const alpha = Math.sin(arc.progress * Math.PI); // Прозрачность: 0 -> 1 -> 0
 
       // Тень волны
-      this.breakersGraphics.beginPath();
       this.breakersGraphics.arc(currentX - 3, arc.y, arc.radius, -0.6, 0.6);
       this.breakersGraphics.stroke({ color: 0x0f4d5c, width: 5, alpha: alpha * 0.4 });
 
       // Белый гребень
-      this.breakersGraphics.beginPath();
       this.breakersGraphics.arc(currentX, arc.y, arc.radius, -0.5, 0.5);
       this.breakersGraphics.stroke({ color: 0xffffff, width: 2.5, alpha: alpha * 0.8 });
     }

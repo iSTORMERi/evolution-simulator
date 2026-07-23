@@ -19,7 +19,6 @@ export class WorldMap {
 
   private isLoaded: boolean = false;
 
-  // Модули спецэффектов воды
   private shoreEffects: ShoreEffects;
   private openWaterEffects: OpenWaterEffects;
 
@@ -31,101 +30,98 @@ export class WorldMap {
     this.maskCanvas = document.createElement('canvas');
     this.maskCtx = this.maskCanvas.getContext('2d', { willReadFrequently: true });
 
-    // Инициализация спецэффектов воды
     this.shoreEffects = new ShoreEffects();
     this.openWaterEffects = new OpenWaterEffects();
 
     this.initMap();
   }
 
-  /**
-   * Загрузка ассетов визуальной карты и маски зон
-   */
   private async initMap(): Promise<void> {
     try {
-      // 1. Загрузка визуальной текстуры
+      // 1. Загрузка визуальной текстуры (PixiJS)
       const visualTexture = await PIXI.Assets.load('assets/ocean_visual.png');
       this.mapSprite = new PIXI.Sprite(visualTexture);
       this.mapSprite.width = this.worldWidth;
       this.mapSprite.height = this.worldHeight;
       this.container.addChild(this.mapSprite);
 
-      // Добавляем эффекты воды поверх картинки карты
       this.container.addChild(this.openWaterEffects.container);
       this.container.addChild(this.shoreEffects.container);
 
-      // 2. Безопасная загрузка маски зон через PixiJS
-      const maskTexture = await PIXI.Assets.load('assets/ocean_zones_mask.png');
-      const maskSource = maskTexture.source.resource as HTMLImageElement | HTMLCanvasElement;
+      // 2. Безопасная загрузка маски через нативный HTML Image (обходит баги Pixi v8)
+      const img = new Image();
+      img.src = 'assets/ocean_zones_mask.png';
+      
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error('Mask image not found'));
+      });
 
-      this.maskCanvas.width = maskTexture.width;
-      this.maskCanvas.height = maskTexture.height;
+      this.maskCanvas.width = img.width;
+      this.maskCanvas.height = img.height;
 
       if (this.maskCtx) {
-        this.maskCtx.drawImage(maskSource, 0, 0);
+        this.maskCtx.drawImage(img, 0, 0);
+        this.maskData = this.maskCtx.getImageData(0, 0, img.width, img.height);
         
-        // Считываем сырой массив пикселей
-        this.maskData = this.maskCtx.getImageData(
-          0, 
-          0, 
-          this.maskCanvas.width, 
-          this.maskCanvas.height
-        );
-
-        // 🧹 Очистка памяти для предотвращения падений Safari на мобильных устройствах
+        // Очистка Canvas
         this.maskCanvas.width = 0;
         this.maskCanvas.height = 0;
-        this.maskCtx = null;
       }
 
       this.isLoaded = true;
 
-      // Автоматическое определение береговой линии и инициализация эффектов
+      // 3. Сканируем берег
       const shorePoints = this.getShorelinePoints();
       this.shoreEffects.initShoreline(shorePoints);
       this.openWaterEffects.init(shorePoints);
 
-      console.log(`WorldMap: Карта и эффекты загружены. Найдено точек берега: ${shorePoints.length}`);
-
     } catch (error) {
-      console.error('WorldMap: Ошибка при загрузке карт из assets/:', error);
+      console.error('WorldMap: Ошибка при загрузке ассетов:', error);
     }
   }
 
-  /**
-   * Сканирование маски для автоматического построения координат береговой линии
-   */
   public getShorelinePoints(): { x: number; y: number }[] {
-    if (!this.maskData) return [];
-
     const points: { x: number; y: number }[] = [];
-    const stepY = 25; // Шаг сканирования по высоте (чем меньше, тем точнее повторяется изгиб)
-
-    for (let y = 0; y < this.worldHeight; y += stepY) {
-      // Ищем границу перехода от суши к воде справа налево
-      for (let x = this.worldWidth; x >= 0; x -= 15) {
-        const zone = this.getZoneAt(x, y);
-        if (zone.id !== LAND_ZONE_CONFIG.id) {
-          points.push({ x, y });
-          break;
+    const stepY = 25; 
+    
+    if (this.maskData) {
+      for (let y = 0; y < this.worldHeight; y += stepY) {
+        let foundLand = false;
+        // Сканируем справа налево
+        for (let x = this.worldWidth; x >= 0; x -= 15) {
+          const zone = this.getZoneAt(x, y);
+          
+          if (zone.id === LAND_ZONE_CONFIG.id) {
+            foundLand = true; // Подтверждаем, что нашли сушу
+          } else if (foundLand) {
+            // Как только после суши встретили воду - ставим точку берега
+            points.push({ x, y });
+            break;
+          }
         }
+      }
+    }
+
+    // 🔥 ПРЕДОХРАНИТЕЛЬ: Если маска не сработала, рисуем тестовую линию, 
+    // чтобы ты точно увидел работу эффектов на экране
+    if (points.length < 5) {
+      console.warn('WorldMap: Берег по маске не найден! Рисуем тестовую линию берега.');
+      for (let y = 0; y < this.worldHeight; y += stepY) {
+        // Примерно повторяем изгиб твоего берега со скриншота (около 75% экрана по ширине)
+        const fakeX = this.worldWidth * 0.75 + Math.sin(y * 0.001) * 300;
+        points.push({ x: fakeX, y });
       }
     }
 
     return points;
   }
 
-  /**
-   * Преобразование RGB в HEX-строку вида "#rrggbb"
-   */
   private rgbToHex(r: number, g: number, b: number): string {
     const toHex = (c: number) => c.toString(16).padStart(2, '0');
     return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
   }
 
-  /**
-   * Вычисление расстояния между двумя цветами
-   */
   private colorDistance(hex1: string, hex2: string): number {
     const r1 = parseInt(hex1.substring(1, 3), 16);
     const g1 = parseInt(hex1.substring(3, 5), 16);
@@ -138,12 +134,9 @@ export class WorldMap {
     return Math.sqrt((r1 - r2) ** 2 + (g1 - g2) ** 2 + (b1 - b2) ** 2);
   }
 
-  /**
-   * Определение зоны и её параметров по игровой координате (X, Y)
-   */
   public getZoneAt(worldX: number, worldY: number): ZoneConfig {
     if (!this.isLoaded || !this.maskData) {
-      return OCEAN_ZONES_CONFIG[0]; // Возвращаем дефолтную зону до загрузки
+      return OCEAN_ZONES_CONFIG[0]; 
     }
 
     const normalizedX = Math.max(0, Math.min(1, worldX / this.worldWidth));
@@ -159,12 +152,11 @@ export class WorldMap {
 
     const sampledHex = this.rgbToHex(r, g, b);
 
-    // 1. Проверяем совпадение с сушей
-    if (this.colorDistance(sampledHex, LAND_ZONE_CONFIG.hexColor) < 30) {
+    // Увеличили допуск погрешности цветов с 30 до 80 на случай артефактов сжатия png
+    if (this.colorDistance(sampledHex, LAND_ZONE_CONFIG.hexColor) < 80) {
       return LAND_ZONE_CONFIG;
     }
 
-    // 2. Ищем наиболее близкую зону океана
     let closestZone = OCEAN_ZONES_CONFIG[0];
     let minDistance = Infinity;
 
@@ -181,13 +173,9 @@ export class WorldMap {
 
   public update(deltaSeconds: number): void {
     if (!this.isLoaded) return;
-
-    // Обновляем анимацию волн и прибоя на каждом кадре
     this.openWaterEffects.update(deltaSeconds);
     this.shoreEffects.update(deltaSeconds);
   }
 
-  public updateTimeState(_hours: number): void {
-    // Резерв для эффектов смены дня и ночи
-  }
+  public updateTimeState(_hours: number): void {}
 }
