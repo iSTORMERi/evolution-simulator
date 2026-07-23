@@ -3,29 +3,26 @@
 import * as PIXI from 'pixi.js';
 import { ShorePoint } from './ShoreEffects';
 
-interface WaveInstance {
+interface FrontWave {
   id: number;
-  startX: number;
-  startY: number;
-  targetX: number;
-  targetY: number;
-  waveAngle: number;
-  length: number;
-  curvature: number;
-  isMajor: boolean;
-  progress: number;
+  startIndex: number;
+  endIndex: number;
+  offset: number;     // Дистанция от берега (в пикселях)
+  maxOffset: number;  // Начальная дистанция спавна (например, 120px)
   speed: number;
-  maxAlpha: number;
+  alpha: number;
+  length: number;
+  isMajor: boolean;
 }
 
 export class Waves {
   public container: PIXI.Container;
   private graphics: PIXI.Graphics;
-  private waves: WaveInstance[] = [];
   private shorePoints: ShorePoint[] = [];
-  
+  private activeWaves: FrontWave[] = [];
+
   private spawnTimer: number = 0;
-  private nextSpawnInterval: number = 0.5;
+  private maxActiveWaves: number = 8; // Много плотных фронтов
 
   constructor() {
     this.container = new PIXI.Container();
@@ -35,136 +32,148 @@ export class Waves {
 
   public initShoreline(shorePoints: ShorePoint[]): void {
     this.shorePoints = shorePoints;
-    // Сразу генерируем пару волн при инициализации
-    for (let i = 0; i < 3; i++) {
-      this.spawnWave();
+    this.activeWaves = [];
+    
+    // При старте заполняем сразу несколькими волнами на разной дистанции
+    if (this.shorePoints.length > 10) {
+      for (let i = 0; i < 5; i++) {
+        this.spawnWave(true);
+      }
     }
   }
 
   public update(deltaSeconds: number): void {
-    if (!this.shorePoints || this.shorePoints.length < 2) return;
+    if (!this.shorePoints || this.shorePoints.length < 10) return;
 
+    // Таймер спавна
     this.spawnTimer += deltaSeconds;
-    if (this.spawnTimer >= this.nextSpawnInterval) {
-      this.spawnWave();
+    if (this.spawnTimer >= 0.4 && this.activeWaves.length < this.maxActiveWaves) {
+      this.spawnWave(false);
       this.spawnTimer = 0;
-      this.nextSpawnInterval = 0.6 + Math.random() * 1.0;
     }
 
     this.graphics.clear();
 
-    for (let i = this.waves.length - 1; i >= 0; i--) {
-      const wave = this.waves[i];
-      wave.progress += deltaSeconds * wave.speed;
+    // Обновляем и рендерим волны
+    for (let i = this.activeWaves.length - 1; i >= 0; i--) {
+      const wave = this.activeWaves[i];
 
-      if (wave.progress >= 1.0) {
-        this.waves.splice(i, 1);
+      // Волна движется К БЕРЕГУ (уменьшаем offset до 0)
+      wave.offset -= deltaSeconds * wave.speed;
+
+      if (wave.offset <= 5) {
+        this.activeWaves.splice(i, 1);
         continue;
       }
 
-      this.renderWave(wave);
+      this.renderParallelWave(wave);
     }
   }
 
-  private spawnWave(): void {
-    if (this.shorePoints.length < 10) return;
+  private spawnWave(randomProgress: boolean): void {
+    const totalPoints = this.shorePoints.length;
+    if (totalPoints < 15) return;
 
-    const shoreIndex = Math.floor(Math.random() * (this.shorePoints.length - 10)) + 5;
-    const targetPt = this.shorePoints[shoreIndex];
+    // Длина волны вдоль берега (в количестве точек)
+    const wavePointLength = Math.floor(25 + Math.random() * 45); 
+    const maxStartIndex = totalPoints - wavePointLength - 1;
+    if (maxStartIndex <= 0) return;
 
-    // Вычисляем угол движения строго от глубокой воды (слева/сверху) к выбранной точке берега
-    // Спавним точку старта на зафиксированном офсете в глубине океана (-150px по X, -100px по Y)
-    const oceanOffsetX = -180 - Math.random() * 80;
-    const oceanOffsetY = (Math.random() - 0.5) * 100;
+    const startIndex = Math.floor(Math.random() * maxStartIndex);
+    const endIndex = startIndex + wavePointLength;
 
-    const startX = targetPt.x + oceanOffsetX;
-    const startY = targetPt.y + oceanOffsetY;
+    const maxOffset = 100 + Math.random() * 80; // Начинают в 100-180px от берега
+    const initialOffset = randomProgress ? Math.random() * maxOffset : maxOffset;
 
-    // Вектор от старта к цели
-    const waveAngle = Math.atan2(targetPt.y - startY, targetPt.x - startX);
+    const isMajor = Math.random() < 0.4;
 
-    const isMajor = Math.random() < 0.3;
-    const length = isMajor ? 260 + Math.random() * 120 : 100 + Math.random() * 90;
-
-    this.waves.push({
+    this.activeWaves.push({
       id: Math.random(),
-      startX: startX,
-      startY: startY,
-      targetX: targetPt.x,
-      targetY: targetPt.y,
-      waveAngle: waveAngle,
-      length: length,
-      curvature: 25 + Math.random() * 10,
-      isMajor: isMajor,
-      progress: Math.random() * 0.2, // Небольшой разброс начальной фазы
-      speed: isMajor ? 0.22 + Math.random() * 0.06 : 0.35 + Math.random() * 0.1,
-      maxAlpha: isMajor ? 0.95 : 0.8,
+      startIndex,
+      endIndex,
+      offset: initialOffset,
+      maxOffset,
+      speed: 25 + Math.random() * 15, // Скорость движения к берегу
+      alpha: 1,
+      length: wavePointLength,
+      isMajor,
     });
   }
 
-  private renderWave(wave: WaveInstance): void {
-    const currentX = wave.startX + (wave.targetX - wave.startX) * wave.progress;
-    const currentY = wave.startY + (wave.targetY - wave.startY) * wave.progress;
+  private renderParallelWave(wave: FrontWave): void {
+    const points: { x: number; y: number; edgeAlpha: number }[] = [];
 
-    // Прозрачность: рост -> пик -> угасание у берега
-    let alpha = wave.maxAlpha;
-    if (wave.progress < 0.15) {
-      alpha *= (wave.progress / 0.15);
-    } else if (wave.progress > 0.8) {
-      alpha *= (1 - (wave.progress - 0.8) / 0.2);
+    // Вычисляем параллельные точки со смещением влево (в океан)
+    for (let i = wave.startIndex; i <= wave.endIndex; i++) {
+      const curr = this.shorePoints[i];
+      const prev = this.shorePoints[Math.max(0, i - 1)];
+      const next = this.shorePoints[Math.min(this.shorePoints.length - 1, i + 1)];
+
+      // Касательный вектор вдоль берега
+      const dx = next.x - prev.x;
+      const dy = next.y - prev.y;
+      const len = Math.hypot(dx, dy) || 1;
+
+      // Нормаль наружу (в сторону воды, т.е. влево)
+      const nx = -dy / len;
+      const ny = dx / len;
+
+      // Прозрачность по краям волны (затухание на концах дуги)
+      const relativeIdx = i - wave.startIndex;
+      const edgeFactor = Math.sin((relativeIdx / wave.length) * Math.PI);
+
+      // Координата с перпендикулярным сдвигом в океан
+      points.push({
+        x: curr.x + nx * wave.offset,
+        y: curr.y + ny * wave.offset,
+        edgeAlpha: edgeFactor,
+      });
     }
 
-    const perpAngle = wave.waveAngle + Math.PI / 2;
-    const segments = 16;
-    const points: { x: number; y: number }[] = [];
+    if (points.length < 2) return;
 
-    for (let i = 0; i <= segments; i++) {
-      const t = (i / segments) - 0.5;
-      const distAlongFront = t * wave.length;
-      
-      // Дуга ВЫГНУТА ВПЕРЕД по направлению движения (к берегу)
-      const curveForward = (1 - 4 * t * t) * wave.curvature;
-
-      const px = currentX + Math.cos(perpAngle) * distAlongFront + Math.cos(wave.waveAngle) * curveForward;
-      const py = currentY + Math.sin(perpAngle) * distAlongFront + Math.sin(wave.waveAngle) * curveForward;
-
-      points.push({ x: px, y: py });
+    // Прогресс движения (1 -> зарождение в глубине, 0 -> прибой у берега)
+    const progress = wave.offset / wave.maxOffset;
+    
+    // Прозрачность волны (плавное появление и затухание у самого берега)
+    let globalAlpha = 1;
+    if (progress > 0.85) {
+      globalAlpha = (1 - progress) / 0.15; // Появление
+    } else if (progress < 0.15) {
+      globalAlpha = progress / 0.15; // Затухание у берега
     }
 
-    // 1. Тёмная широкая тень волны сзади
-    const shadowWidth = wave.isMajor ? 24 : 14;
-    this.graphics.moveTo(points[0].x, points[0].y);
-    for (let i = 1; i < points.length; i++) {
-      this.graphics.lineTo(points[i].x, points[i].y);
-    }
-    this.graphics.stroke({ color: 0x074550, width: shadowWidth, alpha: alpha * 0.7 });
+    // Рендерим линию сглаженными отрезками
+    // 1. Тёмная глубинная тень
+    this.drawCurvedLine(points, globalAlpha * (wave.isMajor ? 0.5 : 0.3), 0x053340, wave.isMajor ? 12 : 7, 0);
 
-    // 2. Бирюзовое тело
-    const bodyWidth = wave.isMajor ? 14 : 8;
-    this.graphics.moveTo(
-      points[0].x + Math.cos(wave.waveAngle) * 3, 
-      points[0].y + Math.sin(wave.waveAngle) * 3
-    );
-    for (let i = 1; i < points.length; i++) {
-      this.graphics.lineTo(
-        points[i].x + Math.cos(wave.waveAngle) * 3, 
-        points[i].y + Math.sin(wave.waveAngle) * 3
-      );
-    }
-    this.graphics.stroke({ color: 0x36d5e3, width: bodyWidth, alpha: alpha * 0.85 });
+    // 2. Бирюзовое гребневое тело
+    this.drawCurvedLine(points, globalAlpha * 0.75, 0x2ecbe0, wave.isMajor ? 6 : 4, 1.5);
 
-    // 3. Белый передний гребень
-    const crestWidth = wave.isMajor ? 8 : 4;
-    this.graphics.moveTo(
-      points[0].x + Math.cos(wave.waveAngle) * 6, 
-      points[0].y + Math.sin(wave.waveAngle) * 6
-    );
-    for (let i = 1; i < points.length; i++) {
-      this.graphics.lineTo(
-        points[i].x + Math.cos(wave.waveAngle) * 6, 
-        points[i].y + Math.sin(wave.waveAngle) * 6
-      );
+    // 3. Белоснежная пена на вершине
+    this.drawCurvedLine(points, globalAlpha * 0.9, 0xffffff, wave.isMajor ? 3.5 : 2, 3);
+  }
+
+  private drawCurvedLine(
+    points: { x: number; y: number; edgeAlpha: number }[],
+    baseAlpha: number,
+    color: number,
+    lineWidth: number,
+    advanceOffset: number
+  ): void {
+    if (points.length < 2) return;
+
+    for (let i = 0; i < points.length - 1; i++) {
+      const p1 = points[i];
+      const p2 = points[i + 1];
+
+      const segmentAlpha = baseAlpha * ((p1.edgeAlpha + p2.edgeAlpha) / 2);
+
+      if (segmentAlpha < 0.02) continue;
+
+      this.graphics.moveTo(p1.x + advanceOffset, p1.y);
+      this.graphics.lineTo(p2.x + advanceOffset, p2.y);
+      this.graphics.stroke({ color, width: lineWidth, alpha: segmentAlpha });
     }
-    this.graphics.stroke({ color: 0xffffff, width: crestWidth, alpha: alpha * 0.95 });
   }
 }
