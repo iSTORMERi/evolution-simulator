@@ -172,8 +172,9 @@ export class WorldMap {
     const overlayImgData = this.highlightCtx.createImageData(w, h);
     const overlayPixels = overlayImgData.data;
 
-    // Порог допуска снижен с 55 до 20, чтобы предотвратить слияние похожих оттенков
-    const COLOR_TOLERANCE = 20;
+    // Оптимальный допуск (35), сглаживающий неточности HEX в zoneConfig,
+    // но при этом чётко разделяющий соседние зоны
+    const COLOR_TOLERANCE = 35;
 
     // Закрашиваем совпавшие пиксели неоново-бирюзовым цветом с полупрозрачностью
     for (let i = 0; i < maskPixels.length; i += 4) {
