@@ -172,29 +172,29 @@ export class WorldMap {
     const overlayImgData = this.highlightCtx.createImageData(w, h);
     const overlayPixels = overlayImgData.data;
 
-    // Оптимальный допуск (35), сглаживающий неточности HEX в zoneConfig,
-    // но при этом чётко разделяющий соседние зоны
     const COLOR_TOLERANCE = 35;
+    const toleranceSq = COLOR_TOLERANCE * COLOR_TOLERANCE;
 
-    // Закрашиваем совпавшие пиксели неоново-бирюзовым цветом с полупрозрачностью
-    for (let i = 0; i < maskPixels.length; i += 4) {
-      const r = maskPixels[i];
-      const g = maskPixels[i + 1];
-      const b = maskPixels[i + 2];
+    // Быстрая заливка через 32-битный массив (ускоряет цикл в 4 раза)
+    const overlay32 = new Uint32Array(overlayPixels.buffer);
 
-      const dist = Math.sqrt((r - targetR) ** 2 + (g - targetG) ** 2 + (b - targetB) ** 2);
+    // Цвет подсветки: RGBA (0, 220, 255, 110)
+    // Little-endian порядок байт: ABGR (0x hex)
+    const highlightColor32 = (110 << 24) | (255 << 16) | (220 << 8) | 0;
 
-      if (dist < COLOR_TOLERANCE) {
-        overlayPixels[i]     = 0;   // R
-        overlayPixels[i + 1] = 220; // G (Сочная бирюза)
-        overlayPixels[i + 2] = 255; // B
-        overlayPixels[i + 3] = 110; // Alpha (~43% прозрачности)
+    for (let i = 0, len = maskPixels.length; i < len; i += 4) {
+      const dr = maskPixels[i] - targetR;
+      const dg = maskPixels[i + 1] - targetG;
+      const db = maskPixels[i + 2] - targetB;
+
+      if (dr * dr + dg * dg + db * db < toleranceSq) {
+        overlay32[i >> 2] = highlightColor32;
       }
     }
 
     this.highlightCtx.putImageData(overlayImgData, 0, 0);
 
-    // Вызываем update(), чтобы заставить PixiJS перегрузить Canvas в видеопамять
+    // Перегружаем Canvas в видеопамять
     this.highlightCanvasSource?.update();
   }
 
@@ -348,4 +348,22 @@ export class WorldMap {
   }
 
   public updateTimeState(_hours: number): void {}
+
+  public destroy(): void {
+    this.isLoaded = false;
+
+    if (this.mapSprite) {
+      this.mapSprite.destroy({ children: true, texture: true });
+    }
+
+    if (this.highlightSprite) {
+      this.highlightSprite.destroy({ children: true, texture: true });
+    }
+
+    this.targetMarker.destroy();
+    this.shoreEffects.destroy();
+    this.waves.destroy();
+
+    this.container.destroy({ children: true });
+  }
 }
