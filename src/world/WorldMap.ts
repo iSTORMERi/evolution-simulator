@@ -172,7 +172,8 @@ export class WorldMap {
     const overlayImgData = this.highlightCtx.createImageData(w, h);
     const overlayPixels = overlayImgData.data;
 
-    const COLOR_TOLERANCE = 35;
+    // Увеличенный допуск до 45 для подхвата темных/глубоких зон (Хадаль, Батипелагиаль)
+    const COLOR_TOLERANCE = 45;
     const toleranceSq = COLOR_TOLERANCE * COLOR_TOLERANCE;
 
     // Быстрая заливка через 32-битный массив (ускоряет цикл в 4 раза)
