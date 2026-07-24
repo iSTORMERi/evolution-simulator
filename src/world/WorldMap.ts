@@ -172,6 +172,9 @@ export class WorldMap {
     const overlayImgData = this.highlightCtx.createImageData(w, h);
     const overlayPixels = overlayImgData.data;
 
+    // Порог допуска снижен с 55 до 20, чтобы предотвратить слияние похожих оттенков
+    const COLOR_TOLERANCE = 20;
+
     // Закрашиваем совпавшие пиксели неоново-бирюзовым цветом с полупрозрачностью
     for (let i = 0; i < maskPixels.length; i += 4) {
       const r = maskPixels[i];
@@ -180,7 +183,7 @@ export class WorldMap {
 
       const dist = Math.sqrt((r - targetR) ** 2 + (g - targetG) ** 2 + (b - targetB) ** 2);
 
-      if (dist < 55) { // Допуск на совпадение цветовых оттенков
+      if (dist < COLOR_TOLERANCE) {
         overlayPixels[i]     = 0;   // R
         overlayPixels[i + 1] = 220; // G (Сочная бирюза)
         overlayPixels[i + 2] = 255; // B
