@@ -17,9 +17,10 @@ export class WorldMap {
   private maskCtx: CanvasRenderingContext2D | null;
   private maskData?: ImageData;
 
-  // Canvas и спрайт для подсвечивающего оверлея
+  // Canvas, CanvasSource и спрайт для подсвечивающего оверлея
   private highlightCanvas: HTMLCanvasElement;
   private highlightCtx: CanvasRenderingContext2D | null;
+  private highlightCanvasSource?: PIXI.CanvasSource;
   private highlightSprite?: PIXI.Sprite;
 
   private isLoaded: boolean = false;
@@ -63,8 +64,11 @@ export class WorldMap {
       this.mapSprite.height = this.worldHeight;
       this.container.addChild(this.mapSprite);
 
-      // 2. Спрайт оверлея подсветки (помещается сразу поверх карты)
-      this.highlightSprite = new PIXI.Sprite();
+      // 2. Создаем CanvasSource и спрайт оверлея подсветки
+      this.highlightCanvasSource = new PIXI.CanvasSource({ resource: this.highlightCanvas });
+      const highlightTexture = new PIXI.Texture({ source: this.highlightCanvasSource });
+
+      this.highlightSprite = new PIXI.Sprite(highlightTexture);
       this.highlightSprite.width = this.worldWidth;
       this.highlightSprite.height = this.worldHeight;
       this.container.addChild(this.highlightSprite);
@@ -143,7 +147,7 @@ export class WorldMap {
   }
 
   /**
-   * Генерация подсвечивающего оверлея через Canvas 2D
+   * Генерация подсвечивающего оверлея через Canvas 2D с синхронизацией GPU
    */
   private applyHighlightOverlay(hexColor: string | null): void {
     if (!this.highlightCtx || !this.maskData || !this.highlightSprite) return;
@@ -155,7 +159,7 @@ export class WorldMap {
     this.highlightCtx.clearRect(0, 0, w, h);
 
     if (!hexColor) {
-      this.highlightSprite.texture = PIXI.Texture.EMPTY;
+      this.highlightCanvasSource?.update();
       return;
     }
 
@@ -186,8 +190,8 @@ export class WorldMap {
 
     this.highlightCtx.putImageData(overlayImgData, 0, 0);
 
-    // Обновляем текстуру спрайта в PixiJS
-    this.highlightSprite.texture = PIXI.Texture.from(this.highlightCanvas);
+    // Вызываем update(), чтобы заставить PixiJS перегрузить Canvas в видеопамять
+    this.highlightCanvasSource?.update();
   }
 
   private smoothLine(points: { x: number; y: number }[], iterations: number = 3): { x: number; y: number }[] {
