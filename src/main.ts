@@ -7,10 +7,6 @@ import { LightingController } from './world/LightingController';
 import { TimeDebugUI } from './ui/TimeDebugUI';
 import { BiomeScanner } from './ui/BiomeScanner';
 
-// 1. Импортируем менеджер течений и визуализатор частиц
-import { OceanCurrentsManager } from './simulation/OceanCurrentsManager';
-import { CurrentParticlesDebug } from './visuals/CurrentParticlesDebug';
-
 let currentApp: PIXI.Application | null = null;
 let resizeHandler: (() => void) | null = null;
 
@@ -72,15 +68,6 @@ async function initApp() {
     
     app.stage.addChild(worldMap.container);
 
-    // 1.1. Инициализация течений и установка частиц ПОВЕРХ PNG карты
-    const oceanCurrents = new OceanCurrentsManager(WORLD_WIDTH, WORLD_HEIGHT);
-    const debugParticles = new CurrentParticlesDebug(oceanCurrents, 1800);
-    
-    // Выставляем высокий zIndex для частиц течения
-    debugParticles.container.zIndex = 100;
-    
-    worldMap.container.addChild(debugParticles.container);
-
     // 2. Инициализация камеры
     const camera = new CameraController(worldMap.container, canvas, WORLD_WIDTH, WORLD_HEIGHT);
     
@@ -102,9 +89,6 @@ async function initApp() {
       
       // Обновляем физику и анимации воды
       worldMap.update(deltaSeconds);
-
-      // Обновляем движение частиц течений
-      debugParticles.update(deltaSeconds);
 
       // Синхронизируем состояние дня/ночи на карте, если у LightingController есть время
       if (typeof (lightingController as any).getCurrentHours === 'function') {
