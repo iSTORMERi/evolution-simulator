@@ -6,8 +6,8 @@ export interface ShorePoint {
 }
 
 export enum CurrentZoneType {
-  WARM = 'WARM', // 🟠 Прибрежное теплое течение (S-образный массив вдоль берега)
-  COLD = 'COLD'  // 🔵 Глубоководное холодное течение (повернутый овал слева)
+  WARM = 'WARM', // 🟠 Теплое течение (повернутый стадион справа)
+  COLD = 'COLD'  // 🔵 Холодное течение (повернутый стадион слева)
 }
 
 export interface CurrentData {
@@ -159,7 +159,7 @@ export class OceanCurrentsManager {
   }
 
   /**
-   * Вектор для повернутого прямого стадиона (Холодное течение)
+   * Универсальный вектор для повернутого стадиона (капсулы)
    */
   private getRotatedStadiumVector(
     x: number,
@@ -212,72 +212,6 @@ export class OceanCurrentsManager {
     };
   }
 
-  /**
-   * Вектор для S-образного стадиона по 3 опорным точкам (Теплое течение)
-   */
-  private getBentStadiumVector(
-    px: number,
-    py: number,
-    p0: Point2D,
-    p1: Point2D,
-    p2: Point2D,
-    radius: number
-  ): Point2D | null {
-    const segments = [
-      { a: p0, b: p1 },
-      { a: p1, b: p2 }
-    ];
-
-    let minDist = Infinity;
-    let closestProj: Point2D | null = null;
-    let activeDir: Point2D = { x: 0, y: 1 };
-
-    for (let i = 0; i < segments.length; i++) {
-      const { a, b } = segments[i];
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const lenSq = dx * dx + dy * dy;
-      let t = ((px - a.x) * dx + (py - a.y) * dy) / lenSq;
-      t = Math.max(0, Math.min(1, t));
-
-      const projX = a.x + t * dx;
-      const projY = a.y + t * dy;
-      const dist = Math.hypot(px - projX, py - projY);
-
-      if (dist < minDist) {
-        minDist = dist;
-        closestProj = { x: projX, y: projY };
-        const len = Math.sqrt(lenSq);
-        activeDir = { x: dx / len, y: dy / len };
-      }
-    }
-
-    if (minDist > radius || !closestProj) return null;
-
-    // Векторы для разворота на верхнем и нижнем концах трассы
-    const distTop = Math.hypot(px - p0.x, py - p0.y);
-    if (distTop <= radius && py < p0.y) {
-      const dx = px - p0.x;
-      const dy = py - p0.y;
-      return { x: -dy, y: dx };
-    }
-
-    const distBottom = Math.hypot(px - p2.x, py - p2.y);
-    if (distBottom <= radius && py > p2.y) {
-      const dx = px - p2.x;
-      const dy = py - p2.y;
-      return { x: -dy, y: dx };
-    }
-
-    const cross = activeDir.x * (py - closestProj.y) - activeDir.y * (px - closestProj.x);
-
-    if (cross > 0) {
-      return { x: activeDir.x, y: activeDir.y };
-    } else {
-      return { x: -activeDir.x, y: -activeDir.y };
-    }
-  }
-
   public getCurrentAt(x: number, y: number): CurrentData {
     const isWater = this.isWater(x, y);
     if (!isWater) {
@@ -290,13 +224,16 @@ export class OceanCurrentsManager {
       };
     }
 
-    // --- 1. ХОЛОДНОЕ ТЕЧЕНИЕ (Наклонено слева снизу -> вправо вверх) ---
+    // Общий угол наклона для обоих параллельных стадионов (-30 градусов)
+    const sharedAngleRad = (-30 * Math.PI) / 180;
+
+    // --- 1. ХОЛОДНОЕ ТЕЧЕНИЕ (Стадион слева) ---
     const coldTrack = {
       cx: 2200,
       cy: 2500,
       halfLength: 1800,
       radius: 800,
-      angleRad: (-30 * Math.PI) / 180 // Отрицательный угол поворачивает овал снизу-слева вверх-направо
+      angleRad: sharedAngleRad
     };
 
     const coldVec = this.getRotatedStadiumVector(x, y, coldTrack);
@@ -311,13 +248,16 @@ export class OceanCurrentsManager {
       };
     }
 
-    // --- 2. ТЕПЛОЕ ТЕЧЕНИЕ (Массивный S-образный гигант от самого верха справа до самого низа) ---
-    const warmP0 = { x: 7200, y: 500 };  // Продлено в верхнюю правую границу
-    const warmP1 = { x: 4500, y: 4200 }; // Выступающий мыс по центру
-    const warmP2 = { x: 5200, y: 7600 }; // Продлено в нижнюю границу
-    const warmRadius = 1500;             // Существенно увеличена ширина потока
+    // --- 2. ТЕПЛОЕ ТЕЧЕНИЕ (Параллельный стадион справа вдоль берега) ---
+    const warmTrack = {
+      cx: 5500,
+      cy: 4200,
+      halfLength: 2200,
+      radius: 1100,
+      angleRad: sharedAngleRad
+    };
 
-    const warmVec = this.getBentStadiumVector(x, y, warmP0, warmP1, warmP2, warmRadius);
+    const warmVec = this.getRotatedStadiumVector(x, y, warmTrack);
     if (warmVec) {
       const len = Math.hypot(warmVec.x, warmVec.y) || 1;
       return {
@@ -329,7 +269,7 @@ export class OceanCurrentsManager {
       };
     }
 
-    // --- 3. НЕЙТРАЛЬНАЯ ВОДА ---
+    // --- 3. НЕЙТРАЛЬНАЯ ВОДА (Для будущих мелких течений) ---
     return {
       vx: 0,
       vy: 0,
