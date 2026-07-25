@@ -7,6 +7,10 @@ import { LightingController } from './world/LightingController';
 import { TimeDebugUI } from './ui/TimeDebugUI';
 import { BiomeScanner } from './ui/BiomeScanner';
 
+// 1. Импортируем обновленный менеджер течений и частицы
+import { OceanCurrentsManager } from './simulation/OceanCurrentsManager';
+import { CurrentParticlesDebug } from './visuals/CurrentParticlesDebug';
+
 let currentApp: PIXI.Application | null = null;
 let resizeHandler: (() => void) | null = null;
 
@@ -68,6 +72,14 @@ async function initApp() {
     
     app.stage.addChild(worldMap.container);
 
+    // 1.1. Инициализация течений и визуализации частиц
+    const oceanCurrents = new OceanCurrentsManager(WORLD_WIDTH, WORLD_HEIGHT);
+    const debugParticles = new CurrentParticlesDebug(oceanCurrents, 1800);
+    
+    // Помещаем частицы поверх основных слоев карты
+    debugParticles.container.zIndex = 100;
+    worldMap.container.addChild(debugParticles.container);
+
     // 2. Инициализация камеры
     const camera = new CameraController(worldMap.container, canvas, WORLD_WIDTH, WORLD_HEIGHT);
     
@@ -84,18 +96,21 @@ async function initApp() {
 
     // 5. Главный игровой цикл
     app.ticker.add((ticker) => {
-      // Честное время кадра в секундах (работает корректно на 60Hz, 120Hz и 144Hz)
+      // Честное время кадра в секундах
       const deltaSeconds = ticker.deltaMS / 1000;
       
       // Обновляем физику и анимации воды
       worldMap.update(deltaSeconds);
 
-      // Синхронизируем состояние дня/ночи на карте, если у LightingController есть время
+      // Обновляем движение частиц океанических течений
+      debugParticles.update(deltaSeconds);
+
+      // Синхронизируем состояние дня/ночи на карте
       if (typeof (lightingController as any).getCurrentHours === 'function') {
         worldMap.updateTimeState((lightingController as any).getCurrentHours());
       }
 
-      // Живое обновление карточки сканера в реальном времени
+      // Живое обновление карточки сканера
       scanner.update();
     });
 
