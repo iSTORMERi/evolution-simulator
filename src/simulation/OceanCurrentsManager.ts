@@ -6,23 +6,27 @@ export interface ShorePoint {
 }
 
 export enum CurrentZoneType {
-  WARM = 'WARM', // 🟠 Прибрежное теплое течение (кольцо справа снизу)
-  COLD = 'COLD'  // 🔵 Глубоководное холодное течение (кольцо слева сверху)
+  WARM = 'WARM', // 🟠 Прибрежное теплое течение (S-образный стадион вдоль берега)
+  COLD = 'COLD'  // 🔵 Глубоководное холодное течение (повернутый овал слева)
 }
 
 export interface CurrentData {
   vx: number;
   vy: number;
   zoneType: CurrentZoneType;
-  targetColor: string; // HEX-цвет текущей зоны для частицы
+  targetColor: string;
   isWater: boolean;
 }
 
-// Карта точных цветов для визуализации двух кольцевых течений
 export const ZONE_COLOR_MAP: Record<CurrentZoneType, string> = {
   [CurrentZoneType.WARM]: '#FF8C00', // Оранжевый
   [CurrentZoneType.COLD]: '#00BFFF'  // Ледяной синий
 };
+
+interface Point2D {
+  x: number;
+  y: number;
+}
 
 export class OceanCurrentsManager {
   private worldWidth: number;
@@ -30,11 +34,8 @@ export class OceanCurrentsManager {
   public baseSpeed: number = 200;
 
   private readonly MASK_SIZE = 1000;
-
-  // Хранит максимальный X (предел океана) для каждого Y маски
   private shorelineLimits: Float32Array = new Float32Array(this.MASK_SIZE).fill(0);
-  
-  private waterSpawnPoints: { x: number; y: number }[] = [];
+  private waterSpawnPoints: Point2D[] = [];
   public isLoaded: boolean = false;
 
   constructor(worldWidth: number = 8000, worldHeight: number = 8000) {
@@ -43,12 +44,8 @@ export class OceanCurrentsManager {
     this.initScanner();
   }
 
-  /**
-   * Прямая синхронизация точек берега из внешних источников (WorldMap)
-   */
   public setShorelinePoints(points: ShorePoint[]): void {
     if (!points || points.length === 0) return;
-
     this.waterSpawnPoints = [];
 
     for (const pt of points) {
@@ -66,12 +63,8 @@ export class OceanCurrentsManager {
       }
     }
     this.isLoaded = true;
-    console.log(`[CurrentsManager] Берег успешно синхронизирован через setShorelinePoints.`);
   }
 
-  /**
-   * Инициализация и загрузка черно-белой маски ocean_binary_mask.png
-   */
   private async initScanner(): Promise<void> {
     try {
       const img = new Image();
@@ -79,7 +72,7 @@ export class OceanCurrentsManager {
 
       await new Promise<void>((resolve, reject) => {
         img.onload = () => resolve();
-        img.onerror = () => reject(new Error('Binary mask (ocean_binary_mask.png) failed to load'));
+        img.onerror = () => reject(new Error('Binary mask failed to load'));
       });
 
       const canvas = document.createElement('canvas');
@@ -94,9 +87,7 @@ export class OceanCurrentsManager {
       const imgData = ctx.getImageData(0, 0, this.MASK_SIZE, this.MASK_SIZE);
 
       this.runBinaryRightToLeftScanner(imgData);
-      
       this.isLoaded = true;
-      console.log(`[CurrentsManager] Сканирование ocean_binary_mask.png завершено. Спавн-точек: ${this.waterSpawnPoints.length}`);
     } catch (e) {
       console.error('[CurrentsManager] Ошибка загрузки маски:', e);
       this.buildEmergencyWall();
@@ -104,24 +95,18 @@ export class OceanCurrentsManager {
     }
   }
 
-  /**
-   * Сканирование СПРАВА НАЛЕВО по бинарной маске
-   */
   private runBinaryRightToLeftScanner(imgData: ImageData): void {
     const data = imgData.data;
     const cellHeight = this.worldHeight / this.MASK_SIZE;
-    const SAFETY_BUFFER_PX = 4; 
+    const SAFETY_BUFFER_PX = 4;
 
     this.waterSpawnPoints = [];
 
     for (let gy = 0; gy < this.MASK_SIZE; gy++) {
       let foundShoreX = -1;
-
       for (let gx = this.MASK_SIZE - 1; gx >= 0; gx--) {
         const i = (gy * this.MASK_SIZE + gx) * 4;
-        const r = data[i];
-
-        if (r > 128) {
+        if (data[i] > 128) {
           foundShoreX = gx;
           break;
         }
@@ -129,7 +114,6 @@ export class OceanCurrentsManager {
 
       const safeWaterX = foundShoreX !== -1 ? Math.max(0, foundShoreX - SAFETY_BUFFER_PX) : 0;
       const worldLimitX = (safeWaterX / this.MASK_SIZE) * this.worldWidth;
-
       this.shorelineLimits[gy] = worldLimitX;
 
       if (worldLimitX > 100) {
@@ -143,9 +127,6 @@ export class OceanCurrentsManager {
     }
   }
 
-  /**
-   * Резервный расчет границы на случай сбоя сети или файла
-   */
   private buildEmergencyWall(): void {
     this.waterSpawnPoints = [];
     for (let gy = 0; gy < this.MASK_SIZE; gy++) {
@@ -158,25 +139,18 @@ export class OceanCurrentsManager {
     }
   }
 
-  /**
-   * Проверка: находится ли координата (x, y) в воде
-   */
   public isWater(x: number, y: number): boolean {
     if (!this.isLoaded) return false;
     if (x < 0 || x >= this.worldWidth || y < 0 || y >= this.worldHeight) return false;
 
     const scanY = Math.min(
-      this.MASK_SIZE - 1, 
+      this.MASK_SIZE - 1,
       Math.floor((y / this.worldHeight) * this.MASK_SIZE)
     );
-    
-    return x < this.shorelineLimits[scanY]; 
+    return x < this.shorelineLimits[scanY];
   }
 
-  /**
-   * Получить случайную позицию спавна частиц в воде
-   */
-  public getRandomWaterPosition(): { x: number; y: number } {
+  public getRandomWaterPosition(): Point2D {
     if (this.waterSpawnPoints.length > 0) {
       const idx = Math.floor(Math.random() * this.waterSpawnPoints.length);
       return this.waterSpawnPoints[idx];
@@ -185,125 +159,199 @@ export class OceanCurrentsManager {
   }
 
   /**
-   * Расчет вектора направления по геометрии вытянутого стадиона (Racetrack)
+   * Вектор для повернутого прямого стадиона (Холодное течение)
    */
-  private getStadiumVector(
+  private getRotatedStadiumVector(
     x: number,
     y: number,
-    track: { xLeft: number; xRight: number; yCenter: number; radius: number }
-  ): { vx: number; vy: number } | null {
-    const { xLeft, xRight, yCenter, radius } = track;
-    const dy = y - yCenter;
+    track: { cx: number; cy: number; halfLength: number; radius: number; angleRad: number }
+  ): Point2D | null {
+    const { cx, cy, halfLength, radius, angleRad } = track;
 
-    // 1. Прямой участок (между xLeft и xRight)
-    if (x >= xLeft && x <= xRight) {
-      if (Math.abs(dy) <= radius) {
-        // Верхняя половина трассы (dy < 0) -> вправо, Нижняя (dy >= 0) -> влево
-        return {
-          vx: dy < 0 ? 1 : -1,
-          vy: 0
-        };
+    // 1. Перевод координат в локальную систему стадиона
+    const dx = x - cx;
+    const dy = y - cy;
+    const cosA = Math.cos(-angleRad);
+    const sinA = Math.sin(-angleRad);
+
+    const lx = dx * cosA - dy * sinA;
+    const ly = dx * sinA + dy * cosA;
+
+    let lvx = 0;
+    let lvy = 0;
+    let inside = false;
+
+    // 2. Расчет в локальной системе
+    if (Math.abs(lx) <= halfLength) {
+      if (Math.abs(ly) <= radius) {
+        lvx = ly < 0 ? 1 : -1;
+        lvy = 0;
+        inside = true;
       }
-      return null;
+    } else if (lx > halfLength) {
+      const pdx = lx - halfLength;
+      if (Math.hypot(pdx, ly) <= radius) {
+        lvx = -ly;
+        lvy = pdx;
+        inside = true;
+      }
+    } else if (lx < -halfLength) {
+      const pdx = lx + halfLength;
+      if (Math.hypot(pdx, ly) <= radius) {
+        lvx = -ly;
+        lvy = pdx;
+        inside = true;
+      }
     }
 
-    // 2. Левый разворот (полукруг вокруг xLeft, yCenter)
-    if (x < xLeft) {
-      const dx = x - xLeft;
-      if (Math.hypot(dx, dy) <= radius) {
-        // Вектор касательной для вращения по часовой стрелке
-        return { vx: -dy, vy: dx };
-      }
-      return null;
-    }
+    if (!inside) return null;
 
-    // 3. Правый разворот (полукруг вокруг xRight, yCenter)
-    if (x > xRight) {
-      const dx = x - xRight;
-      if (Math.hypot(dx, dy) <= radius) {
-        // Вектор касательной для вращения по часовой стрелке
-        return { vx: -dy, vy: dx };
-      }
-      return null;
-    }
-
-    return null;
+    // 3. Поворот вектора обратно в мировые координаты
+    const cosR = Math.cos(angleRad);
+    const sinR = Math.sin(angleRad);
+    return {
+      x: lvx * cosR - lvy * sinR,
+      y: lvx * sinR + lvy * cosR
+    };
   }
 
   /**
-   * Расчет векторного поля ТОЛЬКО для двух вытянутых овальных (стадионных) течений
+   * Вектор для S-образного стадиона по 3 опорным точкам (Теплое течение)
    */
+  private getBentStadiumVector(
+    px: number,
+    py: number,
+    p0: Point2D,
+    p1: Point2D,
+    p2: Point2D,
+    radius: number
+  ): Point2D | null {
+    const segments = [
+      { a: p0, b: p1 },
+      { a: p1, b: p2 }
+    ];
+
+    let minDist = Infinity;
+    let closestProj: Point2D | null = null;
+    let activeDir: Point2D = { x: 0, y: 1 };
+    let segmentIndex = -1;
+
+    // Поиск ближайшего сегмента
+    for (let i = 0; i < segments.length; i++) {
+      const { a, b } = segments[i];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const lenSq = dx * dx + dy * dy;
+      let t = ((px - a.x) * dx + (py - a.y) * dy) / lenSq;
+      t = Math.max(0, Math.min(1, t));
+
+      const projX = a.x + t * dx;
+      const projY = a.y + t * dy;
+      const dist = Math.hypot(px - projX, py - projY);
+
+      if (dist < minDist) {
+        minDist = dist;
+        closestProj = { x: projX, y: projY };
+        const len = Math.sqrt(lenSq);
+        activeDir = { x: dx / len, y: dy / len };
+        segmentIndex = i;
+      }
+    }
+
+    if (minDist > radius || !closestProj) return null;
+
+    // Векторы для разворота на верхнем и нижнем концах трассы
+    const distTop = Math.hypot(px - p0.x, py - p0.y);
+    if (distTop <= radius && py < p0.y) {
+      const dx = px - p0.x;
+      const dy = py - p0.y;
+      return { x: -dy, y: dx };
+    }
+
+    const distBottom = Math.hypot(px - p2.x, py - p2.y);
+    if (distBottom <= radius && py > p2.y) {
+      const dx = px - p2.x;
+      const dy = py - p2.y;
+      return { x: -dy, y: dx };
+    }
+
+    // Определяем, с какой стороны от оси находится точка (Векторное произведение)
+    const cross = activeDir.x * (py - closestProj.y) - activeDir.y * (px - closestProj.x);
+
+    // Вдоль берега (справа от оси) -> течем вниз
+    // В глубокой воде (слева от оси) -> течем вверх обратно
+    if (cross > 0) {
+      return { x: activeDir.x, y: activeDir.y };
+    } else {
+      return { x: -activeDir.x, y: -activeDir.y };
+    }
+  }
+
   public getCurrentAt(x: number, y: number): CurrentData {
     const isWater = this.isWater(x, y);
     if (!isWater) {
-      return { 
-        vx: 0, 
-        vy: 0, 
-        zoneType: CurrentZoneType.WARM, 
-        targetColor: ZONE_COLOR_MAP[CurrentZoneType.WARM], 
-        isWater: false 
+      return {
+        vx: 0,
+        vy: 0,
+        zoneType: CurrentZoneType.WARM,
+        targetColor: ZONE_COLOR_MAP[CurrentZoneType.WARM],
+        isWater: false
       };
     }
 
-    // --- 1. ХОЛОДНОЕ ТЕЧЕНИЕ (Слева сверху -- вытянутый стадион) ---
+    // --- 1. ХОЛОДНОЕ ТЕЧЕНИЕ (Слева сверху -- выровнено под угол берега) ---
     const coldTrack = {
-      xLeft: 800,
-      xRight: 4500,
-      yCenter: 2000,
-      radius: 700
+      cx: 2200,
+      cy: 2500,
+      halfLength: 1800,
+      radius: 800,
+      angleRad: (25 * Math.PI) / 180 // Поворот на 25 градусов параллельно берегу
     };
 
-    const coldVec = this.getStadiumVector(x, y, coldTrack);
+    const coldVec = this.getRotatedStadiumVector(x, y, coldTrack);
     if (coldVec) {
-      const len = Math.hypot(coldVec.vx, coldVec.vy) || 1;
+      const len = Math.hypot(coldVec.x, coldVec.y) || 1;
       return {
-        vx: (coldVec.vx / len) * this.baseSpeed,
-        vy: (coldVec.vy / len) * this.baseSpeed,
+        vx: (coldVec.x / len) * this.baseSpeed,
+        vy: (coldVec.y / len) * this.baseSpeed,
         zoneType: CurrentZoneType.COLD,
         targetColor: ZONE_COLOR_MAP[CurrentZoneType.COLD],
         isWater: true
       };
     }
 
-    // --- 2. ТЕПЛОЕ ТЕЧЕНИЕ (Справа снизу у берега -- вытянутый стадион) ---
-    const warmTrack = {
-      xLeft: 1500,
-      xRight: 5000,
-      yCenter: 6000,
-      radius: 800
-    };
+    // --- 2. ТЕПЛОЕ ТЕЧЕНИЕ (Справа -- S-образный стадион вдоль 3 опорных точек берега) ---
+    const warmP0 = { x: 6200, y: 1500 }; // Верх пляжа
+    const warmP1 = { x: 4800, y: 4800 }; // Выступающий мыс по центру
+    const warmP2 = { x: 6000, y: 7200 }; // Низ пляжа
+    const warmRadius = 900;
 
-    const warmVec = this.getStadiumVector(x, y, warmTrack);
+    const warmVec = this.getBentStadiumVector(x, y, warmP0, warmP1, warmP2, warmRadius);
     if (warmVec) {
-      const len = Math.hypot(warmVec.vx, warmVec.vy) || 1;
+      const len = Math.hypot(warmVec.x, warmVec.y) || 1;
       return {
-        vx: (warmVec.vx / len) * this.baseSpeed,
-        vy: (warmVec.vy / len) * this.baseSpeed,
+        vx: (warmVec.x / len) * this.baseSpeed,
+        vy: (warmVec.y / len) * this.baseSpeed,
         zoneType: CurrentZoneType.WARM,
         targetColor: ZONE_COLOR_MAP[CurrentZoneType.WARM],
         isWater: true
       };
     }
 
-    // --- 3. НЕЙТРАЛЬНАЯ ВОДА (Вне трасс движение отсутствует) ---
+    // --- 3. НЕЙТРАЛЬНАЯ ВОДА ---
     return {
       vx: 0,
       vy: 0,
       zoneType: CurrentZoneType.COLD,
-      targetColor: '#1e293b', // Темный фоновый цвет для нейтральной воды
+      targetColor: '#1e293b',
       isWater: true
     };
   }
 
-  /**
-   * Вспомогательный метод для плавной интерполяции цвета частиц (lerp)
-   */
   public static lerpColor(currentColor: string, targetColor: string, speed: number = 0.05): string {
     if (currentColor === targetColor) return currentColor;
-
     const c1 = OceanCurrentsManager.hexToRgb(currentColor);
     const c2 = OceanCurrentsManager.hexToRgb(targetColor);
-
     if (!c1 || !c2) return targetColor;
 
     const r = Math.round(c1.r + (c2.r - c1.r) * speed);
