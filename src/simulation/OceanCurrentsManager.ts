@@ -185,7 +185,53 @@ export class OceanCurrentsManager {
   }
 
   /**
-   * Расчет векторного поля ТОЛЬКО для двух изолированных кольцевых течений
+   * Расчет вектора направления по геометрии вытянутого стадиона (Racetrack)
+   */
+  private getStadiumVector(
+    x: number,
+    y: number,
+    track: { xLeft: number; xRight: number; yCenter: number; radius: number }
+  ): { vx: number; vy: number } | null {
+    const { xLeft, xRight, yCenter, radius } = track;
+    const dy = y - yCenter;
+
+    // 1. Прямой участок (между xLeft и xRight)
+    if (x >= xLeft && x <= xRight) {
+      if (Math.abs(dy) <= radius) {
+        // Верхняя половина трассы (dy < 0) -> вправо, Нижняя (dy >= 0) -> влево
+        return {
+          vx: dy < 0 ? 1 : -1,
+          vy: 0
+        };
+      }
+      return null;
+    }
+
+    // 2. Левый разворот (полукруг вокруг xLeft, yCenter)
+    if (x < xLeft) {
+      const dx = x - xLeft;
+      if (Math.hypot(dx, dy) <= radius) {
+        // Вектор касательной для вращения по часовой стрелке
+        return { vx: -dy, vy: dx };
+      }
+      return null;
+    }
+
+    // 3. Правый разворот (полукруг вокруг xRight, yCenter)
+    if (x > xRight) {
+      const dx = x - xRight;
+      if (Math.hypot(dx, dy) <= radius) {
+        // Вектор касательной для вращения по часовой стрелке
+        return { vx: -dy, vy: dx };
+      }
+      return null;
+    }
+
+    return null;
+  }
+
+  /**
+   * Расчет векторного поля ТОЛЬКО для двух вытянутых овальных (стадионных) течений
    */
   public getCurrentAt(x: number, y: number): CurrentData {
     const isWater = this.isWater(x, y);
@@ -199,51 +245,47 @@ export class OceanCurrentsManager {
       };
     }
 
-    // --- 1. ХОЛОДНОЕ КОЛЬЦЕВОЕ ТЕЧЕНИЕ (Слева сверху) ---
-    const coldCenter = { x: 2000, y: 2000 };
-    const coldRadius = 1300;
-    const dxCold = x - coldCenter.x;
-    const dyCold = y - coldCenter.y;
-    const distCold = Math.hypot(dxCold, dyCold);
+    // --- 1. ХОЛОДНОЕ ТЕЧЕНИЕ (Слева сверху -- вытянутый стадион) ---
+    const coldTrack = {
+      xLeft: 800,
+      xRight: 4500,
+      yCenter: 2000,
+      radius: 700
+    };
 
-    if (distCold <= coldRadius) {
-      // Замкнутое вращение по часовой стрелке
-      let vx = -dyCold;
-      let vy = dxCold;
-      const len = Math.hypot(vx, vy) || 1;
-
+    const coldVec = this.getStadiumVector(x, y, coldTrack);
+    if (coldVec) {
+      const len = Math.hypot(coldVec.vx, coldVec.vy) || 1;
       return {
-        vx: (vx / len) * this.baseSpeed,
-        vy: (vy / len) * this.baseSpeed,
+        vx: (coldVec.vx / len) * this.baseSpeed,
+        vy: (coldVec.vy / len) * this.baseSpeed,
         zoneType: CurrentZoneType.COLD,
         targetColor: ZONE_COLOR_MAP[CurrentZoneType.COLD],
         isWater: true
       };
     }
 
-    // --- 2. ТЕПЛОЕ КОЛЬЦЕВОЕ ТЕЧЕНИЕ (Справа снизу у берега) ---
-    const warmCenter = { x: 3800, y: 6000 };
-    const warmRadius = 1200;
-    const dxWarm = x - warmCenter.x;
-    const dyWarm = y - warmCenter.y;
-    const distWarm = Math.hypot(dxWarm, dyWarm);
+    // --- 2. ТЕПЛОЕ ТЕЧЕНИЕ (Справа снизу у берега -- вытянутый стадион) ---
+    const warmTrack = {
+      xLeft: 1500,
+      xRight: 5000,
+      yCenter: 6000,
+      radius: 800
+    };
 
-    if (distWarm <= warmRadius) {
-      // Замкнутое вращение по часовой стрелке
-      let vx = -dyWarm;
-      let vy = dxWarm;
-      const len = Math.hypot(vx, vy) || 1;
-
+    const warmVec = this.getStadiumVector(x, y, warmTrack);
+    if (warmVec) {
+      const len = Math.hypot(warmVec.vx, warmVec.vy) || 1;
       return {
-        vx: (vx / len) * this.baseSpeed,
-        vy: (vy / len) * this.baseSpeed,
+        vx: (warmVec.vx / len) * this.baseSpeed,
+        vy: (warmVec.vy / len) * this.baseSpeed,
         zoneType: CurrentZoneType.WARM,
         targetColor: ZONE_COLOR_MAP[CurrentZoneType.WARM],
         isWater: true
       };
     }
 
-    // --- 3. НЕЙТРАЛЬНАЯ ВОДА (Вне колец движение отсутствует) ---
+    // --- 3. НЕЙТРАЛЬНАЯ ВОДА (Вне трасс движение отсутствует) ---
     return {
       vx: 0,
       vy: 0,
