@@ -147,7 +147,7 @@ export class WorldMap {
   }
 
   /**
-   * Генерация подсвечивающего оверлея через Canvas 2D с синхронизацией GPU
+   * Генерация подсвечивающего оверлея с мягким сглаживанием краев (Feathering)
    */
   private applyHighlightOverlay(hexColor: string | null): void {
     if (!this.highlightCtx || !this.maskData || !this.highlightSprite) return;
@@ -172,24 +172,37 @@ export class WorldMap {
     const overlayImgData = this.highlightCtx.createImageData(w, h);
     const overlayPixels = overlayImgData.data;
 
-    // Увеличенный допуск до 45 для подхвата темных/глубоких зон (Хадаль, Батипелагиаль)
-    const COLOR_TOLERANCE = 45;
-    const toleranceSq = COLOR_TOLERANCE * COLOR_TOLERANCE;
+    // Границы мягкого сглаживания
+    const INNER_TOLERANCE = 15; // Полное закрытие/яркость (100%)
+    const OUTER_TOLERANCE = 35; // Граница плавного затухания в 0%
+
+    const innerSq = INNER_TOLERANCE * INNER_TOLERANCE;
+    const outerSq = OUTER_TOLERANCE * OUTER_TOLERANCE;
+    const toleranceRange = OUTER_TOLERANCE - INNER_TOLERANCE;
 
     // Быстрая заливка через 32-битный массив (ускоряет цикл в 4 раза)
     const overlay32 = new Uint32Array(overlayPixels.buffer);
-
-    // Цвет подсветки: RGBA (0, 220, 255, 110)
-    // Little-endian порядок байт: ABGR (0x hex)
-    const highlightColor32 = (110 << 24) | (255 << 16) | (220 << 8) | 0;
+    const MAX_ALPHA = 110; // Максимальная альфа подсветки
 
     for (let i = 0, len = maskPixels.length; i < len; i += 4) {
       const dr = maskPixels[i] - targetR;
       const dg = maskPixels[i + 1] - targetG;
       const db = maskPixels[i + 2] - targetB;
+      const distSq = dr * dr + dg * dg + db * db;
 
-      if (dr * dr + dg * dg + db * db < toleranceSq) {
-        overlay32[i >> 2] = highlightColor32;
+      if (distSq < outerSq) {
+        let alpha = MAX_ALPHA;
+
+        // Если пиксель находится в градиентной зоне сглаживания
+        if (distSq > innerSq) {
+          const dist = Math.sqrt(distSq);
+          const factor = 1 - (dist - INNER_TOLERANCE) / toleranceRange;
+          alpha = Math.floor(MAX_ALPHA * factor);
+        }
+
+        // Little-endian ABGR: (Alpha << 24) | (Blue << 16) | (Green << 8) | Red
+        // Цвет подсветки: RGBA (0, 220, 255, alpha)
+        overlay32[i >> 2] = (alpha << 24) | (255 << 16) | (220 << 8) | 0;
       }
     }
 

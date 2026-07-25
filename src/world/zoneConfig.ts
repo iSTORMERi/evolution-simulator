@@ -9,7 +9,7 @@ import { OceanZoneType, ZoneConfig } from './types';
 export const ZONE_COLORS = {
   HADAL: '#010048',      // Самая глубокая синяя полоса (слева сверху)
   ABYSSAL: '#0008b8',    // Темно-синяя
-  BATHYAL: '#0031f5',    // Синяя
+  BATHYAL: '#0000ff',    // Чистый синий (#0000FF) -- точно совпадает с маской!
   MESOPELAGIC: '#0072ff',// Ярко-синяя
   EPIPELAGIC: '#00a3ff', // Лазурная
   NERITIC: '#00e5ff',    // Бирюзовая / Шельф
@@ -35,7 +35,7 @@ export const OCEAN_ZONES_CONFIG: ZoneConfig[] = [
   {
     type: OceanZoneType.BATHYAL,
     name: 'Батипелагиаль',
-    color: 0x0031f5,
+    color: 0x0000ff,
     hexColor: ZONE_COLORS.BATHYAL,
     params: { light: 0.0, pressure: 50.0, temperature: 5.0, oxygen: 0.4, salinity: 35.0, acidity: 7.8, current: 0.1, viscosity: 1.5, turbidity: 0.0, shelter: 0.0 }
   },
@@ -70,7 +70,7 @@ export const OCEAN_ZONES_CONFIG: ZoneConfig[] = [
 ];
 
 export const LAND_ZONE_CONFIG: ZoneConfig = {
-  type: OceanZoneType.LAND, // Если в типе OceanZoneType нет LAND, можно объявить отдельно
+  type: OceanZoneType.LAND,
   name: 'Суша (Пляж)',
   color: 0xf6be76,
   hexColor: ZONE_COLORS.LAND,
