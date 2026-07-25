@@ -13,59 +13,25 @@ export interface CurrentData {
   isWater: boolean;
 }
 
-interface RGB {
-  r: number;
-  g: number;
-  b: number;
-}
-
 export class OceanCurrentsManager {
   private worldWidth: number;
   private worldHeight: number;
   public baseSpeed: number = 200;
 
   private readonly centerPoint = 4000;
-  private readonly MASK_SIZE = 1000; // Разрешение маски
+  private readonly MASK_SIZE = 1000; // Разрешение сканера по оси Y
 
-  // 2D-сетка: 1 - вода, 0 - суша (поддерживает любую геометрию карты и острова)
-  private waterGrid: Uint8Array = new Uint8Array(this.MASK_SIZE * this.MASK_SIZE).fill(0);
+  // Хранит максимальный разрешенный X для каждого ряда Y
+  private shorelineLimits: Float32Array = new Float32Array(this.MASK_SIZE).fill(0);
   private zoneGrid: Uint8Array = new Uint8Array(this.MASK_SIZE * this.MASK_SIZE).fill(1);
   
   private waterSpawnPoints: { x: number; y: number }[] = [];
   public isLoaded: boolean = false;
 
-  // Кэшированные RGB-значения для мгновенного сравнения
-  private landRGB: RGB;
-  private oceanZonesRGB: { rgb: RGB; index: number }[] = [];
-
   constructor(worldWidth: number = 8000, worldHeight: number = 8000) {
     this.worldWidth = worldWidth;
     this.worldHeight = worldHeight;
-
-    // Предварительно парсим Hex в RGB, чтобы не производить строковых операций в цикле
-    this.landRGB = this.hexToRgb(LAND_ZONE_CONFIG.hexColor);
-    this.oceanZonesRGB = OCEAN_ZONES_CONFIG.map(zone => {
-      const id = zone.id.toLowerCase();
-      let index = 1; // По умолчанию MIXED
-      if (id.includes('shallow') || id.includes('shelf')) index = 0; // WARM
-      else if (id.includes('trench') || id.includes('abyssal')) index = 2; // COLD
-
-      return {
-        rgb: this.hexToRgb(zone.hexColor),
-        index
-      };
-    });
-
     this.initScanner();
-  }
-
-  private hexToRgb(hex: string): RGB {
-    const cleanHex = hex.replace('#', '');
-    return {
-      r: parseInt(cleanHex.substring(0, 2), 16) || 0,
-      g: parseInt(cleanHex.substring(2, 4), 16) || 0,
-      b: parseInt(cleanHex.substring(4, 6), 16) || 0
-    };
   }
 
   private async initScanner(): Promise<void> {
@@ -90,119 +56,130 @@ export class OceanCurrentsManager {
       ctx.drawImage(img, 0, 0, this.MASK_SIZE, this.MASK_SIZE);
       const imgData = ctx.getImageData(0, 0, this.MASK_SIZE, this.MASK_SIZE);
 
-      this.processMaskData(imgData);
+      this.runLeftToRightScanner(imgData);
       
       this.isLoaded = true;
-      console.log(`[Scanner] Карта построена. Безопасных точек спавна: ${this.waterSpawnPoints.length}`);
+      console.log(`[Scanner] Береговая линия построена. Безопасных точек спавна: ${this.waterSpawnPoints.length}`);
     } catch (e) {
-      console.error('[Scanner] КРИТИЧЕСКАЯ ОШИБКА ЧТЕНИЯ МАСКИ!', e);
-      this.buildEmergencyMask();
+      console.error('[Scanner] КРИТИЧЕСКАЯ ОШИБКА ЧТЕНИЯ МАСКИ. Частицы могут вести себя хаотично!', e);
+      this.buildEmergencyWall();
       this.isLoaded = true;
     }
   }
 
   /**
-   * Высокопроизводительный 2D сканер маски без создания мусорных объектов в памяти
+   * Снайперский скан слева направо с остановкой точно на цвете #F6D896
    */
-  private processMaskData(imgData: ImageData): void {
+  private runLeftToRightScanner(imgData: ImageData): void {
     const data = imgData.data;
     const cellWidth = this.worldWidth / this.MASK_SIZE;
     const cellHeight = this.worldHeight / this.MASK_SIZE;
-
-    this.waterSpawnPoints = [];
+    
+    // Цвет пограничной полоски из ibisPaint
+    const SHORE_EDGE_HEX = '#F6D896';
+    
+    // Минимальный отступ (2 ячейки маски = 16px в мире)
+    const EROSION_BUFFER = 2; 
 
     for (let gy = 0; gy < this.MASK_SIZE; gy++) {
+      let maxWaterX = 0;
+      let hitCoast = false;
+
       for (let gx = 0; gx < this.MASK_SIZE; gx++) {
-        const idx = gy * this.MASK_SIZE + gx;
-        const pixelIdx = idx * 4;
+        const i = (gy * this.MASK_SIZE + gx) * 4;
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        const a = data[i + 3];
 
-        const r = data[pixelIdx];
-        const g = data[pixelIdx + 1];
-        const b = data[pixelIdx + 2];
-        const a = data[pixelIdx + 3];
+        const hex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+        
+        // 1. Точное попадание в кромку песка
+        const isShoreEdge = this.colorDistance(hex, SHORE_EDGE_HEX) < 25;
+        // 2. Страховка на случай прозрачных пикселей
+        const isTransparent = a < 150; 
+        // 3. Страховка на случай попадания в основной песок
+        const isMainLand = this.colorDistance(hex, LAND_ZONE_CONFIG.hexColor) < 80;
 
-        // Критерии суши: прозрачность пикселя или близость к цвету земли
-        const isTransparent = a < 150;
-        const isLand = isTransparent || (this.colorDistanceRgb(r, g, b, this.landRGB) < 70);
+        if (isTransparent || isShoreEdge || isMainLand) {
+          maxWaterX = Math.max(0, gx - EROSION_BUFFER);
+          hitCoast = true;
+          break; 
+        }
 
-        if (!isLand) {
-          // Отмечаем пиксель как воду
-          this.waterGrid[idx] = 1;
+        this.zoneGrid[gy * this.MASK_SIZE + gx] = this.resolveZoneIndex(hex);
+      }
 
-          // Определяем тип океанической зоны по прямому сравнению RGB
-          this.zoneGrid[idx] = this.resolveZoneIndexFast(r, g, b);
+      if (!hitCoast) {
+        maxWaterX = this.MASK_SIZE - EROSION_BUFFER;
+      }
 
-          // Равномерно генерируем спавн-точки для воды (шаг 4x4 для оптимизации памяти)
-          if (gx % 4 === 0 && gy % 4 === 0) {
-            this.waterSpawnPoints.push({
-              x: (gx + Math.random()) * cellWidth,
-              y: (gy + Math.random()) * cellHeight
-            });
-          }
-        } else {
-          this.waterGrid[idx] = 0;
+      // Фиксируем барьер
+      this.shorelineLimits[gy] = (maxWaterX / this.MASK_SIZE) * this.worldWidth;
+
+      // Создаем точки спавна в воде
+      if (maxWaterX > 0) {
+        const spawnsInRow = Math.max(1, Math.floor(maxWaterX / 15));
+        for (let s = 0; s < spawnsInRow; s++) {
+          this.waterSpawnPoints.push({
+            x: (Math.random() * maxWaterX / this.MASK_SIZE) * this.worldWidth,
+            y: (gy + Math.random()) * cellHeight
+          });
         }
       }
     }
   }
 
-  // Аварийная разметка на случай ошибки загрузки изображения
-  private buildEmergencyMask(): void {
+  private buildEmergencyWall(): void {
     this.waterSpawnPoints = [];
-    const cellWidth = this.worldWidth / this.MASK_SIZE;
-    const cellHeight = this.worldHeight / this.MASK_SIZE;
-
     for (let gy = 0; gy < this.MASK_SIZE; gy++) {
-      for (let gx = 0; gx < this.MASK_SIZE; gx++) {
-        const idx = gy * this.MASK_SIZE + gx;
-        const isWater = gx < (this.MASK_SIZE - gy * 0.5);
-
-        if (isWater) {
-          this.waterGrid[idx] = 1;
-          this.zoneGrid[idx] = 1; // MIXED
-          if (gx % 10 === 0 && gy % 10 === 0) {
-            this.waterSpawnPoints.push({
-              x: (gx + Math.random()) * cellWidth,
-              y: (gy + Math.random()) * cellHeight
-            });
-          }
-        } else {
-          this.waterGrid[idx] = 0;
-        }
-      }
+      const limitX = this.worldWidth - (gy / this.MASK_SIZE) * (this.worldWidth * 0.5);
+      this.shorelineLimits[gy] = limitX;
+      
+      this.waterSpawnPoints.push({
+        x: Math.random() * limitX,
+        y: (gy / this.MASK_SIZE) * this.worldHeight
+      });
     }
   }
 
-  private resolveZoneIndexFast(r: number, g: number, b: number): number {
-    let closestIndex = 1;
+  private resolveZoneIndex(hex: string): number {
+    let closestZone = OCEAN_ZONES_CONFIG[0];
     let minDistance = Infinity;
 
-    for (let i = 0; i < this.oceanZonesRGB.length; i++) {
-      const item = this.oceanZonesRGB[i];
-      const dist = this.colorDistanceRgb(r, g, b, item.rgb);
+    for (const zone of OCEAN_ZONES_CONFIG) {
+      const dist = this.colorDistance(hex, zone.hexColor);
       if (dist < minDistance) {
         minDistance = dist;
-        closestIndex = item.index;
+        closestZone = zone;
       }
     }
 
-    return closestIndex;
+    const id = closestZone.id.toLowerCase();
+    if (id.includes('shallow') || id.includes('shelf')) return 0;
+    if (id.includes('trench') || id.includes('abyssal')) return 2;
+    return 1;
   }
 
-  private colorDistanceRgb(r: number, g: number, b: number, target: RGB): number {
-    return Math.sqrt((r - target.r) ** 2 + (g - target.g) ** 2 + (b - target.b) ** 2);
+  private colorDistance(hex1: string, hex2: string): number {
+    const r1 = parseInt(hex1.substring(1, 3), 16) || 0;
+    const g1 = parseInt(hex1.substring(3, 5), 16) || 0;
+    const b1 = parseInt(hex1.substring(5, 7), 16) || 0;
+
+    const r2 = parseInt(hex2.substring(1, 3), 16) || 0;
+    const g2 = parseInt(hex2.substring(3, 5), 16) || 0;
+    const b2 = parseInt(hex2.substring(5, 7), 16) || 0;
+
+    return Math.sqrt((r1 - r2) ** 2 + (g1 - g2) ** 2 + (b1 - b2) ** 2);
   }
 
-  /**
-   * СВЕРХБЫСТРАЯ ПРОВЕРКА ВОДЫ ($O(1)$ сложности с поддержкой островов)
-   */
   public isWater(x: number, y: number): boolean {
     if (x < 0 || x >= this.worldWidth || y < 0 || y >= this.worldHeight) return false;
 
-    const gx = Math.min(this.MASK_SIZE - 1, Math.max(0, Math.floor((x / this.worldWidth) * this.MASK_SIZE)));
-    const gy = Math.min(this.MASK_SIZE - 1, Math.max(0, Math.floor((y / this.worldHeight) * this.MASK_SIZE)));
+    const scanY = Math.floor((y / this.worldHeight) * this.MASK_SIZE);
+    const limitX = this.shorelineLimits[scanY];
 
-    return this.waterGrid[gy * this.MASK_SIZE + gx] === 1;
+    return x < limitX; 
   }
 
   public getRandomWaterPosition(): { x: number; y: number } {
@@ -226,9 +203,8 @@ export class OceanCurrentsManager {
     vx = (vx / len) * this.baseSpeed;
     vy = (vy / len) * this.baseSpeed;
 
-    const gx = Math.min(this.MASK_SIZE - 1, Math.max(0, Math.floor((x / this.worldWidth) * this.MASK_SIZE)));
-    const gy = Math.min(this.MASK_SIZE - 1, Math.max(0, Math.floor((y / this.worldHeight) * this.MASK_SIZE)));
-    
+    const gx = Math.floor(Math.max(0, Math.min(1, x / this.worldWidth)) * (this.MASK_SIZE - 1));
+    const gy = Math.floor(Math.max(0, Math.min(1, y / this.worldHeight)) * (this.MASK_SIZE - 1));
     const zoneIdx = this.zoneGrid[gy * this.MASK_SIZE + gx];
 
     let zoneType = CurrentZoneType.MIXED;
