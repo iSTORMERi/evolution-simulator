@@ -64,13 +64,13 @@ export class CurrentParticlesDebug {
       sprite.alpha = 0.8;
       sprite.tint = this.colorMixed;
 
-      const x = Math.random() * this.worldSize;
-      const y = Math.random() * this.worldSize;
+      // Используем безопасный метод спавна на воде вместо случайных координат
+      const pos = this.getRandomWaterPosition();
 
-      sprite.position.set(x, y);
+      sprite.position.set(pos.x, pos.y);
 
       this.container.addChild(sprite);
-      this.particles.push({ x, y, sprite });
+      this.particles.push({ x: pos.x, y: pos.y, sprite });
     }
   }
 

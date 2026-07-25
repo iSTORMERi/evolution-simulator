@@ -1,3 +1,5 @@
+// src/simulation/OceanCurrentsManager.ts
+
 import { WorldMap } from '../world/WorldMap';
 import { ZoneConfig } from '../world/types';
 

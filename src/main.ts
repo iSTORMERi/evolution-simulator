@@ -72,8 +72,8 @@ async function initApp() {
     
     app.stage.addChild(worldMap.container);
 
-    // 1.1. Инициализация течений и установка частиц ПОВЕРХ PNG карты
-    const oceanCurrents = new OceanCurrentsManager(WORLD_WIDTH, WORLD_HEIGHT);
+    // 1.1. Инициализация течений: передаем worldMap вместо размеров[span_0](start_span)[span_0](end_span)
+    const oceanCurrents = new OceanCurrentsManager(worldMap);
     const debugParticles = new CurrentParticlesDebug(oceanCurrents, 1800);
     
     // Выставляем высокий zIndex для частиц течения
