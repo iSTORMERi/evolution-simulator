@@ -39,7 +39,8 @@ export class OceanCurrentsManager {
       const img = new Image();
       // Обязательно для обхода блокировок на GitHub Pages
       img.crossOrigin = 'anonymous'; 
-      img.src = 'assets/ocean_zones_mask.png';
+      // Подключаем бинарную черно-белую маску
+      img.src = 'assets/ocean_binary_mask.png';
 
       await new Promise<void>((resolve, reject) => {
         img.onload = () => resolve();
@@ -69,17 +70,15 @@ export class OceanCurrentsManager {
   }
 
   /**
-   * Сканирование слева направо с точным детектором пограничного цвета песка #F6D896
+   * Сканирование слева направо по черно-белой бинарной маске
+   * Белый пиксель = Вода | Черный пиксель / Прозрачность = Суша
    */
   private runLeftToRightScanner(imgData: ImageData): void {
     const data = imgData.data;
     const cellWidth = this.worldWidth / this.MASK_SIZE;
     const cellHeight = this.worldHeight / this.MASK_SIZE;
-    
-    // Точный цвет кромки песка из ibisPaint
-    const SHORE_EDGE_HEX = '#F6D896';
 
-    // Минимальный отступ в 2 пикселя маски (около 16px в игровом мире)
+    // Отступ в 2 пикселя маски от черной границы суши (для запаса безопасности)
     const EROSION_BUFFER = 2; 
 
     for (let gy = 0; gy < this.MASK_SIZE; gy++) {
@@ -94,23 +93,20 @@ export class OceanCurrentsManager {
         const b = data[i + 2];
         const a = data[i + 3];
 
-        const hex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
-        
         // 1. Прозрачность
         const isTransparent = a < 150;
-        // 2. Детектор светлой пограничной полосы песка
-        const isShoreEdge = this.colorDistance(hex, SHORE_EDGE_HEX) < 30;
-        // 3. Детектор основного цвета суши (страховка)
-        const isLand = this.colorDistance(hex, LAND_ZONE_CONFIG.hexColor) < 70;
+        // 2. Детектор черного цвета суши (R < 100)
+        const isBlackLand = r < 100;
 
-        if (isTransparent || isShoreEdge || isLand) {
-          // Наткнулись на берег: останавливаем скан ряда и делаем аккуратный отступ
+        if (isTransparent || isBlackLand) {
+          // Наткнулись на берег: останавливаем скан ряда и делаем отступ
           maxWaterX = Math.max(0, gx - EROSION_BUFFER);
           hitCoast = true;
           break; 
         }
 
-        // Если это вода, сохраняем тип зоны
+        // Если это белая область воды, определяем и сохраняем тип зоны
+        const hex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
         this.zoneGrid[gy * this.MASK_SIZE + gx] = this.resolveZoneIndex(hex);
       }
 
