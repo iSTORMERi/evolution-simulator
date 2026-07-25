@@ -121,6 +121,17 @@ export class BiomeScanner {
     }
   }
 
+  /**
+   * Безопасное считывание текущего часа из контроллера освещения
+   */
+  private getHoursFromController(): number {
+    const lc = this.lightingController as any;
+    if (lc && typeof lc.getCurrentHours === 'function') {
+      return lc.getCurrentHours();
+    }
+    return 12;
+  }
+
   private renderTooltip(): void {
     if (!this.currentSelectedZone) return;
 
@@ -128,9 +139,7 @@ export class BiomeScanner {
     const params = zone.params;
 
     // Получаем текущее время суток от LightingController (в часах: 0.0 - 24.0)
-    const currentHour = typeof (this.lightingController as any).getCurrentHours === 'function'
-      ? (this.lightingController as any).getCurrentHours()
-      : 12;
+    const currentHour = this.getHoursFromController();
 
     // 1. Явный расчёт солнечного света (только с 06:00 до 18:00)
     let sunFactor = 0;
