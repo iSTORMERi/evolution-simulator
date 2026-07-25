@@ -12,16 +12,20 @@ export enum OceanZoneType {
 }
 
 export interface EnvironmentalParameters {
-  light: number;
-  pressure: number;
-  temperature: number;
-  oxygen: number;
-  salinity: number;
-  acidity: number;
-  current: number;
-  viscosity: number;
-  turbidity: number;
-  shelter: number;
+  // Базовые параметры освещенности и температуры
+  baseLight: number;          // От 0.0 до 1.0 (прозрачность/освещенность в полдень)
+  baseTemperature: number;    // Базовая эталонная температура (°C)
+  tempSensitivity: number;    // Чувствительность к суточному прогреву от солнца (0.0 до 1.0)
+
+  // Статические гидрофизические параметры
+  pressure: number;           // Давление (атм)
+  oxygen: number;             // Кислород (мл/л)
+  salinity: number;           // Солёность (‰)
+  acidity: number;            // Кислотность (pH)
+  current: number;            // Сила течений
+  viscosity: number;          // Вязкость среды
+  turbidity: number;          // Мутность
+  shelter: number;            // Наличие укрытий
 }
 
 export interface ZoneConfig {

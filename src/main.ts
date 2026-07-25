@@ -75,8 +75,8 @@ async function initApp() {
     const lightingController = new LightingController(worldMap.container);
     new TimeDebugUI(lightingController);
 
-    // 4. Инициализация сканера биомов
-    new BiomeScanner(worldMap);
+    // 4. Инициализация сканера биомов (передаём lightingController)
+    const scanner = new BiomeScanner(worldMap, lightingController);
 
     // 5. Главный игровой цикл
     app.ticker.add((ticker) => {
@@ -90,6 +90,9 @@ async function initApp() {
       if (typeof (lightingController as any).getCurrentHours === 'function') {
         worldMap.updateTimeState((lightingController as any).getCurrentHours());
       }
+
+      // Живое обновление карточки сканера в реальном времени
+      scanner.update();
     });
 
     // Обработка изменения размера окна с безопасной очисткой
