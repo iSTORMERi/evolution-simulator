@@ -6,10 +6,8 @@ export interface ShorePoint {
 }
 
 export enum CurrentZoneType {
-  WARM = 'WARM',        // 🟠 Прибрежное теплое течение
-  NUTRIENT = 'NUTRIENT',// 🟢 Срединное питательное течение
-  COOLING = 'COOLING',  // 🩷 Охлаждающее течение (отток)
-  COLD = 'COLD'         // 🔵 Глубоководный гир
+  WARM = 'WARM', // 🟠 Прибрежное теплое течение (кольцо справа снизу)
+  COLD = 'COLD'  // 🔵 Глубоководное холодное течение (кольцо слева сверху)
 }
 
 export interface CurrentData {
@@ -20,12 +18,10 @@ export interface CurrentData {
   isWater: boolean;
 }
 
-// Карта точных цветов для визуализации течений
+// Карта точных цветов для визуализации двух кольцевых течений
 export const ZONE_COLOR_MAP: Record<CurrentZoneType, string> = {
-  [CurrentZoneType.WARM]: '#FF8C00',     // Оранжевый
-  [CurrentZoneType.NUTRIENT]: '#00FF7F', // Насыщенный зеленый
-  [CurrentZoneType.COOLING]: '#FF1493',  // Розовый (Маджента)
-  [CurrentZoneType.COLD]: '#00BFFF'      // Ледяной синий
+  [CurrentZoneType.WARM]: '#FF8C00', // Оранжевый
+  [CurrentZoneType.COLD]: '#00BFFF'  // Ледяной синий
 };
 
 export class OceanCurrentsManager {
@@ -33,7 +29,6 @@ export class OceanCurrentsManager {
   private worldHeight: number;
   public baseSpeed: number = 200;
 
-  private readonly centerPoint = 4000;
   private readonly MASK_SIZE = 1000;
 
   // Хранит максимальный X (предел океана) для каждого Y маски
@@ -110,9 +105,7 @@ export class OceanCurrentsManager {
   }
 
   /**
-   * Сканирование СПРАВА НАЛЕВО по бинарной маске:
-   * Черный пиксель = Суша (R <= 128)
-   * Белый пиксель  = Вода (R > 128)
+   * Сканирование СПРАВА НАЛЕВО по бинарной маске
    */
   private runBinaryRightToLeftScanner(imgData: ImageData): void {
     const data = imgData.data;
@@ -188,96 +181,80 @@ export class OceanCurrentsManager {
       const idx = Math.floor(Math.random() * this.waterSpawnPoints.length);
       return this.waterSpawnPoints[idx];
     }
-    return { x: 500, y: this.centerPoint };
+    return { x: 500, y: 4000 };
   }
 
   /**
-   * Расчет векторного поля течений по согласованной гидродинамической схеме
+   * Расчет векторного поля ТОЛЬКО для двух изолированных кольцевых течений
    */
   public getCurrentAt(x: number, y: number): CurrentData {
     const isWater = this.isWater(x, y);
     if (!isWater) {
-      return { vx: 0, vy: 0, zoneType: CurrentZoneType.WARM, targetColor: ZONE_COLOR_MAP[CurrentZoneType.WARM], isWater: false };
+      return { 
+        vx: 0, 
+        vy: 0, 
+        zoneType: CurrentZoneType.WARM, 
+        targetColor: ZONE_COLOR_MAP[CurrentZoneType.WARM], 
+        isWater: false 
+      };
     }
 
-    const scanY = Math.min(
-      this.MASK_SIZE - 1, 
-      Math.floor((y / this.worldHeight) * this.MASK_SIZE)
-    );
-    
-    const shoreX = this.shorelineLimits[scanY];
-    const distToShore = shoreX - x; // Расстояние от береговой линии вглубь океана
+    // --- 1. ХОЛОДНОЕ КОЛЬЦЕВОЕ ТЕЧЕНИЕ (Слева сверху) ---
+    const coldCenter = { x: 2000, y: 2000 };
+    const coldRadius = 1300;
+    const dxCold = x - coldCenter.x;
+    const dyCold = y - coldCenter.y;
+    const distCold = Math.hypot(dxCold, dyCold);
 
-    let vx = 0;
-    let vy = 0;
-    let zoneType = CurrentZoneType.COLD;
+    if (distCold <= coldRadius) {
+      // Замкнутое вращение по часовой стрелке
+      let vx = -dyCold;
+      let vy = dxCold;
+      const len = Math.hypot(vx, vy) || 1;
 
-    // --- 1. РОЗОВОЕ ОХЛАЖДАЮЩЕЕ ТЕЧЕНИЕ (Краевые зоны оттока) ---
-    if ((y < 900 && distToShore < 1200) || (y > 7100 && distToShore < 1000)) {
-      zoneType = CurrentZoneType.COOLING;
-      if (y < 900) {
-        // Северный сброс: уходит влево-вверх в глубокий гир
-        vx = -0.9;
-        vy = -0.3;
-      } else {
-        // Южный сброс: петлей огибает юг и уходит влево
-        vx = -0.85;
-        vy = 0.4;
-      }
-    }
-    // --- 2. ОРАНЖЕВОЕ ПРИБРЕЖНОЕ ТЕЧЕНИЕ (Петля у берега, distToShore < 600px) ---
-    else if (distToShore < 600) {
-      zoneType = CurrentZoneType.WARM;
-      if (distToShore < 280) {
-        // У самого пляжа: поток течет ВВЕРХ
-        vx = -0.15;
-        vy = -1.0;
-      } else {
-        // Чуть дальше от пляжа: возвращающий поток течет ВНИЗ
-        vx = 0.1;
-        vy = 1.0;
-      }
-    }
-    // --- 3. ЗЕЛЕНОЕ СРЕДИННОЕ ТЕЧЕНИЕ (Диагональный питательный экспресс) ---
-    else if (distToShore >= 600 && distToShore < 2200) {
-      zoneType = CurrentZoneType.NUTRIENT;
-      // Диагональ вправо-вниз прямо к берегу
-      vx = 0.85;
-      vy = 0.52;
-    }
-    // --- 4. СИНИЙ ГЛУБОКОВОДНЫЙ ГИР (Левый верхний бассейн) ---
-    else {
-      zoneType = CurrentZoneType.COLD;
-      // Вращение против часовой стрелки вокруг глубоководного центра (1500, 2500)
-      const cx = 1500;
-      const cy = 2500;
-      const dx = x - cx;
-      const dy = y - cy;
-
-      // Перпендикулярный вектор для кольцевого вращения
-      vx = dy;
-      vy = -dx;
+      return {
+        vx: (vx / len) * this.baseSpeed,
+        vy: (vy / len) * this.baseSpeed,
+        zoneType: CurrentZoneType.COLD,
+        targetColor: ZONE_COLOR_MAP[CurrentZoneType.COLD],
+        isWater: true
+      };
     }
 
-    // Нормализация скорости и приведение к baseSpeed
-    const len = Math.hypot(vx, vy) || 1;
-    vx = (vx / len) * this.baseSpeed;
-    vy = (vy / len) * this.baseSpeed;
+    // --- 2. ТЕПЛОЕ КОЛЬЦЕВОЕ ТЕЧЕНИЕ (Справа снизу у берега) ---
+    const warmCenter = { x: 3800, y: 6000 };
+    const warmRadius = 1200;
+    const dxWarm = x - warmCenter.x;
+    const dyWarm = y - warmCenter.y;
+    const distWarm = Math.hypot(dxWarm, dyWarm);
 
+    if (distWarm <= warmRadius) {
+      // Замкнутое вращение по часовой стрелке
+      let vx = -dyWarm;
+      let vy = dxWarm;
+      const len = Math.hypot(vx, vy) || 1;
+
+      return {
+        vx: (vx / len) * this.baseSpeed,
+        vy: (vy / len) * this.baseSpeed,
+        zoneType: CurrentZoneType.WARM,
+        targetColor: ZONE_COLOR_MAP[CurrentZoneType.WARM],
+        isWater: true
+      };
+    }
+
+    // --- 3. НЕЙТРАЛЬНАЯ ВОДА (Вне колец движение отсутствует) ---
     return {
-      vx,
-      vy,
-      zoneType,
-      targetColor: ZONE_COLOR_MAP[zoneType],
+      vx: 0,
+      vy: 0,
+      zoneType: CurrentZoneType.COLD,
+      targetColor: '#1e293b', // Темный фоновый цвет для нейтральной воды
       isWater: true
     };
   }
 
   /**
    * Вспомогательный метод для плавной интерполяции цвета частиц (lerp)
-   * @param currentColor Текущий HEX цвет частицы (например, '#FF8C00')
-   * @param targetColor Целевой HEX цвет зоны (например, '#FF1493')
-   * @param speed Скорость перехода от 0.0 до 1.0 (например, 0.05)
    */
   public static lerpColor(currentColor: string, targetColor: string, speed: number = 0.05): string {
     if (currentColor === targetColor) return currentColor;
