@@ -147,7 +147,7 @@ export class WorldMap {
   }
 
   /**
-   * Генерация подсвечивающего оверлея с мягким сглаживанием краев (Feathering)
+   * Генерация подсвечивающего оверлея (Умная классификация зон + отсутствие подсветки суши)
    */
   private applyHighlightOverlay(hexColor: string | null): void {
     if (!this.highlightCtx || !this.maskData || !this.highlightSprite) return;
@@ -158,7 +158,8 @@ export class WorldMap {
     // Сброс предыдущей заливки
     this.highlightCtx.clearRect(0, 0, w, h);
 
-    if (!hexColor) {
+    // 1. Не подсвечиваем сушу и отсутствие зоны
+    if (!hexColor || hexColor.toLowerCase() === LAND_ZONE_CONFIG.hexColor.toLowerCase()) {
       this.highlightCanvasSource?.update();
       return;
     }
@@ -168,41 +169,73 @@ export class WorldMap {
     const targetG = parseInt(cleanHex.substring(2, 4), 16);
     const targetB = parseInt(cleanHex.substring(4, 6), 16);
 
+    // Цвет суши
+    const landR = parseInt(LAND_ZONE_CONFIG.hexColor.substring(1, 3), 16);
+    const landG = parseInt(LAND_ZONE_CONFIG.hexColor.substring(3, 5), 16);
+    const landB = parseInt(LAND_ZONE_CONFIG.hexColor.substring(5, 7), 16);
+
+    // Спектр других морских зон для вычисления межзонной границы
+    const otherZonesRGB = OCEAN_ZONES_CONFIG
+      .filter(z => z.hexColor.toLowerCase() !== hexColor.toLowerCase())
+      .map(z => {
+        const hex = z.hexColor.replace('#', '');
+        return {
+          r: parseInt(hex.substring(0, 2), 16),
+          g: parseInt(hex.substring(2, 4), 16),
+          b: parseInt(hex.substring(4, 6), 16),
+        };
+      });
+
+    // Добавляем сушу к списку внешних границ
+    otherZonesRGB.push({ r: landR, g: landG, b: landB });
+
     const maskPixels = this.maskData.data;
     const overlayImgData = this.highlightCtx.createImageData(w, h);
     const overlayPixels = overlayImgData.data;
-
-    // Границы мягкого сглаживания
-    const INNER_TOLERANCE = 15; // Полное закрытие/яркость (100%)
-    const OUTER_TOLERANCE = 35; // Граница плавного затухания в 0%
-
-    const innerSq = INNER_TOLERANCE * INNER_TOLERANCE;
-    const outerSq = OUTER_TOLERANCE * OUTER_TOLERANCE;
-    const toleranceRange = OUTER_TOLERANCE - INNER_TOLERANCE;
-
-    // Быстрая заливка через 32-битный массив (ускоряет цикл в 4 раза)
     const overlay32 = new Uint32Array(overlayPixels.buffer);
-    const MAX_ALPHA = 110; // Максимальная альфа подсветки
+
+    // Прозрачность для зоны (150 из 255 - сочная, но прозрачная)
+    const TARGET_ALPHA = 150;
 
     for (let i = 0, len = maskPixels.length; i < len; i += 4) {
-      const dr = maskPixels[i] - targetR;
-      const dg = maskPixels[i + 1] - targetG;
-      const db = maskPixels[i + 2] - targetB;
-      const distSq = dr * dr + dg * dg + db * db;
+      const pr = maskPixels[i];
+      const pg = maskPixels[i + 1];
+      const pb = maskPixels[i + 2];
 
-      if (distSq < outerSq) {
-        let alpha = MAX_ALPHA;
+      // Дистанция цвета пикселя до целевой зоны
+      const dr = pr - targetR;
+      const dg = pg - targetG;
+      const db = pb - targetB;
+      const distTargetSq = dr * dr + dg * dg + db * db;
 
-        // Если пиксель находится в градиентной зоне сглаживания
-        if (distSq > innerSq) {
-          const dist = Math.sqrt(distSq);
-          const factor = 1 - (dist - INNER_TOLERANCE) / toleranceRange;
-          alpha = Math.floor(MAX_ALPHA * factor);
+      // Минимальная дистанция до любой другой зоны или суши
+      let minOtherSq = Infinity;
+      for (let j = 0; j < otherZonesRGB.length; j++) {
+        const oz = otherZonesRGB[j];
+        const odr = pr - oz.r;
+        const odg = pg - oz.g;
+        const odb = pb - oz.b;
+        const odistSq = odr * odr + odg * odg + odb * odb;
+        if (odistSq < minOtherSq) {
+          minOtherSq = odistSq;
+        }
+      }
+
+      // Пиксель однозначно принадлежит целевой зоне
+      if (distTargetSq < minOtherSq) {
+        let alpha = TARGET_ALPHA;
+
+        // Сглаживание только на узком переходе между зонами
+        const diffSq = minOtherSq - distTargetSq;
+        if (diffSq < 1600) {
+          alpha = Math.floor(TARGET_ALPHA * (diffSq / 1600));
         }
 
-        // Little-endian ABGR: (Alpha << 24) | (Blue << 16) | (Green << 8) | Red
-        // Цвет подсветки: RGBA (0, 220, 255, alpha)
-        overlay32[i >> 2] = (alpha << 24) | (255 << 16) | (220 << 8) | 0;
+        if (alpha > 5) {
+          // Little-endian ABGR: (Alpha << 24) | (Blue << 16) | (Green << 8) | Red
+          // Бирюзовая подсветка RGBA(0, 230, 255, alpha)
+          overlay32[i >> 2] = (alpha << 24) | (255 << 16) | (230 << 8) | 0;
+        }
       }
     }
 
