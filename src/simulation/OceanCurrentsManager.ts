@@ -6,17 +6,27 @@ export interface ShorePoint {
 }
 
 export enum CurrentZoneType {
-  WARM = 'WARM',
-  MIXED = 'MIXED',
-  COLD = 'COLD'
+  WARM = 'WARM',        // 🟠 Прибрежное теплое течение
+  NUTRIENT = 'NUTRIENT',// 🟢 Срединное питательное течение
+  COOLING = 'COOLING',  // 🩷 Охлаждающее течение (отток)
+  COLD = 'COLD'         // 🔵 Глубоководный гир
 }
 
 export interface CurrentData {
   vx: number;
   vy: number;
   zoneType: CurrentZoneType;
+  targetColor: string; // HEX-цвет текущей зоны для частицы
   isWater: boolean;
 }
+
+// Карта точных цветов для визуализации течений
+export const ZONE_COLOR_MAP: Record<CurrentZoneType, string> = {
+  [CurrentZoneType.WARM]: '#FF8C00',     // Оранжевый
+  [CurrentZoneType.NUTRIENT]: '#00FF7F', // Насыщенный зеленый
+  [CurrentZoneType.COOLING]: '#FF1493',  // Розовый (Маджента)
+  [CurrentZoneType.COLD]: '#00BFFF'      // Ледяной синий
+};
 
 export class OceanCurrentsManager {
   private worldWidth: number;
@@ -28,7 +38,6 @@ export class OceanCurrentsManager {
 
   // Хранит максимальный X (предел океана) для каждого Y маски
   private shorelineLimits: Float32Array = new Float32Array(this.MASK_SIZE).fill(0);
-  private zoneGrid: Uint8Array = new Uint8Array(this.MASK_SIZE * this.MASK_SIZE).fill(1);
   
   private waterSpawnPoints: { x: number; y: number }[] = [];
   public isLoaded: boolean = false;
@@ -50,7 +59,6 @@ export class OceanCurrentsManager {
     for (const pt of points) {
       const gy = Math.floor((pt.y / this.worldHeight) * this.MASK_SIZE);
       if (gy >= 0 && gy < this.MASK_SIZE) {
-        // Запас 40px от границы песка
         const safeX = Math.max(0, pt.x - 40);
         this.shorelineLimits[gy] = safeX;
 
@@ -72,7 +80,6 @@ export class OceanCurrentsManager {
   private async initScanner(): Promise<void> {
     try {
       const img = new Image();
-      // Загружаем точный бинарный файл из папки assets
       img.src = 'assets/ocean_binary_mask.png';
 
       await new Promise<void>((resolve, reject) => {
@@ -103,16 +110,13 @@ export class OceanCurrentsManager {
   }
 
   /**
-   * Сканирование СПРАВА НАЛЕВО:
+   * Сканирование СПРАВА НАЛЕВО по бинарной маске:
    * Черный пиксель = Суша (R <= 128)
    * Белый пиксель  = Вода (R > 128)
    */
   private runBinaryRightToLeftScanner(imgData: ImageData): void {
     const data = imgData.data;
     const cellHeight = this.worldHeight / this.MASK_SIZE;
-
-    // Безопасный отступ вглубь океана (в пикселях маски 1000x1000).
-    // 4px на маске = 32px в игровом мире (при worldWidth = 8000).
     const SAFETY_BUFFER_PX = 4; 
 
     this.waterSpawnPoints = [];
@@ -120,37 +124,21 @@ export class OceanCurrentsManager {
     for (let gy = 0; gy < this.MASK_SIZE; gy++) {
       let foundShoreX = -1;
 
-      // Сканируем строку от края суши (справа, gx = 999) налево (gx = 0)
       for (let gx = this.MASK_SIZE - 1; gx >= 0; gx--) {
         const i = (gy * this.MASK_SIZE + gx) * 4;
-        const r = data[i]; // В бинарном изображения R, G и B равны
+        const r = data[i];
 
-        // Первый белый пиксель со стороны суши -- это водяной край океана
         if (r > 128) {
           foundShoreX = gx;
           break;
         }
       }
 
-      // Если нашли воду, делаем отступ SAFETY_BUFFER_PX влево (в сторону океана)
       const safeWaterX = foundShoreX !== -1 ? Math.max(0, foundShoreX - SAFETY_BUFFER_PX) : 0;
       const worldLimitX = (safeWaterX / this.MASK_SIZE) * this.worldWidth;
 
       this.shorelineLimits[gy] = worldLimitX;
 
-      // Заполняем сетку температурных зон в зависимости от широты (gy)
-      const rowOffset = gy * this.MASK_SIZE;
-      for (let gx = 0; gx < this.MASK_SIZE; gx++) {
-        if (gy < 300) {
-          this.zoneGrid[rowOffset + gx] = 2; // COLD (северные воды)
-        } else if (gy > 700) {
-          this.zoneGrid[rowOffset + gx] = 0; // WARM (южные воды)
-        } else {
-          this.zoneGrid[rowOffset + gx] = 1; // MIXED (умеренные воды)
-        }
-      }
-
-      // Создаем точки возрождения частиц строго внутри пределов воды
       if (worldLimitX > 100) {
         for (let s = 0; s < 2; s++) {
           this.waterSpawnPoints.push({
@@ -204,29 +192,120 @@ export class OceanCurrentsManager {
   }
 
   /**
-   * Расчет вектора течения и зоны океана в точке (x, y)
+   * Расчет векторного поля течений по согласованной гидродинамической схеме
    */
   public getCurrentAt(x: number, y: number): CurrentData {
     const isWater = this.isWater(x, y);
+    if (!isWater) {
+      return { vx: 0, vy: 0, zoneType: CurrentZoneType.WARM, targetColor: ZONE_COLOR_MAP[CurrentZoneType.WARM], isWater: false };
+    }
 
-    const nx = (x - this.centerPoint) / this.centerPoint;
-    const ny = (y - this.centerPoint) / this.centerPoint;
+    const scanY = Math.min(
+      this.MASK_SIZE - 1, 
+      Math.floor((y / this.worldHeight) * this.MASK_SIZE)
+    );
+    
+    const shoreX = this.shorelineLimits[scanY];
+    const distToShore = shoreX - x; // Расстояние от береговой линии вглубь океана
 
-    let vx = -ny * 1.1 + Math.sin(y * 0.005) * 0.2;
-    let vy = nx * 0.9 + Math.cos(x * 0.005) * 0.2;
+    let vx = 0;
+    let vy = 0;
+    let zoneType = CurrentZoneType.COLD;
 
+    // --- 1. РОЗОВОЕ ОХЛАЖДАЮЩЕЕ ТЕЧЕНИЕ (Краевые зоны оттока) ---
+    if ((y < 900 && distToShore < 1200) || (y > 7100 && distToShore < 1000)) {
+      zoneType = CurrentZoneType.COOLING;
+      if (y < 900) {
+        // Северный сброс: уходит влево-вверх в глубокий гир
+        vx = -0.9;
+        vy = -0.3;
+      } else {
+        // Южный сброс: петлей огибает юг и уходит влево
+        vx = -0.85;
+        vy = 0.4;
+      }
+    }
+    // --- 2. ОРАНЖЕВОЕ ПРИБРЕЖНОЕ ТЕЧЕНИЕ (Петля у берега, distToShore < 600px) ---
+    else if (distToShore < 600) {
+      zoneType = CurrentZoneType.WARM;
+      if (distToShore < 280) {
+        // У самого пляжа: поток течет ВВЕРХ
+        vx = -0.15;
+        vy = -1.0;
+      } else {
+        // Чуть дальше от пляжа: возвращающий поток течет ВНИЗ
+        vx = 0.1;
+        vy = 1.0;
+      }
+    }
+    // --- 3. ЗЕЛЕНОЕ СРЕДИННОЕ ТЕЧЕНИЕ (Диагональный питательный экспресс) ---
+    else if (distToShore >= 600 && distToShore < 2200) {
+      zoneType = CurrentZoneType.NUTRIENT;
+      // Диагональ вправо-вниз прямо к берегу
+      vx = 0.85;
+      vy = 0.52;
+    }
+    // --- 4. СИНИЙ ГЛУБОКОВОДНЫЙ ГИР (Левый верхний бассейн) ---
+    else {
+      zoneType = CurrentZoneType.COLD;
+      // Вращение против часовой стрелки вокруг глубоководного центра (1500, 2500)
+      const cx = 1500;
+      const cy = 2500;
+      const dx = x - cx;
+      const dy = y - cy;
+
+      // Перпендикулярный вектор для кольцевого вращения
+      vx = dy;
+      vy = -dx;
+    }
+
+    // Нормализация скорости и приведение к baseSpeed
     const len = Math.hypot(vx, vy) || 1;
     vx = (vx / len) * this.baseSpeed;
     vy = (vy / len) * this.baseSpeed;
 
-    const gx = Math.floor(Math.max(0, Math.min(1, x / this.worldWidth)) * (this.MASK_SIZE - 1));
-    const gy = Math.floor(Math.max(0, Math.min(1, y / this.worldHeight)) * (this.MASK_SIZE - 1));
-    const zoneIdx = this.zoneGrid[gy * this.MASK_SIZE + gx];
+    return {
+      vx,
+      vy,
+      zoneType,
+      targetColor: ZONE_COLOR_MAP[zoneType],
+      isWater: true
+    };
+  }
 
-    let zoneType = CurrentZoneType.MIXED;
-    if (zoneIdx === 0) zoneType = CurrentZoneType.WARM;
-    if (zoneIdx === 2) zoneType = CurrentZoneType.COLD;
+  /**
+   * Вспомогательный метод для плавной интерполяции цвета частиц (lerp)
+   * @param currentColor Текущий HEX цвет частицы (например, '#FF8C00')
+   * @param targetColor Целевой HEX цвет зоны (например, '#FF1493')
+   * @param speed Скорость перехода от 0.0 до 1.0 (например, 0.05)
+   */
+  public static lerpColor(currentColor: string, targetColor: string, speed: number = 0.05): string {
+    if (currentColor === targetColor) return currentColor;
 
-    return { vx, vy, zoneType, isWater };
+    const c1 = OceanCurrentsManager.hexToRgb(currentColor);
+    const c2 = OceanCurrentsManager.hexToRgb(targetColor);
+
+    if (!c1 || !c2) return targetColor;
+
+    const r = Math.round(c1.r + (c2.r - c1.r) * speed);
+    const g = Math.round(c1.g + (c2.g - c1.g) * speed);
+    const b = Math.round(c1.b + (c2.b - c1.b) * speed);
+
+    return OceanCurrentsManager.rgbToHex(r, g, b);
+  }
+
+  private static hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+    const cleanHex = hex.replace('#', '');
+    if (cleanHex.length !== 6) return null;
+    return {
+      r: parseInt(cleanHex.substring(0, 2), 16),
+      g: parseInt(cleanHex.substring(2, 4), 16),
+      b: parseInt(cleanHex.substring(4, 6), 16)
+    };
+  }
+
+  private static rgbToHex(r: number, g: number, b: number): string {
+    const toHex = (n: number) => Math.max(0, Math.min(255, n)).toString(16).padStart(2, '0');
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
   }
 }
