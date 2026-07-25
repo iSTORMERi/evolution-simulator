@@ -7,37 +7,70 @@ export class TimeDebugUI {
   private container: HTMLDivElement;
   private slider: HTMLInputElement;
   private timeLabel: HTMLDivElement;
+  private autoPlayButton: HTMLButtonElement;
+
+  private isAutoPlaying: boolean = false;
+  private intervalId: number | null = null;
 
   constructor(lightingController: LightingController) {
     this.lightingController = lightingController;
 
-    // 1. Панель управления временем (сверху справа)
+    // 1. Главный контейнер (зафиксирован сверху по центру, статичный размер)
     this.container = document.createElement('div');
     this.setupContainerStyles();
 
-    // 2. Текстовая плашка со временем и фазой
+    // 2. Верхняя строка: Текст времени (слева) + Кнопка автопрокрутки (справа)
+    const headerRow = document.createElement('div');
+    Object.assign(headerRow.style, {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: '8px',
+      gap: '8px',
+    });
+
     this.timeLabel = document.createElement('div');
-    this.timeLabel.style.marginBottom = '8px';
-    this.timeLabel.style.fontWeight = 'bold';
-    this.timeLabel.style.color = '#38bdf8';
-    this.timeLabel.innerText = 'Время: 12:00';
+    Object.assign(this.timeLabel.style, {
+      fontWeight: 'bold',
+      color: '#38bdf8',
+      fontSize: '13px',
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      minWidth: '0', // Защита от переполнения
+    });
+    this.timeLabel.innerText = '🕒 12:00 (Яркий день)';
+
+    this.autoPlayButton = document.createElement('button');
+    this.setupAutoPlayButtonStyles();
+    this.autoPlayButton.addEventListener('click', () => this.toggleAutoPlay());
+
+    headerRow.appendChild(this.timeLabel);
+    headerRow.appendChild(this.autoPlayButton);
 
     // 3. Ползунок переключения времени суток
     this.slider = document.createElement('input');
     this.slider.type = 'range';
     this.slider.min = '0';
     this.slider.max = '24';
-    this.slider.step = '0.1';
+    this.slider.step = '0.05';
     this.slider.value = '12';
-    this.slider.style.width = '100%';
-    this.slider.style.cursor = 'pointer';
+    Object.assign(this.slider.style, {
+      width: '100%',
+      cursor: 'pointer',
+      accentColor: '#38bdf8',
+    });
 
     this.slider.addEventListener('input', () => {
+      // При ручном перетаскивании останавливаем автопрокрутку
+      if (this.isAutoPlaying) {
+        this.stopAutoPlay();
+      }
       const hours = parseFloat(this.slider.value);
       this.setTime(hours);
     });
 
-    this.container.appendChild(this.timeLabel);
+    this.container.appendChild(headerRow);
     this.container.appendChild(this.slider);
     document.body.appendChild(this.container);
 
@@ -48,20 +81,74 @@ export class TimeDebugUI {
   private setupContainerStyles(): void {
     Object.assign(this.container.style, {
       position: 'fixed',
-      top: '20px',
-      right: '20px',
-      padding: '12px 16px',
+      top: '12px',
+      left: '50%',
+      transform: 'translateX(-50%)',
+      width: 'calc(100% - 32px)',
+      maxWidth: '400px',
+      padding: '10px 14px',
       borderRadius: '12px',
       backgroundColor: 'rgba(15, 23, 42, 0.85)',
-      backdropFilter: 'blur(8px)',
+      backdropFilter: 'blur(10px)',
       border: '1px solid rgba(56, 189, 248, 0.3)',
       color: '#ffffff',
       fontFamily: 'sans-serif',
       fontSize: '13px',
       zIndex: '1000',
-      minWidth: '180px',
-      boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+      boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+      boxSizing: 'border-box',
     });
+  }
+
+  private setupAutoPlayButtonStyles(): void {
+    this.autoPlayButton.innerHTML = '▶️ 5м/с';
+    Object.assign(this.autoPlayButton.style, {
+      padding: '4px 10px',
+      borderRadius: '6px',
+      border: '1px solid rgba(56, 189, 248, 0.4)',
+      backgroundColor: 'rgba(56, 189, 248, 0.15)',
+      color: '#f8fafc',
+      fontSize: '11px',
+      fontWeight: '600',
+      cursor: 'pointer',
+      whiteSpace: 'nowrap',
+      flexShrink: '0',
+      transition: 'all 0.2s ease',
+    });
+  }
+
+  private toggleAutoPlay(): void {
+    if (this.isAutoPlaying) {
+      this.stopAutoPlay();
+    } else {
+      this.startAutoPlay();
+    }
+  }
+
+  private startAutoPlay(): void {
+    this.isAutoPlaying = true;
+    this.autoPlayButton.innerHTML = '⏸️ Пауза';
+    this.autoPlayButton.style.backgroundColor = 'rgba(239, 68, 68, 0.25)';
+    this.autoPlayButton.style.borderColor = 'rgba(239, 68, 68, 0.5)';
+
+    // Добавляем +5 минут игрового времени каждую секунду (прибавка по 0.5 мин каждые 100 мс)
+    this.intervalId = window.setInterval(() => {
+      let currentHours = parseFloat(this.slider.value);
+      currentHours = (currentHours + (5 / 60) / 10) % 24;
+      this.setTime(currentHours);
+    }, 100);
+  }
+
+  private stopAutoPlay(): void {
+    this.isAutoPlaying = false;
+    this.autoPlayButton.innerHTML = '▶️ 5м/с';
+    this.autoPlayButton.style.backgroundColor = 'rgba(56, 189, 248, 0.15)';
+    this.autoPlayButton.style.borderColor = 'rgba(56, 189, 248, 0.4)';
+
+    if (this.intervalId !== null) {
+      clearInterval(this.intervalId);
+      this.intervalId = null;
+    }
   }
 
   /**
