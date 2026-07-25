@@ -1,60 +1,80 @@
-// src/world/LightingController.ts
+// src/ui/TimeDebugUI.ts
 
-export interface LightingState {
-  formattedTime: string;
-  phaseName: string;
-  ambientColor?: number;
-  intensity?: number;
-  [key: string]: any; // На случай дополнительных параметров вашей реализации
-}
+import { LightingController } from '../world/LightingController';
 
-export class LightingController {
-  // Сохраняем текущее время (по умолчанию 12:00)
-  private currentHour: number = 12.0;
+export class TimeDebugUI {
+  private lightingController: LightingController;
+  private container: HTMLDivElement;
+  private slider: HTMLInputElement;
+  private timeLabel: HTMLDivElement;
 
-  /**
-   * Устанавливает время суток и сохраняет его в контроллере
-   * @param hours Время в часах (от 0.0 до 24.0)
-   */
-  public setTime(hours: number): LightingState {
-    this.currentHour = hours;
+  constructor(lightingController: LightingController) {
+    this.lightingController = lightingController;
 
-    // --- Ваша текущая логика обновления шейдеров/цвета ---
-    // (Оставьте здесь ваш существующий код расчета освещения)
-    
-    const formattedTime = this.formatTime(hours);
-    const phaseName = this.getPhaseName(hours);
+    // 1. Панель управления временем (сверху справа)
+    this.container = document.createElement('div');
+    this.setupContainerStyles();
 
-    return {
-      formattedTime,
-      phaseName,
-    };
+    // 2. Текстовая плашка со временем и фазой
+    this.timeLabel = document.createElement('div');
+    this.timeLabel.style.marginBottom = '8px';
+    this.timeLabel.style.fontWeight = 'bold';
+    this.timeLabel.style.color = '#38bdf8';
+    this.timeLabel.innerText = 'Время: 12:00';
+
+    // 3. Ползунок переключения времени суток
+    this.slider = document.createElement('input');
+    this.slider.type = 'range';
+    this.slider.min = '0';
+    this.slider.max = '24';
+    this.slider.step = '0.1';
+    this.slider.value = '12';
+    this.slider.style.width = '100%';
+    this.slider.style.cursor = 'pointer';
+
+    this.slider.addEventListener('input', () => {
+      const hours = parseFloat(this.slider.value);
+      this.setTime(hours);
+    });
+
+    this.container.appendChild(this.timeLabel);
+    this.container.appendChild(this.slider);
+    document.body.appendChild(this.container);
+
+    // Устанавливаем начальное значение
+    this.setTime(12);
+  }
+
+  private setupContainerStyles(): void {
+    Object.assign(this.container.style, {
+      position: 'fixed',
+      top: '20px',
+      right: '20px',
+      padding: '12px 16px',
+      borderRadius: '12px',
+      backgroundColor: 'rgba(15, 23, 42, 0.85)',
+      backdropFilter: 'blur(8px)',
+      border: '1px solid rgba(56, 189, 248, 0.3)',
+      color: '#ffffff',
+      fontFamily: 'sans-serif',
+      fontSize: '13px',
+      zIndex: '1000',
+      minWidth: '180px',
+      boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+    });
   }
 
   /**
-   * Возвращает текущее время суток в часах (0.0 - 24.0)
-   * Теперь BiomeScanner и любые другие системы могут считывать время отсюда
+   * Обновляет контроллер освещения и интерфейс
    */
-  public getCurrentHours(): number {
-    return this.currentHour;
-  }
+  public setTime(hours: number): void {
+    const state = this.lightingController.setTime(hours);
+    this.slider.value = hours.toString();
 
-  /**
-   * Вспомогательный метод форматирования времени (00:00)
-   */
-  private formatTime(hours: number): string {
-    const h = Math.floor(hours) % 24;
-    const m = Math.floor((hours - Math.floor(hours)) * 60);
-    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
-  }
-
-  /**
-   * Вспомогательный метод определения фазы суток
-   */
-  private getPhaseName(hours: number): string {
-    if (hours >= 5 && hours < 8) return 'Рассвет';
-    if (hours >= 8 && hours < 17) return 'Яркий день';
-    if (hours >= 17 && hours < 21) return 'Закат';
-    return 'Лунная ночь';
+    if (state) {
+      const timeStr = state.formattedTime || '12:00';
+      const phaseStr = state.phaseName ? ` (${state.phaseName})` : '';
+      this.timeLabel.innerText = `🕒 ${timeStr}${phaseStr}`;
+    }
   }
 }

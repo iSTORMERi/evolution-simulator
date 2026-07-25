@@ -1,3 +1,5 @@
+// src/world/LightingController.ts
+
 import * as PIXI from 'pixi.js';
 
 export interface TimeState {
@@ -9,6 +11,7 @@ export interface TimeState {
 export class LightingController {
   private colorMatrixFilter: PIXI.ColorMatrixFilter;
   private targetContainer: PIXI.Container;
+  private currentHour: number = 12.0; // Храним текущее время (по умолчанию 12:00)
 
   constructor(targetContainer: PIXI.Container) {
     this.targetContainer = targetContainer;
@@ -18,10 +21,18 @@ export class LightingController {
   }
 
   /**
+   * Возвращает текущее время суток в часах (от 0.0 до 24.0)
+   */
+  public getCurrentHours(): number {
+    return this.currentHour;
+  }
+
+  /**
    * Обновляет освещение мира по времени (timeInHours: float от 0.0 до 24.0)
    */
   public setTime(timeInHours: number): TimeState {
     const hours = (timeInHours % 24 + 24) % 24;
+    this.currentHour = hours; // Сохраняем актуальный час
 
     let r = 1.0, g = 1.0, b = 1.0;
     let brightness = 1.0;

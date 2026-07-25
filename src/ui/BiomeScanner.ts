@@ -122,12 +122,11 @@ export class BiomeScanner {
   }
 
   /**
-   * Безопасное считывание текущего часа из контроллера освещения
+   * Считывание текущего часа из контроллера освещения
    */
   private getHoursFromController(): number {
-    const lc = this.lightingController as any;
-    if (lc && typeof lc.getCurrentHours === 'function') {
-      return lc.getCurrentHours();
+    if (this.lightingController && typeof this.lightingController.getCurrentHours === 'function') {
+      return this.lightingController.getCurrentHours();
     }
     return 12;
   }
