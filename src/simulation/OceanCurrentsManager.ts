@@ -6,9 +6,10 @@ export interface ShorePoint {
 }
 
 export enum CurrentZoneType {
-  WARM = 'WARM',       // 🟠 Теплое течение (повернутый стадион справа)
-  COLD = 'COLD',       // 🔵 Холодное течение (повернутый стадион слева)
-  TRANSIT = 'TRANSIT'  // 🌸 Выносящее течение (незамкнутый розовый полумесяц)
+  WARM = 'WARM',             // 🟠 Теплое течение (повернутый стадион справа)
+  COLD = 'COLD',             // 🔵 Холодное течение (повернутый стадион слева)
+  TRANSIT = 'TRANSIT',       // 🟡 Выносящие течения по бокам (желтые полумесяцы)
+  CONNECTING = 'CONNECTING'   // 🟢 Прямое соединительное течение в центре (зеленое)
 }
 
 export interface CurrentData {
@@ -20,9 +21,10 @@ export interface CurrentData {
 }
 
 export const ZONE_COLOR_MAP: Record<CurrentZoneType, string> = {
-  [CurrentZoneType.WARM]: '#FF8C00',    // Оранжевый
-  [CurrentZoneType.COLD]: '#00BFFF',    // Ледяной синий
-  [CurrentZoneType.TRANSIT]: '#FF69B4'  // Ярко-розовый (Hot Pink)
+  [CurrentZoneType.WARM]: '#FF8C00',       // Оранжевый
+  [CurrentZoneType.COLD]: '#00BFFF',       // Ледяной синий
+  [CurrentZoneType.TRANSIT]: '#FFD700',    // Ярко-жёлтый
+  [CurrentZoneType.CONNECTING]: '#00FF66'  // Сочно-зелёный
 };
 
 interface Point2D {
@@ -256,7 +258,6 @@ export class OceanCurrentsManager {
 
     if (minDist > radius) return null;
 
-    // Сглаживание траектории вокруг вершин треугольника
     const CORNER_SMOOTH_RADIUS = radius * 1.2;
     for (let i = 0; i < 3; i++) {
       const v = vertices[i];
@@ -267,7 +268,6 @@ export class OceanCurrentsManager {
         const ry = y - v.y;
         const rLen = Math.hypot(rx, ry) || 1;
 
-        // Вектор касательной к вершине (по часовой стрелке)
         const tangentX = -ry / rLen;
         const tangentY = rx / rLen;
 
@@ -285,7 +285,7 @@ export class OceanCurrentsManager {
   }
 
   /**
-   * Незамкнутое дугообразное течение (розовый полумесяц) на основе квадратичной кривой Безье
+   * Незамкнутое дугообразное течение (полумесяц) на основе квадратичной кривой Безье
    */
   private getCrescentStreamVector(
     x: number,
@@ -299,7 +299,6 @@ export class OceanCurrentsManager {
     let minDistSq = Infinity;
     let bestT = 0;
 
-    // Поиск ближайшей точки на кривой Безье
     for (let i = 0; i <= SAMPLES; i++) {
       const t = i / SAMPLES;
       const invT = 1 - t;
@@ -316,7 +315,6 @@ export class OceanCurrentsManager {
 
     if (Math.sqrt(minDistSq) > radius) return null;
 
-    // Касательный вектор B'(t) вдоль полумесяца
     const invT = 1 - bestT;
     const tangentX = 2 * invT * (p1.x - p0.x) + 2 * bestT * (p2.x - p1.x);
     const tangentY = 2 * invT * (p1.y - p0.y) + 2 * bestT * (p2.y - p1.y);
@@ -325,6 +323,39 @@ export class OceanCurrentsManager {
     return {
       x: tangentX / len,
       y: tangentY / len
+    };
+  }
+
+  /**
+   * Прямое линейное течение из точки P0 в точку P1
+   */
+  private getLinearStreamVector(
+    x: number,
+    y: number,
+    p0: Point2D,
+    p1: Point2D,
+    radius: number
+  ): Point2D | null {
+    const dx = p1.x - p0.x;
+    const dy = p1.y - p0.y;
+    const len = Math.hypot(dx, dy);
+    if (len === 0) return null;
+
+    const dirX = dx / len;
+    const dirY = dy / len;
+
+    let t = ((x - p0.x) * dx + (y - p0.y) * dy) / (len * len);
+    t = Math.max(0, Math.min(1, t));
+
+    const projX = p0.x + t * dx;
+    const projY = p0.y + t * dy;
+    const dist = Math.hypot(x - projX, y - projY);
+
+    if (dist > radius) return null;
+
+    return {
+      x: dirX,
+      y: dirY
     };
   }
 
@@ -347,6 +378,7 @@ export class OceanCurrentsManager {
     let warmWeight = 0;
     let coldWeight = 0;
     let transitWeight = 0;
+    let connectingWeight = 0;
 
     // --- 1. ХОЛОДНОЕ ТЕЧЕНИЕ (Основной синий стадион слева) ---
     const coldTrack = {
@@ -405,11 +437,11 @@ export class OceanCurrentsManager {
       warmWeight += 1.0;
     }
 
-    // --- 4. ПРАВЫЙ ВЕРХНИЙ ПОЛУМЕСЯЦ (Розовое выносящее течение) ---
+    // --- 4. ПРАВЫЙ ВЕРХНИЙ ПОЛУМЕСЯЦ (Жёлтое выносящее течение) ---
     const topRightCrescent = {
-      p0: { x: 6200, y: 2200 }, // От береговой линии / конца теплого течения
-      p1: { x: 5200, y: 400 },  // Изгиб полумесяца в верхнем правом углу
-      p2: { x: 2500, y: 700 },  // Стыковка с началом холодного течения
+      p0: { x: 6200, y: 2200 },
+      p1: { x: 5200, y: 400 },
+      p2: { x: 2500, y: 700 },
       radius: 750
     };
 
@@ -425,14 +457,14 @@ export class OceanCurrentsManager {
       totalVx += topCrescentVec.x;
       totalVy += topCrescentVec.y;
       activeCount++;
-      transitWeight += 1.5; // Приоритет для окрашивания в розовый цвет
+      transitWeight += 1.5;
     }
 
-    // --- 5. НИЖНИЙ ЛЕВЫЙ ПОЛУМЕСЯЦ (Розовое выносящее течение) ---
+    // --- 5. НИЖНИЙ ЛЕВЫЙ ПОЛУМЕСЯЦ (Жёлтое выносящее течение) ---
     const bottomLeftCrescent = {
-      p0: { x: 4800, y: 6800 }, // От южной зоны теплого течения
-      p1: { x: 2000, y: 7600 }, // Изгиб в нижнем левом углу
-      p2: { x: 1200, y: 4500 }, // Вход в основание холодного течения
+      p0: { x: 4800, y: 6800 },
+      p1: { x: 2000, y: 7600 },
+      p2: { x: 1200, y: 4500 },
       radius: 800
     };
 
@@ -448,7 +480,28 @@ export class OceanCurrentsManager {
       totalVx += bottomCrescentVec.x;
       totalVy += bottomCrescentVec.y;
       activeCount++;
-      transitWeight += 1.5; // Приоритет для окрашивания в розовый цвет
+      transitWeight += 1.5;
+    }
+
+    // --- 6. ПРЯМОЕ ЗЕЛЕНОЕ ТЕЧЕНИЕ В ЦЕНТРЕ (Из холодного в теплое) ---
+    const centralGreenStream = {
+      p0: { x: 2300, y: 2800 }, // Из правого края/центра холодного овального течения
+      p1: { x: 4000, y: 4100 }, // В левый край/центр теплого овального течения
+      radius: 650
+    };
+
+    const connectingVec = this.getLinearStreamVector(
+      x,
+      y,
+      centralGreenStream.p0,
+      centralGreenStream.p1,
+      centralGreenStream.radius
+    );
+    if (connectingVec) {
+      totalVx += connectingVec.x;
+      totalVy += connectingVec.y;
+      activeCount++;
+      connectingWeight += 2.0; // Высокий приоритет для зеленой окраски
     }
 
     // --- РЕЗУЛЬТИРУЮЩИЙ РАСЧЕТ И ВЕКТОРНОЕ СЛОЖЕНИЕ ---
@@ -467,12 +520,16 @@ export class OceanCurrentsManager {
     const finalVx = (totalVx / (combinedLen || 1)) * this.baseSpeed * speedBoost;
     const finalVy = (totalVy / (combinedLen || 1)) * this.baseSpeed * speedBoost;
 
-    // Определение доминирующего типа и цвета течения
+    // Определение доминирующего цвета
     let primaryZone = CurrentZoneType.COLD;
-    if (transitWeight > warmWeight && transitWeight > coldWeight) {
-      primaryZone = CurrentZoneType.TRANSIT; // 🌸 Розовый цвет для полумесяцев
-    } else if (warmWeight >= coldWeight) {
-      primaryZone = CurrentZoneType.WARM;
+    const maxWeight = Math.max(warmWeight, coldWeight, transitWeight, connectingWeight);
+
+    if (maxWeight === connectingWeight) {
+      primaryZone = CurrentZoneType.CONNECTING; // 🟢 Зеленый цвет для прямого течения
+    } else if (maxWeight === transitWeight) {
+      primaryZone = CurrentZoneType.TRANSIT;    // 🟡 Жёлтый цвет для полумесяцев
+    } else if (maxWeight === warmWeight) {
+      primaryZone = CurrentZoneType.WARM;       // 🟠 Оранжевый цвет
     }
 
     return {
