@@ -25,21 +25,28 @@ export class CurrentParticlesDebug {
     this.currentsManager = currentsManager;
     this.container = new PIXI.Container();
 
-    this.particleTexture = this.generateCircleTexture(3);
+    // Создаем увеличенную в 3 раза черточку (18px x 4px) вместо точек
+    this.particleTexture = this.generateDashTexture(18, 4);
     this.initParticles(count);
   }
 
-  private generateCircleTexture(radius: number): PIXI.Texture {
+  /**
+   * Генерация текстуры вытянутой черточки (-) со скругленными краями
+   */
+  private generateDashTexture(width: number, height: number): PIXI.Texture {
     const canvas = document.createElement('canvas');
-    const size = radius * 2;
-    canvas.width = size;
-    canvas.height = size;
+    canvas.width = width;
+    canvas.height = height;
 
     const ctx = canvas.getContext('2d');
     if (ctx) {
-      ctx.beginPath();
-      ctx.arc(radius, radius, radius, 0, Math.PI * 2);
       ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      if (typeof ctx.roundRect === 'function') {
+        ctx.roundRect(0, 0, width, height, height / 2);
+      } else {
+        ctx.rect(0, 0, width, height);
+      }
       ctx.fill();
     }
 
@@ -49,6 +56,7 @@ export class CurrentParticlesDebug {
   private initParticles(count: number): void {
     for (let i = 0; i < count; i++) {
       const sprite = new PIXI.Sprite(this.particleTexture);
+      // Центрируем анкор, чтобы черточка вращалась ровно вокруг своего центра
       sprite.anchor.set(0.5);
 
       const pos = this.currentsManager.getRandomWaterPosition();
@@ -107,6 +115,11 @@ export class CurrentParticlesDebug {
         continue;
       }
 
+      // Поворот черточки вдоль направления вектора скорости
+      if (Math.abs(current.vx) > 0.01 || Math.abs(current.vy) > 0.01) {
+        p.sprite.rotation = Math.atan2(current.vy, current.vx);
+      }
+
       // Прозрачность с мягким проявлением и затуханием (Fade In / Fade Out)
       const progress = p.life / p.maxLife;
       let alpha = 0.85;
@@ -119,11 +132,11 @@ export class CurrentParticlesDebug {
         case CurrentZoneType.WARM:
           p.sprite.tint = this.colorWarm;
           break;
-        case CurrentZoneType.MIXED:
-          p.sprite.tint = this.colorMixed;
-          break;
         case CurrentZoneType.COLD:
           p.sprite.tint = this.colorCold;
+          break;
+        default:
+          p.sprite.tint = this.colorMixed;
           break;
       }
 
