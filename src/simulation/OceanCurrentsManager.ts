@@ -19,9 +19,9 @@ export class OceanCurrentsManager {
   public baseSpeed: number = 200;
 
   private readonly centerPoint = 4000;
-  private readonly MASK_SIZE = 1000; // Разрешение сканера по оси Y
+  private readonly MASK_SIZE = 1000;
 
-  // Тот самый барьер: хранит максимальный разрешенный X для каждого Y
+  // Максимально допустимый X (граница воды) для каждого Y
   private shorelineLimits: Float32Array = new Float32Array(this.MASK_SIZE).fill(0);
   private zoneGrid: Uint8Array = new Uint8Array(this.MASK_SIZE * this.MASK_SIZE).fill(1);
   
@@ -37,10 +37,9 @@ export class OceanCurrentsManager {
   private async initScanner(): Promise<void> {
     try {
       const img = new Image();
-      // Обязательно для обхода блокировок на GitHub Pages
-      img.crossOrigin = 'anonymous'; 
-      // Подключаем бинарную черно-белую маску
-      img.src = 'assets/ocean_binary_mask.png';
+      img.crossOrigin = 'anonymous';
+      // Используем ту же маску биомов, что и WorldMap
+      img.src = 'assets/ocean_zones_mask.png';
 
       await new Promise<void>((resolve, reject) => {
         img.onload = () => resolve();
@@ -58,72 +57,61 @@ export class OceanCurrentsManager {
       ctx.drawImage(img, 0, 0, this.MASK_SIZE, this.MASK_SIZE);
       const imgData = ctx.getImageData(0, 0, this.MASK_SIZE, this.MASK_SIZE);
 
-      this.runLeftToRightScanner(imgData);
+      this.runRightToLeftScanner(imgData);
       
       this.isLoaded = true;
-      console.log(`[Scanner] Береговая линия построена. Безопасных точек спавна: ${this.waterSpawnPoints.length}`);
+      console.log(`[CurrentsManager] Береговая линия построена. Точек спавна: ${this.waterSpawnPoints.length}`);
     } catch (e) {
-      console.error('[Scanner] КРИТИЧЕСКАЯ ОШИБКА ЧТЕНИЯ МАСКИ. Частицы могут вести себя хаотично!', e);
+      console.error('[CurrentsManager] Ошибка загрузки маски:', e);
       this.buildEmergencyWall();
       this.isLoaded = true;
     }
   }
 
   /**
-   * Сканирование слева направо по черно-белой бинарной маске
-   * Белый пиксель = Вода | Черный пиксель / Прозрачность = Суша
+   * Сканирование СПРАВА НАЛЕВО -- полностью повторяет логику WorldMap.getShorelinePoints()
    */
-  private runLeftToRightScanner(imgData: ImageData): void {
+  private runRightToLeftScanner(imgData: ImageData): void {
     const data = imgData.data;
-    const cellWidth = this.worldWidth / this.MASK_SIZE;
     const cellHeight = this.worldHeight / this.MASK_SIZE;
 
-    // Отступ в 2 пикселя маски от черной границы суши (для запаса безопасности)
-    const EROSION_BUFFER = 2; 
+    // Отступ безопасности в пикселях маски (чтобы частицы держались дальше от песка и пены)
+    const SAFETY_BUFFER_PX = 4; 
 
     for (let gy = 0; gy < this.MASK_SIZE; gy++) {
-      let maxWaterX = 0;
-      let hitCoast = false;
+      let foundShoreX = -1;
 
-      // Сканируем ряд слева направо
-      for (let gx = 0; gx < this.MASK_SIZE; gx++) {
+      // Идем справа налево (из зоны суши в сторону океана)
+      for (let gx = this.MASK_SIZE - 1; gx >= 0; gx--) {
         const i = (gy * this.MASK_SIZE + gx) * 4;
         const r = data[i];
         const g = data[i + 1];
         const b = data[i + 2];
-        const a = data[i + 3];
 
-        // 1. Прозрачность
-        const isTransparent = a < 150;
-        // 2. Детектор черного цвета суши (R < 100)
-        const isBlackLand = r < 100;
-
-        if (isTransparent || isBlackLand) {
-          // Наткнулись на берег: останавливаем скан ряда и делаем отступ
-          maxWaterX = Math.max(0, gx - EROSION_BUFFER);
-          hitCoast = true;
-          break; 
+        // Точное условие из WorldMap: если преобладает синий канал -- это вода
+        if (b > r + 20) {
+          foundShoreX = gx;
+          break;
+        } else {
+          // Читаем зоны океана / суши для определения температуры течений
+          const hex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+          this.zoneGrid[gy * this.MASK_SIZE + gx] = this.resolveZoneIndex(hex);
         }
-
-        // Если это белая область воды, определяем и сохраняем тип зоны
-        const hex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
-        this.zoneGrid[gy * this.MASK_SIZE + gx] = this.resolveZoneIndex(hex);
       }
 
-      // Если в этом ряду суши нет, вода идет до края
-      if (!hitCoast) {
-        maxWaterX = this.MASK_SIZE - EROSION_BUFFER;
-      }
+      // Если нашли берег, делаем запас хода назад в сторону океана
+      const safeWaterX = foundShoreX !== -1 ? Math.max(0, foundShoreX - SAFETY_BUFFER_PX) : 0;
+      
+      // Переводим в мировые координаты
+      const worldLimitX = (safeWaterX / this.MASK_SIZE) * this.worldWidth;
+      this.shorelineLimits[gy] = worldLimitX;
 
-      // Записываем границу X в мировых координатах
-      this.shorelineLimits[gy] = (maxWaterX / this.MASK_SIZE) * this.worldWidth;
-
-      // Точки спавна для частиц
-      if (maxWaterX > 0) {
-        const spawnsInRow = Math.max(1, Math.floor(maxWaterX / 15));
+      // Точки спавна генерируем только в океане
+      if (worldLimitX > 100) {
+        const spawnsInRow = 2;
         for (let s = 0; s < spawnsInRow; s++) {
           this.waterSpawnPoints.push({
-            x: (Math.random() * maxWaterX / this.MASK_SIZE) * this.worldWidth,
+            x: Math.random() * (worldLimitX - 50),
             y: (gy + Math.random()) * cellHeight
           });
         }
@@ -131,13 +119,11 @@ export class OceanCurrentsManager {
     }
   }
 
-  // Аварийный барьер, если маска не загрузилась
   private buildEmergencyWall(): void {
     this.waterSpawnPoints = [];
     for (let gy = 0; gy < this.MASK_SIZE; gy++) {
-      const limitX = this.worldWidth - (gy / this.MASK_SIZE) * (this.worldWidth * 0.5);
+      const limitX = this.worldWidth * 0.3;
       this.shorelineLimits[gy] = limitX;
-      
       this.waterSpawnPoints.push({
         x: Math.random() * limitX,
         y: (gy / this.MASK_SIZE) * this.worldHeight
@@ -176,12 +162,16 @@ export class OceanCurrentsManager {
   }
 
   public isWater(x: number, y: number): boolean {
+    if (!this.isLoaded) return false;
     if (x < 0 || x >= this.worldWidth || y < 0 || y >= this.worldHeight) return false;
 
-    const scanY = Math.floor((y / this.worldHeight) * this.MASK_SIZE);
-    const limitX = this.shorelineLimits[scanY];
-
-    return x < limitX; 
+    const scanY = Math.min(
+      this.MASK_SIZE - 1, 
+      Math.floor((y / this.worldHeight) * this.MASK_SIZE)
+    );
+    
+    // Частица находится в воде только если ее координата X левее границы берега
+    return x < this.shorelineLimits[scanY]; 
   }
 
   public getRandomWaterPosition(): { x: number; y: number } {
@@ -189,7 +179,7 @@ export class OceanCurrentsManager {
       const idx = Math.floor(Math.random() * this.waterSpawnPoints.length);
       return this.waterSpawnPoints[idx];
     }
-    return { x: this.centerPoint, y: this.centerPoint };
+    return { x: 500, y: this.centerPoint };
   }
 
   public getCurrentAt(x: number, y: number): CurrentData {
