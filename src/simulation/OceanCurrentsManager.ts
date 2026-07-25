@@ -6,7 +6,7 @@ export interface ShorePoint {
 }
 
 export enum CurrentZoneType {
-  WARM = 'WARM', // 🟠 Теплое течение (повернутый стадион справа)
+  WARM = 'WARM', // 🟠 Теплое течение (более вертикальный стадион справа)
   COLD = 'COLD'  // 🔵 Холодное течение (повернутый стадион слева)
 }
 
@@ -19,7 +19,7 @@ export interface CurrentData {
 }
 
 export const ZONE_COLOR_MAP: Record<CurrentZoneType, string> = {
-  [CurrentZoneType.WARM]: '#FF8C00', // Оранжевый
+  [CurrentZoneType.WARM]: '#FF8C00', // Оранжевый / Красный
   [CurrentZoneType.COLD]: '#00BFFF'  // Ледяной синий
 };
 
@@ -224,16 +224,13 @@ export class OceanCurrentsManager {
       };
     }
 
-    // Общий угол наклона для обоих параллельных стадионов (-30 градусов)
-    const sharedAngleRad = (-30 * Math.PI) / 180;
-
-    // --- 1. ХОЛОДНОЕ ТЕЧЕНИЕ (Стадион слева) ---
+    // --- 1. ХОЛОДНОЕ ТЕЧЕНИЕ (Синий стадион слева, под углом -30°) ---
     const coldTrack = {
       cx: 2200,
       cy: 2500,
       halfLength: 1800,
       radius: 800,
-      angleRad: sharedAngleRad
+      angleRad: (-30 * Math.PI) / 180
     };
 
     const coldVec = this.getRotatedStadiumVector(x, y, coldTrack);
@@ -248,13 +245,13 @@ export class OceanCurrentsManager {
       };
     }
 
-    // --- 2. ТЕПЛОЕ ТЕЧЕНИЕ (Параллельный стадион справа вдоль берега) ---
+    // --- 2. ТЕПЛОЕ ТЕЧЕНИЕ (Оранжевый/Красный стадион справа -- более вертикальный, -65°) ---
     const warmTrack = {
-      cx: 5500,
-      cy: 4200,
-      halfLength: 2200,
+      cx: 5800,
+      cy: 4000,
+      halfLength: 2400,
       radius: 1100,
-      angleRad: sharedAngleRad
+      angleRad: (-65 * Math.PI) / 180 // Развернут существенно ближе к вертикали
     };
 
     const warmVec = this.getRotatedStadiumVector(x, y, warmTrack);
@@ -269,7 +266,7 @@ export class OceanCurrentsManager {
       };
     }
 
-    // --- 3. НЕЙТРАЛЬНАЯ ВОДА (Для будущих мелких течений) ---
+    // --- 3. НЕЙТРАЛЬНАЯ ВОДА ---
     return {
       vx: 0,
       vy: 0,
