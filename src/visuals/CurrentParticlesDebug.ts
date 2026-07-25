@@ -19,6 +19,7 @@ export class CurrentParticlesDebug {
   private readonly colorCold = 0x00aaff;
   private readonly worldSize = 8000;
 
+  // Принимаем ровно 2 аргумента, как вызывают в main.ts: (oceanCurrents, 1800)
   constructor(currentsManager: OceanCurrentsManager, count: number = 1800) {
     this.currentsManager = currentsManager;
     this.container = new PIXI.Container();
@@ -66,7 +67,7 @@ export class CurrentParticlesDebug {
     let ry = Math.random() * this.worldSize;
     let attempts = 0;
 
-    while (!this.currentsManager.isWater(rx, ry) && attempts < 20) {
+    while (!this.currentsManager.isWater(rx, ry) && attempts < 15) {
       rx = Math.random() * this.worldSize;
       ry = Math.random() * this.worldSize;
       attempts++;
@@ -104,13 +105,13 @@ export class CurrentParticlesDebug {
         }
       }
 
-      // Зацикливание по краям карты 8000x8000
+      // Зацикливание по краям карты
       if (p.x > this.worldSize) p.x = 0;
       if (p.x < 0) p.x = this.worldSize;
       if (p.y > this.worldSize) p.y = 0;
       if (p.y < 0) p.y = this.worldSize;
 
-      // Цветовая динамика по зонам
+      // Цветовая динамика
       switch (current.zoneType) {
         case CurrentZoneType.WARM:
           p.sprite.tint = this.colorWarm;
