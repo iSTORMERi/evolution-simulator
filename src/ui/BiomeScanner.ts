@@ -127,20 +127,27 @@ export class BiomeScanner {
     const zone = this.currentSelectedZone;
     const params = zone.params;
 
-    // Получаем текущее время суток от LightingController
+    // Получаем текущее время суток от LightingController (в часах: 0.0 - 24.0)
     const currentHour = typeof (this.lightingController as any).getCurrentHours === 'function'
       ? (this.lightingController as any).getCurrentHours()
       : 12;
 
-    // 1. Динамический расчёт света (солнце от 06:00 до 18:00, ночью остаточные ~3% от Луны)
-    const lightSunAngle = ((currentHour - 6) / 12) * Math.PI;
-    const rawLightFactor = Math.max(0.03, Math.sin(lightSunAngle));
-    const currentLightVal = params.baseLight * rawLightFactor;
+    // 1. Явный расчёт солнечного света (только с 06:00 до 18:00)
+    let sunFactor = 0;
+    if (currentHour >= 6 && currentHour <= 18) {
+      const dayProgress = (currentHour - 6) / 12; // от 0 до 1
+      sunFactor = Math.sin(dayProgress * Math.PI); // синусоида дня (0 -> 1 -> 0)
+    }
+
+    // Минимальный ночной свет от Луны -- 3% (0.03), дневной максимум -- 100% (1.0)
+    const effectiveLightFactor = Math.max(0.03, sunFactor);
+    const currentLightVal = params.baseLight * effectiveLightFactor;
     const lightPercent = Math.round(currentLightVal * 100);
 
-    // 2. Динамический расчёт температуры от Солнца (амплитуда ±3 °C, пик нагрева около 15:00)
-    const tempSunAngle = ((currentHour - 9) / 12) * Math.PI;
-    const deltaTempSun = Math.sin(tempSunAngle) * 3.0; // Максимальное отклонение ±3 °C
+    // 2. Гладкий 24-часовой расчёт температуры от Солнца
+    // Пик прогрева в 14:00 (+3 °C), минимум предрассветный в 02:00 (-3 °C)
+    const tempAngle = ((currentHour - 2) / 24) * 2 * Math.PI;
+    const deltaTempSun = -Math.cos(tempAngle) * 3.0;
     const currentTemp = (params.baseTemperature + (params.tempSensitivity * deltaTempSun)).toFixed(1);
 
     this.tooltipElement.innerHTML = `
