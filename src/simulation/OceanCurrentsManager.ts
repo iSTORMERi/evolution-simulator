@@ -21,9 +21,8 @@ export class OceanCurrentsManager {
   private readonly centerPoint = 4000;
   private readonly GRID_SIZE = 200;
 
-  // По умолчанию (пока картинка грузится) считаем всё водой (fill 1)
   private waterGrid: Uint8Array = new Uint8Array(200 * 200).fill(1);
-  private zoneGrid: Uint8Array = new Uint8Array(200 * 200).fill(1); // 1: MIXED
+  private zoneGrid: Uint8Array = new Uint8Array(200 * 200).fill(1);
   
   private waterSpawnPoints: { x: number; y: number }[] = [];
   public isLoaded: boolean = false;
@@ -38,12 +37,12 @@ export class OceanCurrentsManager {
   private async initMaskGrid(): Promise<void> {
     try {
       const img = new Image();
-      img.crossOrigin = 'anonymous';
+      // Отключаем crossOrigin для локальных ассетов на GitHub Pages (решает проблемы WebKit Safari)
       img.src = 'assets/ocean_zones_mask.png';
 
       await new Promise<void>((resolve, reject) => {
         img.onload = () => resolve();
-        img.onerror = () => reject(new Error('Mask image not found or blocked'));
+        img.onerror = () => reject(new Error('Mask image not found'));
       });
 
       const canvas = document.createElement('canvas');
@@ -58,9 +57,9 @@ export class OceanCurrentsManager {
 
       this.buildGrids(imgData);
       this.isLoaded = true;
-      console.log(`[CurrentsManager] Маска загружена! Найдено точек воды: ${this.waterSpawnPoints.length}`);
+      console.log(`[CurrentsManager] Сетка построена. Точек воды: ${this.waterSpawnPoints.length}`);
     } catch (e) {
-      console.warn('[CurrentsManager] Используется процедурный фоллбэк:', e);
+      console.warn('[CurrentsManager] Ошибка маски, задействован фоллбэк:', e);
       this.buildFallbackGrid();
       this.isLoaded = true;
     }
@@ -78,12 +77,35 @@ export class OceanCurrentsManager {
         const r = data[i];
         const g = data[i + 1];
         const b = data[i + 2];
+        const a = data[i + 3];
 
-        const hex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
         const gridIdx = gy * this.GRID_SIZE + gx;
 
-        // Проверка суши (с запасом по расстоянию цвета)
-        if (this.colorDistance(hex, LAND_ZONE_CONFIG.hexColor) < 90) {
+        // Прозрачные пиксели -- всегда суша
+        if (a < 50) {
+          this.waterGrid[gridIdx] = 0;
+          continue;
+        }
+
+        const hex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+
+        // Расстояние до цвета суши
+        const landDist = this.colorDistance(hex, LAND_ZONE_CONFIG.hexColor);
+        
+        // Поиск ближайшей океанической зоны
+        let minOceanDist = Infinity;
+        let closestOceanZone = OCEAN_ZONES_CONFIG[0];
+
+        for (const zone of OCEAN_ZONES_CONFIG) {
+          const dist = this.colorDistance(hex, zone.hexColor);
+          if (dist < minOceanDist) {
+            minOceanDist = dist;
+            closestOceanZone = zone;
+          }
+        }
+
+        // Относительное сравнение: к чему пиксель БЛИЖЕ -- к суше или к морю?
+        if (landDist < minOceanDist) {
           this.waterGrid[gridIdx] = 0; // Суша
         } else {
           this.waterGrid[gridIdx] = 1; // Вода
@@ -93,7 +115,7 @@ export class OceanCurrentsManager {
             y: (gy + Math.random()) * cellHeight
           });
 
-          this.zoneGrid[gridIdx] = this.resolveZoneIndex(hex);
+          this.zoneGrid[gridIdx] = this.resolveZoneIndexFromConfig(closestOceanZone.id);
         }
       }
     }
@@ -123,21 +145,10 @@ export class OceanCurrentsManager {
     }
   }
 
-  private resolveZoneIndex(hex: string): number {
-    let closestZone = OCEAN_ZONES_CONFIG[0];
-    let minDistance = Infinity;
-
-    for (const zone of OCEAN_ZONES_CONFIG) {
-      const dist = this.colorDistance(hex, zone.hexColor);
-      if (dist < minDistance) {
-        minDistance = dist;
-        closestZone = zone;
-      }
-    }
-
-    const zoneId = closestZone.id.toLowerCase();
-    if (zoneId.includes('shallow') || zoneId.includes('shelf')) return 0; // WARM
-    if (zoneId.includes('trench') || zoneId.includes('abyssal')) return 2; // COLD
+  private resolveZoneIndexFromConfig(zoneId: string): number {
+    const id = zoneId.toLowerCase();
+    if (id.includes('shallow') || id.includes('shelf')) return 0; // WARM
+    if (id.includes('trench') || id.includes('abyssal')) return 2; // COLD
     return 1; // MIXED
   }
 
@@ -167,7 +178,6 @@ export class OceanCurrentsManager {
       const idx = Math.floor(Math.random() * this.waterSpawnPoints.length);
       return this.waterSpawnPoints[idx];
     }
-    // Равномерный случайный спавн по всему миру, пока не готова сетка
     return {
       x: Math.random() * this.worldWidth,
       y: Math.random() * this.worldHeight
@@ -180,8 +190,9 @@ export class OceanCurrentsManager {
     const nx = (x - this.centerPoint) / this.centerPoint;
     const ny = (y - this.centerPoint) / this.centerPoint;
 
-    let vx = -ny * 1.1;
-    let vy = nx * 0.9;
+    // Круговое вращение с легкой синусоидальной волной для органика-эффекта
+    let vx = -ny * 1.1 + Math.sin(y * 0.005) * 0.2;
+    let vy = nx * 0.9 + Math.cos(x * 0.005) * 0.2;
 
     const len = Math.hypot(vx, vy) || 1;
     vx = (vx / len) * this.baseSpeed;

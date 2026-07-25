@@ -4,6 +4,8 @@ import { OceanCurrentsManager, CurrentZoneType } from '../simulation/OceanCurren
 interface Particle {
   x: number;
   y: number;
+  life: number;
+  maxLife: number;
   sprite: PIXI.Sprite;
 }
 
@@ -19,11 +21,11 @@ export class CurrentParticlesDebug {
   private readonly colorCold = 0x00aaff;
   private readonly worldSize = 8000;
 
-  constructor(currentsManager: OceanCurrentsManager, count: number = 1800) {
+  constructor(currentsManager: OceanCurrentsManager, count: number = 2200) {
     this.currentsManager = currentsManager;
     this.container = new PIXI.Container();
 
-    this.particleTexture = this.generateCircleTexture(4); // Чуть увеличим размер радиуса для видимости
+    this.particleTexture = this.generateCircleTexture(3);
     this.initParticles(count);
   }
 
@@ -47,17 +49,26 @@ export class CurrentParticlesDebug {
   private initParticles(count: number): void {
     for (let i = 0; i < count; i++) {
       const sprite = new PIXI.Sprite(this.particleTexture);
-      
       sprite.anchor.set(0.5);
-      sprite.alpha = 0.85;
 
       const pos = this.currentsManager.getRandomWaterPosition();
-
       sprite.position.set(pos.x, pos.y);
 
+      const maxLife = 4 + Math.random() * 4; // Время жизни 4-8 секунд
+      const life = Math.random() * maxLife;  // Случайный фазовый сдвиг при старте
+
       this.container.addChild(sprite);
-      this.particles.push({ x: pos.x, y: pos.y, sprite });
+      this.particles.push({ x: pos.x, y: pos.y, life, maxLife, sprite });
     }
+  }
+
+  private respawnParticle(p: Particle): void {
+    const pos = this.currentsManager.getRandomWaterPosition();
+    p.x = pos.x;
+    p.y = pos.y;
+    p.life = 0;
+    p.maxLife = 4 + Math.random() * 4;
+    p.sprite.position.set(p.x, p.y);
   }
 
   public update(deltaSeconds: number): void {
@@ -65,6 +76,14 @@ export class CurrentParticlesDebug {
 
     for (let i = 0; i < total; i++) {
       const p = this.particles[i];
+      p.life += deltaSeconds;
+
+      // Респавн по истечении времени жизни (обеспечивает плотное покрытие всего океана)
+      if (p.life >= p.maxLife) {
+        this.respawnParticle(p);
+        continue;
+      }
+
       const current = this.currentsManager.getCurrentAt(p.x, p.y);
 
       const dx = current.vx * deltaSeconds;
@@ -73,26 +92,27 @@ export class CurrentParticlesDebug {
       const nextX = p.x + dx;
       const nextY = p.y + dy;
 
-      // Если маска ещё не загрузилась или точка в воде -- двигаемся дальше
+      // Строгая проверка: если следующий шаг ведет на сушу -- респавним частицу!
       if (this.currentsManager.isWater(nextX, nextY)) {
         p.x = nextX;
         p.y = nextY;
-      } else if (this.currentsManager.isWater(nextX, p.y)) {
-        p.x = nextX;
-      } else if (this.currentsManager.isWater(p.x, nextY)) {
-        p.y = nextY;
       } else {
-        // Если наткнулись на сушу -- респавнимся в случайную точку океана
-        const newPos = this.currentsManager.getRandomWaterPosition();
-        p.x = newPos.x;
-        p.y = newPos.y;
+        this.respawnParticle(p);
+        continue;
       }
 
-      // Зацикливание по границам мира
-      if (p.x > this.worldSize) p.x = 0;
-      if (p.x < 0) p.x = this.worldSize;
-      if (p.y > this.worldSize) p.y = 0;
-      if (p.y < 0) p.y = this.worldSize;
+      // Зацикливание по краям карты
+      if (p.x > this.worldSize || p.x < 0 || p.y > this.worldSize || p.y < 0) {
+        this.respawnParticle(p);
+        continue;
+      }
+
+      // Прозрачность с мягким проявлением и затуханием (Fade In / Fade Out)
+      const progress = p.life / p.maxLife;
+      let alpha = 0.85;
+      if (progress < 0.2) alpha = (progress / 0.2) * 0.85;
+      if (progress > 0.8) alpha = ((1 - progress) / 0.2) * 0.85;
+      p.sprite.alpha = alpha;
 
       // Окрашивание
       switch (current.zoneType) {
