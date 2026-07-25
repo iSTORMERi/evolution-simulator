@@ -66,11 +66,19 @@ async function initApp() {
 
     // 1. Создание карты мира
     const worldMap = new WorldMap(WORLD_WIDTH, WORLD_HEIGHT);
+    
+    // Включаем сортировку слоев внутри контейнера мира
+    worldMap.container.sortableChildren = true;
+    
     app.stage.addChild(worldMap.container);
 
-    // 1.1. Инициализация течений и добавление контейнера частиц в worldMap
+    // 1.1. Инициализация течений и установка частиц ПОВЕРХ PNG карты
     const oceanCurrents = new OceanCurrentsManager(WORLD_WIDTH, WORLD_HEIGHT);
     const debugParticles = new CurrentParticlesDebug(oceanCurrents, 1800);
+    
+    // Выставляем высокий zIndex для частиц течения
+    debugParticles.container.zIndex = 100;
+    
     worldMap.container.addChild(debugParticles.container);
 
     // 2. Инициализация камеры
