@@ -19,12 +19,11 @@ export class OceanCurrentsManager {
   public baseSpeed: number = 200;
 
   private readonly centerPoint = 4000;
-  
-  // Увеличиваем точность физической сетки в 4 раза! (1 ячейка = 10x10 пикселей)
-  private readonly GRID_SIZE = 800;
+  private readonly MASK_SIZE = 1000; // Разрешение сканера по оси Y
 
-  private waterGrid: Uint8Array = new Uint8Array(800 * 800).fill(1);
-  private zoneGrid: Uint8Array = new Uint8Array(800 * 800).fill(1);
+  // Тот самый барьер: хранит максимальный разрешенный X для каждого Y
+  private shorelineLimits: Float32Array = new Float32Array(this.MASK_SIZE).fill(0);
+  private zoneGrid: Uint8Array = new Uint8Array(this.MASK_SIZE * this.MASK_SIZE).fill(1);
   
   private waterSpawnPoints: { x: number; y: number }[] = [];
   public isLoaded: boolean = false;
@@ -32,134 +31,117 @@ export class OceanCurrentsManager {
   constructor(worldWidth: number = 8000, worldHeight: number = 8000) {
     this.worldWidth = worldWidth;
     this.worldHeight = worldHeight;
-    this.initMaskGrid();
+    this.initScanner();
   }
 
-  private async initMaskGrid(): Promise<void> {
+  private async initScanner(): Promise<void> {
     try {
       const img = new Image();
-      img.src = 'assets/ocean_zones_mask.png'; // Без crossOrigin для локалки
+      // Обязательно для обхода блокировок на GitHub Pages
+      img.crossOrigin = 'anonymous'; 
+      img.src = 'assets/ocean_zones_mask.png';
 
       await new Promise<void>((resolve, reject) => {
         img.onload = () => resolve();
-        img.onerror = () => reject(new Error('Mask image not found'));
+        img.onerror = () => reject(new Error('Mask image failed to load'));
       });
 
       const canvas = document.createElement('canvas');
-      canvas.width = this.GRID_SIZE;
-      canvas.height = this.GRID_SIZE;
+      canvas.width = this.MASK_SIZE;
+      canvas.height = this.MASK_SIZE;
 
       const ctx = canvas.getContext('2d', { willReadFrequently: true });
       if (!ctx) throw new Error('Canvas context unavailable');
 
-      // КРИТИЧЕСКИ ВАЖНО: Отключаем сглаживание пикселей при сжатии
       ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(img, 0, 0, this.MASK_SIZE, this.MASK_SIZE);
+      const imgData = ctx.getImageData(0, 0, this.MASK_SIZE, this.MASK_SIZE);
 
-      ctx.drawImage(img, 0, 0, this.GRID_SIZE, this.GRID_SIZE);
-      const imgData = ctx.getImageData(0, 0, this.GRID_SIZE, this.GRID_SIZE);
-
-      this.buildGrids(imgData);
+      this.runLeftToRightScanner(imgData);
       
-      // КРИТИЧЕСКИ ВАЖНО: Применяем эрозию (отступ от берега)
-      this.applyCoastalErosion(2); // 2 ячейки = отступ 20 пикселей от берега
-
       this.isLoaded = true;
-      console.log(`[CurrentsManager] Сетка 800x800 построена. Эрозия применена.`);
+      console.log(`[Scanner] Береговая линия построена. Безопасных точек спавна: ${this.waterSpawnPoints.length}`);
     } catch (e) {
-      console.warn('[CurrentsManager] Ошибка маски, задействован фоллбэк:', e);
-      this.buildFallbackGrid();
+      console.error('[Scanner] КРИТИЧЕСКАЯ ОШИБКА ЧТЕНИЯ МАСКИ. Частицы могут вести себя хаотично!', e);
+      this.buildEmergencyWall();
       this.isLoaded = true;
     }
   }
 
-  private buildGrids(imgData: ImageData): void {
+  /**
+   * Твоя идея: Идем слева направо и фиксируем стену.
+   */
+  private runLeftToRightScanner(imgData: ImageData): void {
     const data = imgData.data;
+    const cellWidth = this.worldWidth / this.MASK_SIZE;
+    const cellHeight = this.worldHeight / this.MASK_SIZE;
     
-    for (let gy = 0; gy < this.GRID_SIZE; gy++) {
-      for (let gx = 0; gx < this.GRID_SIZE; gx++) {
-        const i = (gy * this.GRID_SIZE + gx) * 4;
+    // Насколько далеко от реального берега обрывать воду (в пикселях маски)
+    const EROSION_BUFFER = 5; 
+
+    for (let gy = 0; gy < this.MASK_SIZE; gy++) {
+      let maxWaterX = 0;
+      let hitCoast = false;
+
+      // Сканируем ряд слева направо
+      for (let gx = 0; gx < this.MASK_SIZE; gx++) {
+        const i = (gy * this.MASK_SIZE + gx) * 4;
         const r = data[i];
         const g = data[i + 1];
         const b = data[i + 2];
         const a = data[i + 3];
 
-        const gridIdx = gy * this.GRID_SIZE + gx;
-
-        // Если пиксель хоть немного прозрачный -- это железобетонная суша
-        if (a < 200) {
-          this.waterGrid[gridIdx] = 0;
-          continue;
-        }
-
         const hex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
         
-        // Жесткий порог для суши
-        const landDist = this.colorDistance(hex, LAND_ZONE_CONFIG.hexColor);
-        if (landDist < 60) {
-          this.waterGrid[gridIdx] = 0;
-        } else {
-          this.waterGrid[gridIdx] = 1;
-          this.zoneGrid[gridIdx] = this.resolveZoneIndex(hex);
+        // Критерии суши: прозрачность или цвет песка
+        const isTransparent = a < 150;
+        const isLand = this.colorDistance(hex, LAND_ZONE_CONFIG.hexColor) < 70;
+
+        if (isTransparent || isLand) {
+          // МЫ ДОШЛИ ДО БЕРЕГА! Делаем шаг назад (эрозия) и останавливаем скан ряда
+          maxWaterX = Math.max(0, gx - EROSION_BUFFER);
+          hitCoast = true;
+          break; 
+        }
+
+        // Если это вода, просто сохраняем тип зоны для цвета течения
+        this.zoneGrid[gy * this.MASK_SIZE + gx] = this.resolveZoneIndex(hex);
+      }
+
+      // Если в этом ряду суши вообще нет, вода идет до упора
+      if (!hitCoast) {
+        maxWaterX = this.MASK_SIZE - EROSION_BUFFER;
+      }
+
+      // Записываем абсолютную границу X для данного ряда Y в мировых координатах
+      this.shorelineLimits[gy] = (maxWaterX / this.MASK_SIZE) * this.worldWidth;
+
+      // Равномерно засеиваем левую (океаническую) часть точками спавна
+      if (maxWaterX > 0) {
+        const spawnsInRow = Math.max(1, Math.floor(maxWaterX / 15));
+        for (let s = 0; s < spawnsInRow; s++) {
+          this.waterSpawnPoints.push({
+            x: (Math.random() * maxWaterX / this.MASK_SIZE) * this.worldWidth,
+            y: (gy + Math.random()) * cellHeight
+          });
         }
       }
     }
   }
 
-  /**
-   * АЛГОРИТМ ЭРОЗИИ БЕРЕГА
-   * Отодвигает невидимую границу океана подальше от берега.
-   */
-  private applyCoastalErosion(bufferSize: number): void {
-    const newWaterGrid = new Uint8Array(this.waterGrid);
-    const cellWidth = this.worldWidth / this.GRID_SIZE;
-    const cellHeight = this.worldHeight / this.GRID_SIZE;
-    this.waterSpawnPoints = []; // Очищаем и собираем только БЕЗОПАСНЫЕ точки
-
-    for (let gy = 0; gy < this.GRID_SIZE; gy++) {
-      for (let gx = 0; gx < this.GRID_SIZE; gx++) {
-        const idx = gy * this.GRID_SIZE + gx;
-        
-        // Если это уже суша, пропускаем
-        if (this.waterGrid[idx] === 0) continue;
-
-        let isSafeWater = true;
-
-        // Проверяем соседей в радиусе bufferSize
-        for (let dy = -bufferSize; dy <= bufferSize; dy++) {
-          for (let dx = -bufferSize; dx <= bufferSize; dx++) {
-            const ny = gy + dy;
-            const nx = gx + dx;
-            
-            // Если вышли за границы мира или сосед -- суша
-            if (ny < 0 || ny >= this.GRID_SIZE || nx < 0 || nx >= this.GRID_SIZE) {
-              isSafeWater = false;
-              break;
-            }
-            
-            if (this.waterGrid[ny * this.GRID_SIZE + nx] === 0) {
-              isSafeWater = false;
-              break;
-            }
-          }
-          if (!isSafeWater) break;
-        }
-
-        if (!isSafeWater) {
-          // Превращаем опасную прибрежную воду в "сушу" для коллайдеров
-          newWaterGrid[idx] = 0;
-        } else {
-          // Сохраняем только безопасные точки для спавна (разреживаем кэш для экономии памяти)
-          if (Math.random() > 0.5) {
-            this.waterSpawnPoints.push({
-              x: (gx + Math.random()) * cellWidth,
-              y: (gy + Math.random()) * cellHeight
-            });
-          }
-        }
-      }
+  // Аварийный барьер, если маска не загрузилась (строгая стена по диагонали)
+  private buildEmergencyWall(): void {
+    this.waterSpawnPoints = [];
+    for (let gy = 0; gy < this.MASK_SIZE; gy++) {
+      // Искусственный диагональный берег для тестов
+      const limitX = this.worldWidth - (gy / this.MASK_SIZE) * (this.worldWidth * 0.5);
+      this.shorelineLimits[gy] = limitX;
+      
+      this.waterSpawnPoints.push({
+        x: Math.random() * limitX,
+        y: (gy / this.MASK_SIZE) * this.worldHeight
+      });
     }
-
-    this.waterGrid = newWaterGrid; // Заменяем сетку на безопасную
   }
 
   private resolveZoneIndex(hex: string): number {
@@ -192,34 +174,20 @@ export class OceanCurrentsManager {
     return Math.sqrt((r1 - r2) ** 2 + (g1 - g2) ** 2 + (b1 - b2) ** 2);
   }
 
-  private buildFallbackGrid(): void {
-    // Упрощенный фоллбэк для 800x800
-    const cellWidth = this.worldWidth / this.GRID_SIZE;
-    const cellHeight = this.worldHeight / this.GRID_SIZE;
-    this.waterSpawnPoints = [];
-
-    for (let gy = 0; gy < this.GRID_SIZE; gy++) {
-      for (let gx = 0; gx < this.GRID_SIZE; gx++) {
-        const wx = (gx + 0.5) * cellWidth;
-        const wy = (gy + 0.5) * cellHeight;
-        const dist = Math.hypot(wx - this.centerPoint, wy - this.centerPoint);
-        
-        const gridIdx = gy * this.GRID_SIZE + gx;
-        const isWater = dist > 600 && dist < 3800;
-
-        this.waterGrid[gridIdx] = isWater ? 1 : 0;
-        if (isWater) this.waterSpawnPoints.push({ x: wx, y: wy });
-      }
-    }
-  }
-
+  /**
+   * СВЕРХБЫСТРАЯ ПРОВЕРКА ВОДЫ НА ОСНОВЕ СТЕНЫ
+   */
   public isWater(x: number, y: number): boolean {
     if (x < 0 || x >= this.worldWidth || y < 0 || y >= this.worldHeight) return false;
 
-    const gx = Math.floor((x / this.worldWidth) * this.GRID_SIZE);
-    const gy = Math.floor((y / this.worldHeight) * this.GRID_SIZE);
+    // Находим наш ряд Y в сканере
+    const scanY = Math.floor((y / this.worldHeight) * this.MASK_SIZE);
     
-    return this.waterGrid[gy * this.GRID_SIZE + gx] === 1;
+    // Получаем границу для этого ряда
+    const limitX = this.shorelineLimits[scanY];
+
+    // Частица жива только если она СЛЕВА от стены!
+    return x < limitX; 
   }
 
   public getRandomWaterPosition(): { x: number; y: number } {
@@ -243,9 +211,9 @@ export class OceanCurrentsManager {
     vx = (vx / len) * this.baseSpeed;
     vy = (vy / len) * this.baseSpeed;
 
-    const gx = Math.floor(Math.max(0, Math.min(1, x / this.worldWidth)) * (this.GRID_SIZE - 1));
-    const gy = Math.floor(Math.max(0, Math.min(1, y / this.worldHeight)) * (this.GRID_SIZE - 1));
-    const zoneIdx = this.zoneGrid[gy * this.GRID_SIZE + gx];
+    const gx = Math.floor(Math.max(0, Math.min(1, x / this.worldWidth)) * (this.MASK_SIZE - 1));
+    const gy = Math.floor(Math.max(0, Math.min(1, y / this.worldHeight)) * (this.MASK_SIZE - 1));
+    const zoneIdx = this.zoneGrid[gy * this.MASK_SIZE + gx];
 
     let zoneType = CurrentZoneType.MIXED;
     if (zoneIdx === 0) zoneType = CurrentZoneType.WARM;
