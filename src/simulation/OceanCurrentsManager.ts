@@ -21,7 +21,7 @@ export class OceanCurrentsManager {
   private readonly centerPoint = 4000;
   private readonly MASK_SIZE = 1000; // Разрешение сканера по оси Y
 
-  // Хранит максимальный разрешенный X для каждого ряда Y
+  // Тот самый барьер: хранит максимальный разрешенный X для каждого Y
   private shorelineLimits: Float32Array = new Float32Array(this.MASK_SIZE).fill(0);
   private zoneGrid: Uint8Array = new Uint8Array(this.MASK_SIZE * this.MASK_SIZE).fill(1);
   
@@ -37,6 +37,7 @@ export class OceanCurrentsManager {
   private async initScanner(): Promise<void> {
     try {
       const img = new Image();
+      // Обязательно для обхода блокировок на GitHub Pages
       img.crossOrigin = 'anonymous'; 
       img.src = 'assets/ocean_zones_mask.png';
 
@@ -68,23 +69,24 @@ export class OceanCurrentsManager {
   }
 
   /**
-   * Снайперский скан слева направо с остановкой точно на цвете #F6D896
+   * Сканирование слева направо с точным детектором пограничного цвета песка #F6D896
    */
   private runLeftToRightScanner(imgData: ImageData): void {
     const data = imgData.data;
     const cellWidth = this.worldWidth / this.MASK_SIZE;
     const cellHeight = this.worldHeight / this.MASK_SIZE;
     
-    // Цвет пограничной полоски из ibisPaint
+    // Точный цвет кромки песка из ibisPaint
     const SHORE_EDGE_HEX = '#F6D896';
-    
-    // Минимальный отступ (2 ячейки маски = 16px в мире)
+
+    // Минимальный отступ в 2 пикселя маски (около 16px в игровом мире)
     const EROSION_BUFFER = 2; 
 
     for (let gy = 0; gy < this.MASK_SIZE; gy++) {
       let maxWaterX = 0;
       let hitCoast = false;
 
+      // Сканируем ряд слева направо
       for (let gx = 0; gx < this.MASK_SIZE; gx++) {
         const i = (gy * this.MASK_SIZE + gx) * 4;
         const r = data[i];
@@ -94,30 +96,33 @@ export class OceanCurrentsManager {
 
         const hex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
         
-        // 1. Точное попадание в кромку песка
-        const isShoreEdge = this.colorDistance(hex, SHORE_EDGE_HEX) < 25;
-        // 2. Страховка на случай прозрачных пикселей
-        const isTransparent = a < 150; 
-        // 3. Страховка на случай попадания в основной песок
-        const isMainLand = this.colorDistance(hex, LAND_ZONE_CONFIG.hexColor) < 80;
+        // 1. Прозрачность
+        const isTransparent = a < 150;
+        // 2. Детектор светлой пограничной полосы песка
+        const isShoreEdge = this.colorDistance(hex, SHORE_EDGE_HEX) < 30;
+        // 3. Детектор основного цвета суши (страховка)
+        const isLand = this.colorDistance(hex, LAND_ZONE_CONFIG.hexColor) < 70;
 
-        if (isTransparent || isShoreEdge || isMainLand) {
+        if (isTransparent || isShoreEdge || isLand) {
+          // Наткнулись на берег: останавливаем скан ряда и делаем аккуратный отступ
           maxWaterX = Math.max(0, gx - EROSION_BUFFER);
           hitCoast = true;
           break; 
         }
 
+        // Если это вода, сохраняем тип зоны
         this.zoneGrid[gy * this.MASK_SIZE + gx] = this.resolveZoneIndex(hex);
       }
 
+      // Если в этом ряду суши нет, вода идет до края
       if (!hitCoast) {
         maxWaterX = this.MASK_SIZE - EROSION_BUFFER;
       }
 
-      // Фиксируем барьер
+      // Записываем границу X в мировых координатах
       this.shorelineLimits[gy] = (maxWaterX / this.MASK_SIZE) * this.worldWidth;
 
-      // Создаем точки спавна в воде
+      // Точки спавна для частиц
       if (maxWaterX > 0) {
         const spawnsInRow = Math.max(1, Math.floor(maxWaterX / 15));
         for (let s = 0; s < spawnsInRow; s++) {
@@ -130,6 +135,7 @@ export class OceanCurrentsManager {
     }
   }
 
+  // Аварийный барьер, если маска не загрузилась
   private buildEmergencyWall(): void {
     this.waterSpawnPoints = [];
     for (let gy = 0; gy < this.MASK_SIZE; gy++) {
