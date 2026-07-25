@@ -2,16 +2,16 @@ import { WorldMap } from '../world/WorldMap';
 import { ZoneConfig } from '../world/types';
 
 export enum CurrentZoneType {
-  WARM = 'WARM',   // 🟧 Прибрежное теплое течение / Шельф
-  MIXED = 'MIXED', // 🟩 Зона смешивания
-  COLD = 'COLD'    // 🟦 Глубинное холодное течение
+  WARM = 'WARM',
+  MIXED = 'MIXED',
+  COLD = 'COLD'
 }
 
 export interface CurrentData {
   vx: number;
   vy: number;
   zoneType: CurrentZoneType;
-  zoneConfig: ZoneConfig;
+  zoneConfig?: ZoneConfig;
   isWater: boolean;
 }
 
@@ -24,22 +24,34 @@ export class OceanCurrentsManager {
   }
 
   /**
-   * Проверка: является ли точка водой (считывается из точной маски PNG)
+   * Безопасная проверка на воду с защитой от незагрузившейся маски
    */
   public isWater(x: number, y: number): boolean {
-    const zone = this.worldMap.getZoneAt(x, y);
-    return !zone.isLand;
+    try {
+      const zone = this.worldMap.getZoneAt(x, y);
+      return zone ? !zone.isLand : true;
+    } catch {
+      return true; // Если маска еще не готова -- считаем водой
+    }
   }
 
   public getCurrentAt(x: number, y: number): CurrentData {
-    const zone = this.worldMap.getZoneAt(x, y);
-    const isWater = !zone.isLand;
+    let zone: ZoneConfig | null = null;
+    let isWater = true;
 
-    // Центрированные координаты для создания базового круговорота в океане
+    try {
+      zone = this.worldMap.getZoneAt(x, y);
+      if (zone) {
+        isWater = !zone.isLand;
+      }
+    } catch {
+      isWater = true;
+    }
+
+    // Базовое вращение океанического круговорота
     const nx = (x - 4000) / 4000;
     const ny = (y - 4000) / 4000;
 
-    // Вектор циркуляции
     let vx = -ny * 1.1;
     let vy = nx * 0.9;
 
@@ -47,19 +59,20 @@ export class OceanCurrentsManager {
     vx = (vx / len) * this.baseSpeed;
     vy = (vy / len) * this.baseSpeed;
 
-    // Определяем визуальный тип течения на основе биома из WorldMap
     let zoneType = CurrentZoneType.MIXED;
-    if (zone.id.includes('shallow') || zone.id.includes('shelf')) {
-      zoneType = CurrentZoneType.WARM;
-    } else if (zone.id.includes('trench') || zone.id.includes('abyssal')) {
-      zoneType = CurrentZoneType.COLD;
+    if (zone) {
+      if (zone.id.includes('shallow') || zone.id.includes('shelf')) {
+        zoneType = CurrentZoneType.WARM;
+      } else if (zone.id.includes('trench') || zone.id.includes('abyssal')) {
+        zoneType = CurrentZoneType.COLD;
+      }
     }
 
     return {
       vx,
       vy,
       zoneType,
-      zoneConfig: zone,
+      zoneConfig: zone || undefined,
       isWater
     };
   }

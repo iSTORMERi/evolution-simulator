@@ -15,11 +15,11 @@ export class CurrentParticlesDebug {
   private currentsManager: OceanCurrentsManager;
   private worldMap: WorldMap;
 
-  private readonly colorWarm = 0xff7700;  // 🟧
-  private readonly colorMixed = 0x00ff88; // 🟩
-  private readonly colorCold = 0x00aaff;  // 🟦
+  private readonly colorWarm = 0xff7700;
+  private readonly colorMixed = 0x00ff88;
+  private readonly colorCold = 0x00aaff;
 
-  constructor(currentsManager: OceanCurrentsManager, worldMap: WorldMap, count: number = 2200) {
+  constructor(currentsManager: OceanCurrentsManager, worldMap: WorldMap, count: number = 2000) {
     this.currentsManager = currentsManager;
     this.worldMap = worldMap;
     this.container = new PIXI.Container();
@@ -29,26 +29,27 @@ export class CurrentParticlesDebug {
     this.initParticles(count);
   }
 
-  /**
-   * Точный спавн в воде по маске WorldMap
-   */
   private initParticles(count: number): void {
+    // Безопасный спавн без тяжелых вызовов getZoneAt при старте
     for (let i = 0; i < count; i++) {
-      this.particles.push(this.getRandomWaterPosition());
+      this.particles.push({
+        x: Math.random() * 8000,
+        y: Math.random() * 8000,
+        color: this.colorMixed
+      });
     }
   }
 
   private getRandomWaterPosition(): Particle {
-    let rx = 0;
-    let ry = 0;
+    let rx = Math.random() * 8000;
+    let ry = Math.random() * 8000;
     let attempts = 0;
 
-    // Подбираем случайную точку в воде
-    do {
+    while (!this.currentsManager.isWater(rx, ry) && attempts < 15) {
       rx = Math.random() * 8000;
       ry = Math.random() * 8000;
       attempts++;
-    } while (!this.currentsManager.isWater(rx, ry) && attempts < 100);
+    }
 
     return { x: rx, y: ry, color: this.colorMixed };
   }
@@ -66,32 +67,28 @@ export class CurrentParticlesDebug {
       const nextX = p.x + dx;
       const nextY = p.y + dy;
 
-      // --- АЛГОРИТМ ПРИБРЕЖНОГО СКОЛЬЖЕНИЯ ---
+      // Прибрежное скольжение
       if (this.currentsManager.isWater(nextX, nextY)) {
-        // Шаг свободен -- двигаемся по всей траектории
         p.x = nextX;
         p.y = nextY;
       } else {
-        // Упёрлись в берег! Пробуем скользить вдоль него по одной из осей
         if (this.currentsManager.isWater(nextX, p.y)) {
-          p.x = nextX; // Скольжение по горизонтали
+          p.x = nextX;
         } else if (this.currentsManager.isWater(p.x, nextY)) {
-          p.y = nextY; // Скольжение по вертикали
+          p.y = nextY;
         } else {
-          // Если застряли в «углу» суши -- телепортируем обратно в воду
           const newPos = this.getRandomWaterPosition();
           p.x = newPos.x;
           p.y = newPos.y;
         }
       }
 
-      // Телепортация при выходе за границы карты 8000x8000
+      // Границы мира 8000x8000
       if (p.x > 8000) p.x = 0;
       if (p.x < 0) p.x = 8000;
       if (p.y > 8000) p.y = 0;
       if (p.y < 0) p.y = 8000;
 
-      // Выбор цвета частицы по зоне
       switch (current.zoneType) {
         case CurrentZoneType.WARM:
           p.color = this.colorWarm;
@@ -104,10 +101,9 @@ export class CurrentParticlesDebug {
           break;
       }
 
-      // Отрисовка
       this.graphics
-        .circle(p.x, p.y, 3.2)
-        .fill({ color: p.color, alpha: 0.85 });
+        .circle(p.x, p.y, 3)
+        .fill({ color: p.color, alpha: 0.8 });
     }
   }
 }
