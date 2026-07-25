@@ -9,7 +9,8 @@ export enum CurrentZoneType {
   WARM = 'WARM',             // 🟠 Теплое течение (повернутый стадион справа)
   COLD = 'COLD',             // 🔵 Холодное течение (повернутый стадион слева)
   TRANSIT = 'TRANSIT',       // 🟡 Выносящие течения по бокам (желтые полумесяцы)
-  CONNECTING = 'CONNECTING'   // 🟢 Прямое соединительное течение в центре (зеленое)
+  CONNECTING = 'CONNECTING', // 🟢 Прямое соединительное течение в центре (зеленое)
+  DRIFT = 'DRIFT'            // 🌊 Локальный выносящий дрейф (подпитка магистралей)
 }
 
 export interface CurrentData {
@@ -24,7 +25,8 @@ export const ZONE_COLOR_MAP: Record<CurrentZoneType, string> = {
   [CurrentZoneType.WARM]: '#FF8C00',       // Оранжевый
   [CurrentZoneType.COLD]: '#00BFFF',       // Ледяной синий
   [CurrentZoneType.TRANSIT]: '#FFD700',    // Ярко-жёлтый
-  [CurrentZoneType.CONNECTING]: '#00FF66'  // Сочно-зелёный
+  [CurrentZoneType.CONNECTING]: '#00FF66', // Сочно-зелёный
+  [CurrentZoneType.DRIFT]: '#1e3a5f'       // Глубокий тёмно-морской (локальный дрейф)
 };
 
 interface Point2D {
@@ -41,6 +43,16 @@ export class OceanCurrentsManager {
   private shorelineLimits: Float32Array = new Float32Array(this.MASK_SIZE).fill(0);
   private waterSpawnPoints: Point2D[] = [];
   public isLoaded: boolean = false;
+
+  // Ключевые узловые центры магистральных течений для притяжения стоячей воды
+  private readonly MAIN_STREAM_ANCHORS: Point2D[] = [
+    { x: 2200, y: 2800 }, // Центр холодного стадиона
+    { x: 4200, y: 4200 }, // Центр теплого стадиона
+    { x: 2000, y: 1500 }, // Северный треугольник
+    { x: 3150, y: 3450 }, // Центральное зеленое русло
+    { x: 4500, y: 1100 }, // Верхний транзитный полумесяц
+    { x: 2600, y: 6300 }  // Нижний транзитный полумесяц
+  ];
 
   constructor(worldWidth: number = 8000, worldHeight: number = 8000) {
     this.worldWidth = worldWidth;
@@ -160,6 +172,33 @@ export class OceanCurrentsManager {
       return this.waterSpawnPoints[idx];
     }
     return { x: 500, y: 4000 };
+  }
+
+  /**
+   * Вектор притяжения стоячей воды к ближайшему магистральному руслу
+   */
+  private getDriftTowardsNearestStream(x: number, y: number): Point2D {
+    let minDistanceSq = Infinity;
+    let targetAnchor = this.MAIN_STREAM_ANCHORS[0];
+
+    for (const anchor of this.MAIN_STREAM_ANCHORS) {
+      const dx = anchor.x - x;
+      const dy = anchor.y - y;
+      const distSq = dx * dx + dy * dy;
+      if (distSq < minDistanceSq) {
+        minDistanceSq = distSq;
+        targetAnchor = anchor;
+      }
+    }
+
+    const dirX = targetAnchor.x - x;
+    const dirY = targetAnchor.y - y;
+    const len = Math.hypot(dirX, dirY) || 1;
+
+    return {
+      x: dirX / len,
+      y: dirY / len
+    };
   }
 
   /**
@@ -485,8 +524,8 @@ export class OceanCurrentsManager {
 
     // --- 6. ПРЯМОЕ ЗЕЛЕНОЕ ТЕЧЕНИЕ В ЦЕНТРЕ (Из холодного в теплое) ---
     const centralGreenStream = {
-      p0: { x: 2300, y: 2800 }, // Из правого края/центра холодного овального течения
-      p1: { x: 4000, y: 4100 }, // В левый край/центр теплого овального течения
+      p0: { x: 2300, y: 2800 },
+      p1: { x: 4000, y: 4100 },
       radius: 650
     };
 
@@ -501,20 +540,24 @@ export class OceanCurrentsManager {
       totalVx += connectingVec.x;
       totalVy += connectingVec.y;
       activeCount++;
-      connectingWeight += 2.0; // Высокий приоритет для зеленой окраски
+      connectingWeight += 2.0;
     }
 
-    // --- РЕЗУЛЬТИРУЮЩИЙ РАСЧЕТ И ВЕКТОРНОЕ СЛОЖЕНИЕ ---
+    // --- ОБРАБОТКА СТОЯЧЕЙ ВОДЫ (ЛОКАЛЬНЫЙ ВЫНОСНОЙ ДРЕЙФ) ---
     if (activeCount === 0) {
+      const driftVec = this.getDriftTowardsNearestStream(x, y);
+      const driftSpeed = this.baseSpeed * 0.35; // Мягкое течение для подпитки магистралей
+
       return {
-        vx: 0,
-        vy: 0,
-        zoneType: CurrentZoneType.COLD,
-        targetColor: '#1e293b',
+        vx: driftVec.x * driftSpeed,
+        vy: driftVec.y * driftSpeed,
+        zoneType: CurrentZoneType.DRIFT,
+        targetColor: ZONE_COLOR_MAP[CurrentZoneType.DRIFT],
         isWater: true
       };
     }
 
+    // --- РЕЗУЛЬТИРУЮЩИЙ РАСЧЕТ И ВЕКТОРНОЕ СЛОЖЕНИЕ ДЛЯ МАГИСТРАЛЕЙ ---
     const combinedLen = Math.hypot(totalVx, totalVy);
     const speedBoost = activeCount > 1 ? 1.15 : 1.0;
     const finalVx = (totalVx / (combinedLen || 1)) * this.baseSpeed * speedBoost;
