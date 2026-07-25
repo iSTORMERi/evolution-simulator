@@ -23,7 +23,7 @@ export class CurrentParticlesDebug {
     this.currentsManager = currentsManager;
     this.container = new PIXI.Container();
 
-    this.particleTexture = this.generateCircleTexture(3);
+    this.particleTexture = this.generateCircleTexture(4); // Чуть увеличим размер радиуса для видимости
     this.initParticles(count);
   }
 
@@ -49,10 +49,8 @@ export class CurrentParticlesDebug {
       const sprite = new PIXI.Sprite(this.particleTexture);
       
       sprite.anchor.set(0.5);
-      sprite.alpha = 0.8;
-      sprite.tint = this.colorMixed;
+      sprite.alpha = 0.85;
 
-      // Мгновенный спавн на воде из пресетного массива
       const pos = this.currentsManager.getRandomWaterPosition();
 
       sprite.position.set(pos.x, pos.y);
@@ -75,7 +73,7 @@ export class CurrentParticlesDebug {
       const nextX = p.x + dx;
       const nextY = p.y + dy;
 
-      // Прибрежное скольжение с защитой от застревания
+      // Если маска ещё не загрузилась или точка в воде -- двигаемся дальше
       if (this.currentsManager.isWater(nextX, nextY)) {
         p.x = nextX;
         p.y = nextY;
@@ -84,7 +82,7 @@ export class CurrentParticlesDebug {
       } else if (this.currentsManager.isWater(p.x, nextY)) {
         p.y = nextY;
       } else {
-        // Мгновенный перенос в случайную точку океана
+        // Если наткнулись на сушу -- респавнимся в случайную точку океана
         const newPos = this.currentsManager.getRandomWaterPosition();
         p.x = newPos.x;
         p.y = newPos.y;
@@ -96,7 +94,7 @@ export class CurrentParticlesDebug {
       if (p.y > this.worldSize) p.y = 0;
       if (p.y < 0) p.y = this.worldSize;
 
-      // Окрашивание в цвет температуры течения
+      // Окрашивание
       switch (current.zoneType) {
         case CurrentZoneType.WARM:
           p.sprite.tint = this.colorWarm;
