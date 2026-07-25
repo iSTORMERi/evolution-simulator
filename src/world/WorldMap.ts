@@ -17,15 +17,18 @@ export class WorldMap {
   private maskCtx: CanvasRenderingContext2D | null;
   private maskData?: ImageData;
 
-  // Canvas, CanvasSource и спрайт для подсвечивающего оверлея
+  // Основной Canvas для подсвечивающего оверлея
   private highlightCanvas: HTMLCanvasElement;
   private highlightCtx: CanvasRenderingContext2D | null;
   private highlightCanvasSource?: PIXI.CanvasSource;
   private highlightSprite?: PIXI.Sprite;
 
-  // Временный буферный Canvas для формирования формы биома до размытия
+  // Промежуточный буфер для билинейного сглаживания граней
   private tempCanvas: HTMLCanvasElement;
   private tempCtx: CanvasRenderingContext2D | null;
+
+  // Аппаратный WebGL-фильтр PixiJS v8
+  private blurFilter: PIXI.BlurFilter;
 
   private isLoaded: boolean = false;
 
@@ -34,7 +37,7 @@ export class WorldMap {
 
   private targetMarker: PIXI.Graphics;
   
-  // Кэш для цвета подсветки, если клик произошел до загрузки ассетов
+  // Кэш цвета подсветки, если клик произошел до загрузки ассетов
   private pendingHighlightColor: string | null = null;
 
   constructor(width: number, height: number) {
@@ -52,6 +55,10 @@ export class WorldMap {
 
     this.tempCanvas = document.createElement('canvas');
     this.tempCtx = this.tempCanvas.getContext('2d');
+
+    // Настройка BlurFilter под API PixiJS v8
+    this.blurFilter = new PIXI.BlurFilter({ quality: 3 });
+    this.blurFilter.blur = 15;
 
     this.shoreEffects = new ShoreEffects();
     this.waves = new Waves();
@@ -78,6 +85,9 @@ export class WorldMap {
       this.highlightSprite = new PIXI.Sprite(highlightTexture);
       this.highlightSprite.width = this.worldWidth;
       this.highlightSprite.height = this.worldHeight;
+
+      // Применяем WebGL BlurFilter
+      this.highlightSprite.filters = [this.blurFilter];
       this.container.addChild(this.highlightSprite);
 
       // 3. Слои берега, волн и маркера
@@ -102,8 +112,9 @@ export class WorldMap {
       this.highlightCanvas.width = img.width;
       this.highlightCanvas.height = img.height;
 
-      this.tempCanvas.width = img.width;
-      this.tempCanvas.height = img.height;
+      // Промежуточный буфер в половинном разрешении для мягкого первичного сглаживания
+      this.tempCanvas.width = Math.max(1, Math.floor(img.width / 2));
+      this.tempCanvas.height = Math.max(1, Math.floor(img.height / 2));
 
       if (this.maskCtx) {
         this.maskCtx.drawImage(img, 0, 0);
@@ -157,7 +168,14 @@ export class WorldMap {
   }
 
   /**
-   * Генерация мягкого размытого оверлея подсветки (без острых углов и лесенок)
+   * Нормализация HEX строк для исключения багов из-за регистра или символа #
+   */
+  private normalizeHex(hex: string): string {
+    return hex.replace('#', '').trim().toLowerCase();
+  }
+
+  /**
+   * Генерация оверлея подсветки с единым алгоритмом классификации пикселей
    */
   private applyHighlightOverlay(hexColor: string | null): void {
     if (!this.highlightCtx || !this.maskData || !this.highlightSprite || !this.tempCtx) return;
@@ -165,75 +183,77 @@ export class WorldMap {
     const w = this.maskCanvas.width;
     const h = this.maskCanvas.height;
 
-    // Сброс фильтра и очистка буферов
-    this.highlightCtx.filter = 'none';
     this.highlightCtx.clearRect(0, 0, w, h);
-    this.tempCtx.clearRect(0, 0, w, h);
+    this.tempCtx.clearRect(0, 0, this.tempCanvas.width, this.tempCanvas.height);
 
-    // 1. Не подсвечиваем сушу и отсутствие зоны
-    if (!hexColor || hexColor.toLowerCase() === LAND_ZONE_CONFIG.hexColor.toLowerCase()) {
+    if (!hexColor) {
       this.highlightCanvasSource?.update();
       return;
     }
 
-    const cleanHex = hexColor.replace('#', '');
-    const targetR = parseInt(cleanHex.substring(0, 2), 16);
-    const targetG = parseInt(cleanHex.substring(2, 4), 16);
-    const targetB = parseInt(cleanHex.substring(4, 6), 16);
+    const targetClean = this.normalizeHex(hexColor);
+    const landClean = this.normalizeHex(LAND_ZONE_CONFIG.hexColor);
 
-    // Цвет суши для отсечения размытия
-    const landR = parseInt(LAND_ZONE_CONFIG.hexColor.substring(1, 3), 16);
-    const landG = parseInt(LAND_ZONE_CONFIG.hexColor.substring(3, 5), 16);
-    const landB = parseInt(LAND_ZONE_CONFIG.hexColor.substring(5, 7), 16);
+    // Не подсвечиваем сушу
+    if (targetClean === landClean) {
+      this.highlightCanvasSource?.update();
+      return;
+    }
+
+    // Подготовка полного списка зон для классификации по минимальному расстоянию
+    const allZones = [...OCEAN_ZONES_CONFIG, LAND_ZONE_CONFIG].map(z => {
+      const clean = this.normalizeHex(z.hexColor);
+      return {
+        cleanHex: clean,
+        r: parseInt(clean.substring(0, 2), 16),
+        g: parseInt(clean.substring(2, 4), 16),
+        b: parseInt(clean.substring(4, 6), 16),
+      };
+    });
 
     const maskPixels = this.maskData.data;
+    const overlayImgData = this.highlightCtx.createImageData(w, h);
+    const overlay32 = new Uint32Array(overlayImgData.data.buffer);
 
-    // 2. Создаем сплошное закрашенное пятно целевой зоны во временном холсте
-    const tempImgData = this.tempCtx.createImageData(w, h);
-    const tempPixels = tempImgData.data;
-    const temp32 = new Uint32Array(tempPixels.buffer);
+    const HIGHLIGHT_ALPHA = 170; // Интенсивность подсвечивающего пятна
 
-    const SOLID_ALPHA = 190;
-    const MATCH_THRESHOLD_SQ = 40 * 40;
-
+    // Определение зоны каждого пикселя
     for (let i = 0, len = maskPixels.length; i < len; i += 4) {
-      const dr = maskPixels[i] - targetR;
-      const dg = maskPixels[i + 1] - targetG;
-      const db = maskPixels[i + 2] - targetB;
-      const distSq = dr * dr + dg * dg + db * db;
+      const pr = maskPixels[i];
+      const pg = maskPixels[i + 1];
+      const pb = maskPixels[i + 2];
 
-      if (distSq < MATCH_THRESHOLD_SQ) {
-        // Little-endian ABGR: (Alpha << 24) | (Blue << 16) | (Green << 8) | Red
-        // Бирюзовая подсветка RGBA(0, 225, 255, SOLID_ALPHA)
-        temp32[i >> 2] = (SOLID_ALPHA << 24) | (255 << 16) | (225 << 8) | 0;
+      let minSq = Infinity;
+      let closestCleanHex = '';
+
+      for (let j = 0; j < allZones.length; j++) {
+        const z = allZones[j];
+        const dr = pr - z.r;
+        const dg = pg - z.g;
+        const db = pb - z.b;
+        const distSq = dr * dr + dg * dg + db * db;
+
+        if (distSq < minSq) {
+          minSq = distSq;
+          closestCleanHex = z.cleanHex;
+        }
+      }
+
+      if (closestCleanHex === targetClean) {
+        // Little-endian ABGR: RGBA(0, 225, 255, HIGHLIGHT_ALPHA)
+        overlay32[i >> 2] = (HIGHLIGHT_ALPHA << 24) | (255 << 16) | (225 << 8) | 0;
       }
     }
 
-    this.tempCtx.putImageData(tempImgData, 0, 0);
+    // 1-й этап: Рендерим сырой оверлей во временный Canvas
+    this.tempCtx.putImageData(overlayImgData, 0, 0);
 
-    // 3. Переносим на основной Canvas с применением размытия (Gaussian Blur)
-    const BLUR_RADIUS = Math.max(12, Math.round(w / 90)); // Радиус размытия для уничтожения углов
-    this.highlightCtx.filter = `blur(${BLUR_RADIUS}px)`;
-    this.highlightCtx.drawImage(this.tempCanvas, 0, 0);
-    this.highlightCtx.filter = 'none';
+    // 2-й этап: Переносим на основной Canvas с билинейной интерполяцией (сглаживание лесенки)
+    this.highlightCtx.imageSmoothingEnabled = true;
+    this.highlightCtx.imageSmoothingQuality = 'high';
+    this.highlightCtx.drawImage(this.tempCanvas, 0, 0, w, h);
 
-    // 4. Срезаем «хвосты» размытия с берега
-    const blurredData = this.highlightCtx.getImageData(0, 0, w, h);
-    const blurredPixels = blurredData.data;
-
-    for (let i = 0, len = maskPixels.length; i < len; i += 4) {
-      const ldr = maskPixels[i] - landR;
-      const ldg = maskPixels[i + 1] - landG;
-      const ldb = maskPixels[i + 2] - landB;
-
-      if (ldr * ldr + ldg * ldg + ldb * ldb < 75 * 75) {
-        blurredPixels[i + 3] = 0; // Обнуляем альфа-канал над сушей
-      }
-    }
-
-    this.highlightCtx.putImageData(blurredData, 0, 0);
-
-    // Перегружаем Canvas в видеопамять
+    // 3-й этап: Обновляем WebGL-текстуру (PixiJS с BlurFilter применит гауссово размытие на GPU)
     this.highlightCanvasSource?.update();
   }
 
