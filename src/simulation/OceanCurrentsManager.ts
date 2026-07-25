@@ -1,51 +1,57 @@
+import { WorldMap } from '../world/WorldMap';
+import { ZoneConfig } from '../world/types';
+
 export enum CurrentZoneType {
-  WARM = 'WARM',   // 🟧 Прибрежное теплое течение
-  MIXED = 'MIXED', // 🟩 Зона смешивания / Апвеллинг
+  WARM = 'WARM',   // 🟧 Прибрежное теплое течение / Шельф
+  MIXED = 'MIXED', // 🟩 Зона смешивания
   COLD = 'COLD'    // 🟦 Глубинное холодное течение
 }
 
 export interface CurrentData {
-  vx: number;        // Скорость по X (пиксели/сек)
-  vy: number;        // Скорость по Y (пиксели/сек)
+  vx: number;
+  vy: number;
   zoneType: CurrentZoneType;
-  intensity: number;
+  zoneConfig: ZoneConfig;
+  isWater: boolean;
 }
 
 export class OceanCurrentsManager {
-  public mapWidth: number;
-  public mapHeight: number;
-  public baseSpeed: number = 220; // Скорость течения в пикселях в секунду
+  private worldMap: WorldMap;
+  public baseSpeed: number = 200;
 
-  constructor(mapWidth: number = 8000, mapHeight: number = 8000) {
-    this.mapWidth = mapWidth;
-    this.mapHeight = mapHeight;
+  constructor(worldMap: WorldMap) {
+    this.worldMap = worldMap;
+  }
+
+  /**
+   * Проверка: является ли точка водой (считывается из точной маски PNG)
+   */
+  public isWater(x: number, y: number): boolean {
+    const zone = this.worldMap.getZoneAt(x, y);
+    return !zone.isLand;
   }
 
   public getCurrentAt(x: number, y: number): CurrentData {
-    // Приводим координаты от (0..8000) к диапазону от -1 до 1 относительно центра карты
-    const nx = (x - this.mapWidth / 2) / (this.mapWidth / 2);
-    const ny = (y - this.mapHeight / 2) / (this.mapHeight / 2);
+    const zone = this.worldMap.getZoneAt(x, y);
+    const isWater = !zone.isLand;
 
-    // Замкнутый круговорот по схеме:
-    // Вверху (ny < 0) -- влево, Внизу (ny > 0) -- вправо
-    // Справа у берега (nx > 0) -- вверх, Слева в глубине (nx < 0) -- вниз
-    let vx = -ny * 0.8;
-    let vy = nx * 1.2;
+    // Центрированные координаты для создания базового круговорота в океане
+    const nx = (x - 4000) / 4000;
+    const ny = (y - 4000) / 4000;
 
-    const len = Math.sqrt(vx * vx + vy * vy);
-    if (len > 0.001) {
-      vx = (vx / len) * this.baseSpeed;
-      vy = (vy / len) * this.baseSpeed;
-    } else {
-      vx = 0;
-      vy = -this.baseSpeed * 0.3;
-    }
+    // Вектор циркуляции
+    let vx = -ny * 1.1;
+    let vy = nx * 0.9;
 
-    // Определяем зону (Берег справа nx > 0, Глубина слева nx < 0)
+    const len = Math.hypot(vx, vy) || 1;
+    vx = (vx / len) * this.baseSpeed;
+    vy = (vy / len) * this.baseSpeed;
+
+    // Определяем визуальный тип течения на основе биома из WorldMap
     let zoneType = CurrentZoneType.MIXED;
-    if (nx > 0.2) {
+    if (zone.id.includes('shallow') || zone.id.includes('shelf')) {
       zoneType = CurrentZoneType.WARM;
-    } else if (nx < -0.2) {
+    } else if (zone.id.includes('trench') || zone.id.includes('abyssal')) {
       zoneType = CurrentZoneType.COLD;
     }
 
@@ -53,7 +59,8 @@ export class OceanCurrentsManager {
       vx,
       vy,
       zoneType,
-      intensity: Math.min(1.0, len)
+      zoneConfig: zone,
+      isWater
     };
   }
 }
