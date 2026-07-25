@@ -38,38 +38,31 @@ export class OceanCurrentsManager {
     this.initScanner();
   }
 
-  /**
-   * Прямая синхронизация точек берега из WorldMap (если хочется избежать повторной загрузки)
-   */
   public setShorelinePoints(points: ShorePoint[]): void {
     if (!points || points.length === 0) return;
 
-    const cellHeight = this.worldHeight / this.MASK_SIZE;
     this.waterSpawnPoints = [];
 
     for (const pt of points) {
       const gy = Math.floor((pt.y / this.worldHeight) * this.MASK_SIZE);
       if (gy >= 0 && gy < this.MASK_SIZE) {
-        // Отступаем на 40px вглубь океана от границы песка
-        const safeX = Math.max(0, pt.x - 40);
+        const safeX = Math.max(0, pt.x - 50);
         this.shorelineLimits[gy] = safeX;
 
         if (safeX > 100) {
           this.waterSpawnPoints.push({
-            x: Math.random() * (safeX - 50),
+            x: Math.random() * (safeX - 60),
             y: pt.y
           });
         }
       }
     }
     this.isLoaded = true;
-    console.log(`[CurrentsManager] Берег синхронизирован напрямую из WorldMap!`);
   }
 
   private async initScanner(): Promise<void> {
     try {
       const img = new Image();
-      // НЕ используем crossOrigin для локальных файлов, чтобы Safari iOS не блокировал загрузку
       img.src = 'assets/ocean_zones_mask.png';
 
       await new Promise<void>((resolve, reject) => {
@@ -91,7 +84,7 @@ export class OceanCurrentsManager {
       this.runRightToLeftScanner(imgData);
       
       this.isLoaded = true;
-      console.log(`[CurrentsManager] Береговая линия построена успешно.`);
+      console.log(`[CurrentsManager] Береговая линия сглажена. Точек спавна: ${this.waterSpawnPoints.length}`);
     } catch (e) {
       console.error('[CurrentsManager] Ошибка сканирования маски:', e);
       this.buildEmergencyWall();
@@ -102,35 +95,70 @@ export class OceanCurrentsManager {
   private runRightToLeftScanner(imgData: ImageData): void {
     const data = imgData.data;
     const cellHeight = this.worldHeight / this.MASK_SIZE;
-    const SAFETY_BUFFER_PX = 4; 
+
+    const rawLimits = new Float32Array(this.MASK_SIZE);
+    const REQUIRED_WATER_PIXELS = 8; // Нужно 8 синих пикселей подряд, чтобы признать воду
 
     for (let gy = 0; gy < this.MASK_SIZE; gy++) {
       let foundShoreX = -1;
+      let waterStreak = 0;
 
+      // Сканируем справа налево (из суши в океан)
       for (let gx = this.MASK_SIZE - 1; gx >= 0; gx--) {
         const i = (gy * this.MASK_SIZE + gx) * 4;
         const r = data[i];
         const g = data[i + 1];
         const b = data[i + 2];
 
-        // Вода: синий преобладает над красным
-        if (b > r + 20) {
-          foundShoreX = gx;
-          break;
+        // Синий преобладает И синий канал достаточно яркий (исключает тёмную сушу)
+        const isWaterPixel = (b > r + 20) && (b > 60);
+
+        if (isWaterPixel) {
+          waterStreak++;
+          if (waterStreak >= REQUIRED_WATER_PIXELS) {
+            foundShoreX = gx + REQUIRED_WATER_PIXELS;
+            break;
+          }
         } else {
+          waterStreak = 0;
           const hex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
           this.zoneGrid[gy * this.MASK_SIZE + gx] = this.resolveZoneIndex(hex);
         }
       }
 
-      const safeWaterX = foundShoreX !== -1 ? Math.max(0, foundShoreX - SAFETY_BUFFER_PX) : 0;
+      rawLimits[gy] = foundShoreX !== -1 ? foundShoreX : 0;
+    }
+
+    // === СГЛАЖИВАНИЕ И ОТСТУП ОТ БЕРЕГА ===
+    const SMOOTH_RADIUS = 8; 
+    const SAFETY_BUFFER_PX = 6; // Отступ вглубь океана в пикселях маски (~48px в игре)
+
+    this.waterSpawnPoints = [];
+
+    for (let gy = 0; gy < this.MASK_SIZE; gy++) {
+      let sumX = 0;
+      let count = 0;
+
+      // Усредняем с соседними строками для идеальной гладкости
+      for (let dy = -SMOOTH_RADIUS; dy <= SMOOTH_RADIUS; dy++) {
+        const ny = gy + dy;
+        if (ny >= 0 && ny < this.MASK_SIZE && rawLimits[ny] > 0) {
+          sumX += rawLimits[ny];
+          count++;
+        }
+      }
+
+      const avgPx = count > 0 ? (sumX / count) : rawLimits[gy];
+      const safeWaterX = Math.max(0, avgPx - SAFETY_BUFFER_PX);
       const worldLimitX = (safeWaterX / this.MASK_SIZE) * this.worldWidth;
+
       this.shorelineLimits[gy] = worldLimitX;
 
+      // Точки спавна
       if (worldLimitX > 100) {
         for (let s = 0; s < 2; s++) {
           this.waterSpawnPoints.push({
-            x: Math.random() * (worldLimitX - 50),
+            x: Math.random() * (worldLimitX - 80),
             y: (gy + Math.random()) * cellHeight
           });
         }
@@ -141,8 +169,7 @@ export class OceanCurrentsManager {
   private buildEmergencyWall(): void {
     this.waterSpawnPoints = [];
     for (let gy = 0; gy < this.MASK_SIZE; gy++) {
-      // Плавная гипотенуза вместо прямой стены на случай сбоя
-      const limitX = this.worldWidth * 0.75;
+      const limitX = this.worldWidth * 0.5;
       this.shorelineLimits[gy] = limitX;
       this.waterSpawnPoints.push({
         x: Math.random() * limitX,
