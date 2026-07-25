@@ -110,15 +110,22 @@ export class BiomeScanner {
   }
 
   private showZoneInfo(zone: ZoneConfig, screenX: number, screenY: number): void {
+    const params = zone?.params;
+
+    // Переводим значение света (0.0 ... 1.0) в проценты (0 ... 100%)
+    const lightPercent = params?.light !== undefined 
+      ? Math.round(params.light * 100) 
+      : '--';
+
     this.tooltipElement.innerHTML = `
       <div style="font-weight: bold; font-size: 15px; color: #38bdf8; margin-bottom: 6px;">
         ${zone.name || 'Неизвестный биом'}
       </div>
       <div style="display: grid; grid-template-columns: auto auto; gap: 4px 12px;">
-        <span>🌡️ Температура:</span> <b>${zone.temperature ?? '--'} °C</b>
-        <span>🧂 Солёность:</span> <b>${zone.salinity ?? '--'} ‰</b>
-        <span>⚓ Давление:</span> <b>${zone.pressure ?? '--'} атм</b>
-        <span>☀️ Свет:</span> <b>${zone.lightLevel ?? '--'} %</b>
+        <span>🌡️ Температура:</span> <b>${params?.temperature ?? '--'} °C</b>
+        <span>🧂 Солёность:</span> <b>${params?.salinity ?? '--'} ‰</b>
+        <span>⚓ Давление:</span> <b>${params?.pressure ?? '--'} атм</b>
+        <span>☀️ Свет:</span> <b>${lightPercent} %</b>
       </div>
     `;
 
