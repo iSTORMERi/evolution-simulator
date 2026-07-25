@@ -6,6 +6,7 @@ interface Particle {
   y: number;
   life: number;
   maxLife: number;
+  lengthScale: number; // Индивидуальный множитель длины
   sprite: PIXI.Sprite;
 }
 
@@ -16,22 +17,26 @@ export class CurrentParticlesDebug {
 
   private particleTexture: PIXI.Texture;
 
-  private readonly colorWarm = 0xff7700;
-  private readonly colorMixed = 0x00ff88;
-  private readonly colorCold = 0x00aaff;
+  // Цветовая палитра PIXI Hex
+  private readonly colorWarm = 0xff8c00;       // 🟠 Оранжевый
+  private readonly colorCold = 0x00bfff;       // 🔵 Синий
+  private readonly colorTransit = 0xffd700;    // 🟡 Жёлтый
+  private readonly colorConnecting = 0x00ff66; // 🟢 Сочно-зелёный
+  private readonly colorDrift = 0x1e3a5f;      // 🌊 Тёмно-морской
+
   private readonly worldSize = 8000;
 
   constructor(currentsManager: OceanCurrentsManager, count: number = 2200) {
     this.currentsManager = currentsManager;
     this.container = new PIXI.Container();
 
-    // Создаем увеличенную в 3 раза черточку (18px x 4px) вместо точек
-    this.particleTexture = this.generateDashTexture(18, 4);
+    // Базовая увеличенная текстура (72px x 8px вместо 18px x 4px)
+    this.particleTexture = this.generateDashTexture(72, 8);
     this.initParticles(count);
   }
 
   /**
-   * Генерация текстуры вытянутой черточки (-) со скругленными краями
+   * Генерация вытянутой текстуры черточки со скругленными краями
    */
   private generateDashTexture(width: number, height: number): PIXI.Texture {
     const canvas = document.createElement('canvas');
@@ -56,17 +61,27 @@ export class CurrentParticlesDebug {
   private initParticles(count: number): void {
     for (let i = 0; i < count; i++) {
       const sprite = new PIXI.Sprite(this.particleTexture);
-      // Центрируем анкор, чтобы черточка вращалась ровно вокруг своего центра
+      // Центрируем анкор для ровного вращения вокруг центра
       sprite.anchor.set(0.5);
 
       const pos = this.currentsManager.getRandomWaterPosition();
       sprite.position.set(pos.x, pos.y);
 
-      const maxLife = 4 + Math.random() * 4; // Время жизни 4-8 секунд
-      const life = Math.random() * maxLife;  // Случайный фазовый сдвиг при старте
+      const maxLife = 4 + Math.random() * 4;
+      const life = Math.random() * maxLife;
+      
+      // Разнородная длина: от 1.0x до 3.5x
+      const lengthScale = 1.0 + Math.random() * 2.5;
 
       this.container.addChild(sprite);
-      this.particles.push({ x: pos.x, y: pos.y, life, maxLife, sprite });
+      this.particles.push({ 
+        x: pos.x, 
+        y: pos.y, 
+        life, 
+        maxLife, 
+        lengthScale, 
+        sprite 
+      });
     }
   }
 
@@ -76,6 +91,7 @@ export class CurrentParticlesDebug {
     p.y = pos.y;
     p.life = 0;
     p.maxLife = 4 + Math.random() * 4;
+    p.lengthScale = 1.0 + Math.random() * 2.5; // Пересчет длины при респавне
     p.sprite.position.set(p.x, p.y);
   }
 
@@ -86,7 +102,7 @@ export class CurrentParticlesDebug {
       const p = this.particles[i];
       p.life += deltaSeconds;
 
-      // Респавн по истечении времени жизни (обеспечивает плотное покрытие всего океана)
+      // Респавн по истечении времени жизни
       if (p.life >= p.maxLife) {
         this.respawnParticle(p);
         continue;
@@ -100,7 +116,7 @@ export class CurrentParticlesDebug {
       const nextX = p.x + dx;
       const nextY = p.y + dy;
 
-      // Строгая проверка: если следующий шаг ведет на сушу -- респавним частицу!
+      // Проверка на столкновение с сушей
       if (this.currentsManager.isWater(nextX, nextY)) {
         p.x = nextX;
         p.y = nextY;
@@ -115,10 +131,16 @@ export class CurrentParticlesDebug {
         continue;
       }
 
-      // Поворот черточки вдоль направления вектора скорости
-      if (Math.abs(current.vx) > 0.01 || Math.abs(current.vy) > 0.01) {
+      // Поворот черточки вдоль направления скорости
+      const speed = Math.hypot(current.vx, current.vy);
+      if (speed > 0.01) {
         p.sprite.rotation = Math.atan2(current.vy, current.vx);
       }
+
+      // Динамический размер: длина зависит от индивидуального коэффициента и скорости течения
+      const currentSpeedFactor = Math.min(2.0, Math.max(0.5, speed / 200));
+      p.sprite.scale.x = p.lengthScale * currentSpeedFactor;
+      p.sprite.scale.y = 1.2; // Толщина палочки
 
       // Прозрачность с мягким проявлением и затуханием (Fade In / Fade Out)
       const progress = p.life / p.maxLife;
@@ -127,7 +149,7 @@ export class CurrentParticlesDebug {
       if (progress > 0.8) alpha = ((1 - progress) / 0.2) * 0.85;
       p.sprite.alpha = alpha;
 
-      // Окрашивание
+      // Окрашивание в соответствии со всеми зонами течений
       switch (current.zoneType) {
         case CurrentZoneType.WARM:
           p.sprite.tint = this.colorWarm;
@@ -135,8 +157,17 @@ export class CurrentParticlesDebug {
         case CurrentZoneType.COLD:
           p.sprite.tint = this.colorCold;
           break;
+        case CurrentZoneType.TRANSIT:
+          p.sprite.tint = this.colorTransit;
+          break;
+        case CurrentZoneType.CONNECTING:
+          p.sprite.tint = this.colorConnecting;
+          break;
+        case CurrentZoneType.DRIFT:
+          p.sprite.tint = this.colorDrift;
+          break;
         default:
-          p.sprite.tint = this.colorMixed;
+          p.sprite.tint = this.colorCold;
           break;
       }
 
