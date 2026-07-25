@@ -23,6 +23,10 @@ export class WorldMap {
   private highlightCanvasSource?: PIXI.CanvasSource;
   private highlightSprite?: PIXI.Sprite;
 
+  // Временный буферный Canvas для формирования формы биома до размытия
+  private tempCanvas: HTMLCanvasElement;
+  private tempCtx: CanvasRenderingContext2D | null;
+
   private isLoaded: boolean = false;
 
   private shoreEffects: ShoreEffects;
@@ -42,9 +46,12 @@ export class WorldMap {
     this.maskCanvas = document.createElement('canvas');
     this.maskCtx = this.maskCanvas.getContext('2d', { willReadFrequently: true });
 
-    // Контекст для рисования подсвечивающей заливки
+    // Контексты для рисования подсвечивающей заливки
     this.highlightCanvas = document.createElement('canvas');
     this.highlightCtx = this.highlightCanvas.getContext('2d');
+
+    this.tempCanvas = document.createElement('canvas');
+    this.tempCtx = this.tempCanvas.getContext('2d');
 
     this.shoreEffects = new ShoreEffects();
     this.waves = new Waves();
@@ -94,6 +101,9 @@ export class WorldMap {
 
       this.highlightCanvas.width = img.width;
       this.highlightCanvas.height = img.height;
+
+      this.tempCanvas.width = img.width;
+      this.tempCanvas.height = img.height;
 
       if (this.maskCtx) {
         this.maskCtx.drawImage(img, 0, 0);
@@ -147,16 +157,18 @@ export class WorldMap {
   }
 
   /**
-   * Генерация подсвечивающего оверлея (Умная классификация зон + отсутствие подсветки суши)
+   * Генерация мягкого размытого оверлея подсветки (без острых углов и лесенок)
    */
   private applyHighlightOverlay(hexColor: string | null): void {
-    if (!this.highlightCtx || !this.maskData || !this.highlightSprite) return;
+    if (!this.highlightCtx || !this.maskData || !this.highlightSprite || !this.tempCtx) return;
 
     const w = this.maskCanvas.width;
     const h = this.maskCanvas.height;
 
-    // Сброс предыдущей заливки
+    // Сброс фильтра и очистка буферов
+    this.highlightCtx.filter = 'none';
     this.highlightCtx.clearRect(0, 0, w, h);
+    this.tempCtx.clearRect(0, 0, w, h);
 
     // 1. Не подсвечиваем сушу и отсутствие зоны
     if (!hexColor || hexColor.toLowerCase() === LAND_ZONE_CONFIG.hexColor.toLowerCase()) {
@@ -169,77 +181,57 @@ export class WorldMap {
     const targetG = parseInt(cleanHex.substring(2, 4), 16);
     const targetB = parseInt(cleanHex.substring(4, 6), 16);
 
-    // Цвет суши
+    // Цвет суши для отсечения размытия
     const landR = parseInt(LAND_ZONE_CONFIG.hexColor.substring(1, 3), 16);
     const landG = parseInt(LAND_ZONE_CONFIG.hexColor.substring(3, 5), 16);
     const landB = parseInt(LAND_ZONE_CONFIG.hexColor.substring(5, 7), 16);
 
-    // Спектр других морских зон для вычисления межзонной границы
-    const otherZonesRGB = OCEAN_ZONES_CONFIG
-      .filter(z => z.hexColor.toLowerCase() !== hexColor.toLowerCase())
-      .map(z => {
-        const hex = z.hexColor.replace('#', '');
-        return {
-          r: parseInt(hex.substring(0, 2), 16),
-          g: parseInt(hex.substring(2, 4), 16),
-          b: parseInt(hex.substring(4, 6), 16),
-        };
-      });
-
-    // Добавляем сушу к списку внешних границ
-    otherZonesRGB.push({ r: landR, g: landG, b: landB });
-
     const maskPixels = this.maskData.data;
-    const overlayImgData = this.highlightCtx.createImageData(w, h);
-    const overlayPixels = overlayImgData.data;
-    const overlay32 = new Uint32Array(overlayPixels.buffer);
 
-    // Прозрачность для зоны (150 из 255 - сочная, но прозрачная)
-    const TARGET_ALPHA = 150;
+    // 2. Создаем сплошное закрашенное пятно целевой зоны во временном холсте
+    const tempImgData = this.tempCtx.createImageData(w, h);
+    const tempPixels = tempImgData.data;
+    const temp32 = new Uint32Array(tempPixels.buffer);
+
+    const SOLID_ALPHA = 190;
+    const MATCH_THRESHOLD_SQ = 40 * 40;
 
     for (let i = 0, len = maskPixels.length; i < len; i += 4) {
-      const pr = maskPixels[i];
-      const pg = maskPixels[i + 1];
-      const pb = maskPixels[i + 2];
+      const dr = maskPixels[i] - targetR;
+      const dg = maskPixels[i + 1] - targetG;
+      const db = maskPixels[i + 2] - targetB;
+      const distSq = dr * dr + dg * dg + db * db;
 
-      // Дистанция цвета пикселя до целевой зоны
-      const dr = pr - targetR;
-      const dg = pg - targetG;
-      const db = pb - targetB;
-      const distTargetSq = dr * dr + dg * dg + db * db;
-
-      // Минимальная дистанция до любой другой зоны или суши
-      let minOtherSq = Infinity;
-      for (let j = 0; j < otherZonesRGB.length; j++) {
-        const oz = otherZonesRGB[j];
-        const odr = pr - oz.r;
-        const odg = pg - oz.g;
-        const odb = pb - oz.b;
-        const odistSq = odr * odr + odg * odg + odb * odb;
-        if (odistSq < minOtherSq) {
-          minOtherSq = odistSq;
-        }
-      }
-
-      // Пиксель однозначно принадлежит целевой зоне
-      if (distTargetSq < minOtherSq) {
-        let alpha = TARGET_ALPHA;
-
-        // Сглаживание только на узком переходе между зонами
-        const diffSq = minOtherSq - distTargetSq;
-        if (diffSq < 1600) {
-          alpha = Math.floor(TARGET_ALPHA * (diffSq / 1600));
-        }
-
-        if (alpha > 5) {
-          // Little-endian ABGR: (Alpha << 24) | (Blue << 16) | (Green << 8) | Red
-          // Бирюзовая подсветка RGBA(0, 230, 255, alpha)
-          overlay32[i >> 2] = (alpha << 24) | (255 << 16) | (230 << 8) | 0;
-        }
+      if (distSq < MATCH_THRESHOLD_SQ) {
+        // Little-endian ABGR: (Alpha << 24) | (Blue << 16) | (Green << 8) | Red
+        // Бирюзовая подсветка RGBA(0, 225, 255, SOLID_ALPHA)
+        temp32[i >> 2] = (SOLID_ALPHA << 24) | (255 << 16) | (225 << 8) | 0;
       }
     }
 
-    this.highlightCtx.putImageData(overlayImgData, 0, 0);
+    this.tempCtx.putImageData(tempImgData, 0, 0);
+
+    // 3. Переносим на основной Canvas с применением размытия (Gaussian Blur)
+    const BLUR_RADIUS = Math.max(12, Math.round(w / 90)); // Радиус размытия для уничтожения углов
+    this.highlightCtx.filter = `blur(${BLUR_RADIUS}px)`;
+    this.highlightCtx.drawImage(this.tempCanvas, 0, 0);
+    this.highlightCtx.filter = 'none';
+
+    // 4. Срезаем «хвосты» размытия с берега
+    const blurredData = this.highlightCtx.getImageData(0, 0, w, h);
+    const blurredPixels = blurredData.data;
+
+    for (let i = 0, len = maskPixels.length; i < len; i += 4) {
+      const ldr = maskPixels[i] - landR;
+      const ldg = maskPixels[i + 1] - landG;
+      const ldb = maskPixels[i + 2] - landB;
+
+      if (ldr * ldr + ldg * ldg + ldb * ldb < 75 * 75) {
+        blurredPixels[i + 3] = 0; // Обнуляем альфа-канал над сушей
+      }
+    }
+
+    this.highlightCtx.putImageData(blurredData, 0, 0);
 
     // Перегружаем Canvas в видеопамять
     this.highlightCanvasSource?.update();
