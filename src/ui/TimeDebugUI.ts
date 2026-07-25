@@ -11,6 +11,7 @@ export class TimeDebugUI {
 
   private isAutoPlaying: boolean = false;
   private intervalId: number | null = null;
+  private currentHours: number = 12.0; // Храним точное время внутри класса
 
   constructor(lightingController: LightingController) {
     this.lightingController = lightingController;
@@ -48,12 +49,12 @@ export class TimeDebugUI {
     headerRow.appendChild(this.timeLabel);
     headerRow.appendChild(this.autoPlayButton);
 
-    // 3. Ползунок переключения времени суток
+    // 3. Ползунок (шаг 0.001 исключает округление браузере при таймере)
     this.slider = document.createElement('input');
     this.slider.type = 'range';
     this.slider.min = '0';
     this.slider.max = '24';
-    this.slider.step = '0.05';
+    this.slider.step = '0.001';
     this.slider.value = '12';
     Object.assign(this.slider.style, {
       width: '100%',
@@ -131,11 +132,10 @@ export class TimeDebugUI {
     this.autoPlayButton.style.backgroundColor = 'rgba(239, 68, 68, 0.25)';
     this.autoPlayButton.style.borderColor = 'rgba(239, 68, 68, 0.5)';
 
-    // Добавляем +5 минут игрового времени каждую секунду (прибавка по 0.5 мин каждые 100 мс)
+    // Добавляем +0.5 минут игрового времени каждые 100 мс (+5 минут за 1 секунду)
     this.intervalId = window.setInterval(() => {
-      let currentHours = parseFloat(this.slider.value);
-      currentHours = (currentHours + (5 / 60) / 10) % 24;
-      this.setTime(currentHours);
+      const nextHours = this.currentHours + (5 / 60) / 10;
+      this.setTime(nextHours);
     }, 100);
   }
 
@@ -155,8 +155,10 @@ export class TimeDebugUI {
    * Обновляет контроллер освещения и интерфейс
    */
   public setTime(hours: number): void {
-    const state = this.lightingController.setTime(hours);
-    this.slider.value = hours.toString();
+    this.currentHours = (hours % 24 + 24) % 24;
+
+    const state = this.lightingController.setTime(this.currentHours);
+    this.slider.value = this.currentHours.toString();
 
     if (state) {
       const timeStr = state.formattedTime || '12:00';
