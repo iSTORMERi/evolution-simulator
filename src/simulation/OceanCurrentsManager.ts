@@ -60,7 +60,7 @@ export class OceanCurrentsManager {
       this.runLeftToRightScanner(imgData);
       
       this.isLoaded = true;
-      console.log(`[Scanner] Береговая линия построена. Безопасных точек спавна: ${this.waterSpawnPoints.length}`);
+      console.log(`[Scanner] Береговая линия построена по точной полоске. Безопасных точек спавна: ${this.waterSpawnPoints.length}`);
     } catch (e) {
       console.error('[Scanner] КРИТИЧЕСКАЯ ОШИБКА ЧТЕНИЯ МАСКИ. Частицы могут вести себя хаотично!', e);
       this.buildEmergencyWall();
@@ -69,15 +69,18 @@ export class OceanCurrentsManager {
   }
 
   /**
-   * Твоя идея: Идем слева направо и фиксируем стену.
+   * Снайперский сканер с точным цветом пограничной полоски #F6D896
    */
   private runLeftToRightScanner(imgData: ImageData): void {
     const data = imgData.data;
     const cellWidth = this.worldWidth / this.MASK_SIZE;
     const cellHeight = this.worldHeight / this.MASK_SIZE;
     
-    // Насколько далеко от реального берега обрывать воду (в пикселях маски)
-    const EROSION_BUFFER = 5; 
+    // Точный цвет пограничной полоски из ibisPaint
+    const SHORE_EDGE_HEX = '#F6D896';
+    
+    // Минимальный отступ, так как сканер бьет прямо в пограничный пиксель
+    const EROSION_BUFFER = 2; 
 
     for (let gy = 0; gy < this.MASK_SIZE; gy++) {
       let maxWaterX = 0;
@@ -93,18 +96,19 @@ export class OceanCurrentsManager {
 
         const hex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
         
-        // Критерии суши: прозрачность или цвет песка
-        const isTransparent = a < 150;
-        const isLand = this.colorDistance(hex, LAND_ZONE_CONFIG.hexColor) < 70;
+        // Снайперские триггеры определения берега
+        const isShoreEdge = this.colorDistance(hex, SHORE_EDGE_HEX) < 18;
+        const isTransparent = a < 250; 
+        const isMainLand = this.colorDistance(hex, LAND_ZONE_CONFIG.hexColor) < 80;
 
-        if (isTransparent || isLand) {
-          // МЫ ДОШЛИ ДО БЕРЕГА! Делаем шаг назад (эрозия) и останавливаем скан ряда
+        if (isTransparent || isShoreEdge || isMainLand) {
+          // Дошли до берега -- делаем микро-шаг назад и останавливаем скан ряда
           maxWaterX = Math.max(0, gx - EROSION_BUFFER);
           hitCoast = true;
           break; 
         }
 
-        // Если это вода, просто сохраняем тип зоны для цвета течения
+        // Если это вода, сохраняем тип зоны для цвета течения
         this.zoneGrid[gy * this.MASK_SIZE + gx] = this.resolveZoneIndex(hex);
       }
 
