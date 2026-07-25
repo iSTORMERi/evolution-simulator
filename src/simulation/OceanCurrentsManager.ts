@@ -19,7 +19,7 @@ export interface CurrentData {
 }
 
 export const ZONE_COLOR_MAP: Record<CurrentZoneType, string> = {
-  [CurrentZoneType.WARM]: '#FF8C00', // Оранжевый / Красный
+  [CurrentZoneType.WARM]: '#FF8C00', // Оранжевый
   [CurrentZoneType.COLD]: '#00BFFF'  // Ледяной синий
 };
 
@@ -159,7 +159,7 @@ export class OceanCurrentsManager {
   }
 
   /**
-   * Универсальный вектор для повернутого стадиона (капсулы)
+   * Универсальный вектор для повернутого стадиона
    */
   private getRotatedStadiumVector(
     x: number,
@@ -212,6 +212,76 @@ export class OceanCurrentsManager {
     };
   }
 
+  /**
+   * Вектор замкнутого треугольного круговорота со сглаженными вершинами
+   */
+  private getTriangleGyreVector(
+    x: number,
+    y: number,
+    p0: Point2D,
+    p1: Point2D,
+    p2: Point2D,
+    radius: number
+  ): Point2D | null {
+    const vertices = [p0, p1, p2];
+    let minDist = Infinity;
+    let bestDir: Point2D = { x: 0, y: 0 };
+
+    for (let i = 0; i < 3; i++) {
+      const a = vertices[i];
+      const b = vertices[(i + 1) % 3];
+
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const len = Math.hypot(dx, dy);
+      if (len === 0) continue;
+
+      const dirX = dx / len;
+      const dirY = dy / len;
+
+      let t = ((x - a.x) * dx + (y - a.y) * dy) / (len * len);
+      t = Math.max(0, Math.min(1, t));
+
+      const projX = a.x + t * dx;
+      const projY = a.y + t * dy;
+      const dist = Math.hypot(x - projX, y - projY);
+
+      if (dist < minDist) {
+        minDist = dist;
+        bestDir = { x: dirX, y: dirY };
+      }
+    }
+
+    if (minDist > radius) return null;
+
+    // Сглаживание траектории вокруг вершин треугольника
+    const CORNER_SMOOTH_RADIUS = radius * 1.2;
+    for (let i = 0; i < 3; i++) {
+      const v = vertices[i];
+      const dToVertex = Math.hypot(x - v.x, y - v.y);
+
+      if (dToVertex <= CORNER_SMOOTH_RADIUS) {
+        const rx = x - v.x;
+        const ry = y - v.y;
+        const rLen = Math.hypot(rx, ry) || 1;
+
+        // Вектор касательной к вершине (по часовой стрелке)
+        const tangentX = -ry / rLen;
+        const tangentY = rx / rLen;
+
+        const blend = 1 - dToVertex / CORNER_SMOOTH_RADIUS;
+        bestDir.x = bestDir.x * (1 - blend) + tangentX * blend;
+        bestDir.y = bestDir.y * (1 - blend) + tangentY * blend;
+
+        const bLen = Math.hypot(bestDir.x, bestDir.y) || 1;
+        bestDir.x /= bLen;
+        bestDir.y /= bLen;
+      }
+    }
+
+    return bestDir;
+  }
+
   public getCurrentAt(x: number, y: number): CurrentData {
     const isWater = this.isWater(x, y);
     if (!isWater) {
@@ -224,10 +294,15 @@ export class OceanCurrentsManager {
       };
     }
 
-    // --- 1. ХОЛОДНОЕ ТЕЧЕНИЕ (Синий стадион слева, под углом -30°) ---
+    let totalVx = 0;
+    let totalVy = 0;
+    let activeCount = 0;
+    let primaryZone = CurrentZoneType.COLD;
+
+    // --- 1. ХОЛОДНОЕ ТЕЧЕНИЕ (Основной синий стадион слева) ---
     const coldTrack = {
       cx: 2200,
-      cy: 2500,
+      cy: 2800,
       halfLength: 1800,
       radius: 800,
       angleRad: (-30 * Math.PI) / 180
@@ -235,43 +310,75 @@ export class OceanCurrentsManager {
 
     const coldVec = this.getRotatedStadiumVector(x, y, coldTrack);
     if (coldVec) {
-      const len = Math.hypot(coldVec.x, coldVec.y) || 1;
-      return {
-        vx: (coldVec.x / len) * this.baseSpeed,
-        vy: (coldVec.y / len) * this.baseSpeed,
-        zoneType: CurrentZoneType.COLD,
-        targetColor: ZONE_COLOR_MAP[CurrentZoneType.COLD],
-        isWater: true
-      };
+      totalVx += coldVec.x;
+      totalVy += coldVec.y;
+      activeCount++;
+      primaryZone = CurrentZoneType.COLD;
     }
 
-    // --- 2. ТЕПЛОЕ ТЕЧЕНИЕ (Оранжевый стадион -- смещен влево вглубь океана) ---
+    // --- 2. СЕВЕРНЫЙ ТРЕУГОЛЬНЫЙ ГИР (Верхний левый угол) ---
+    const northTriangle = {
+      p0: { x: 800, y: 600 },
+      p1: { x: 3200, y: 800 },
+      p2: { x: 2200, y: 3200 }, // Перекрывается с верхней частью холодного стадиона
+      radius: 750
+    };
+
+    const northVec = this.getTriangleGyreVector(
+      x,
+      y,
+      northTriangle.p0,
+      northTriangle.p1,
+      northTriangle.p2,
+      northTriangle.radius
+    );
+    if (northVec) {
+      totalVx += northVec.x;
+      totalVy += northVec.y;
+      activeCount++;
+      primaryZone = CurrentZoneType.COLD;
+    }
+
+    // --- 3. ТЕПЛОЕ ТЕЧЕНИЕ (Оранжевый стадион справа) ---
     const warmTrack = {
-      cx: 4200,              // Отодвинули с 5800 до 4200
-      cy: 4200,              // Слегка отцентрировали по вертикали
+      cx: 4200,
+      cy: 4200,
       halfLength: 2400,
-      radius: 1000,          // Небольшая корректировка ширины для идеального размещения
+      radius: 1000,
       angleRad: (-65 * Math.PI) / 180
     };
 
     const warmVec = this.getRotatedStadiumVector(x, y, warmTrack);
     if (warmVec) {
-      const len = Math.hypot(warmVec.x, warmVec.y) || 1;
+      totalVx += warmVec.x;
+      totalVy += warmVec.y;
+      activeCount++;
+      primaryZone = CurrentZoneType.WARM;
+    }
+
+    // --- РЕЗУЛЬТИРУЮЩИЙ РАСЧЕТ И ВЕКТОРНОЕ СЛОЖЕНИЕ ---
+    if (activeCount === 0) {
       return {
-        vx: (warmVec.x / len) * this.baseSpeed,
-        vy: (warmVec.y / len) * this.baseSpeed,
-        zoneType: CurrentZoneType.WARM,
-        targetColor: ZONE_COLOR_MAP[CurrentZoneType.WARM],
+        vx: 0,
+        vy: 0,
+        zoneType: CurrentZoneType.COLD,
+        targetColor: '#1e293b',
         isWater: true
       };
     }
 
-    // --- 3. НЕЙТРАЛЬНАЯ ВОДА ---
+    const combinedLen = Math.hypot(totalVx, totalVy);
+
+    // В области наложения (активна турбулентность) слегка усиливаем скорость потока
+    const speedBoost = activeCount > 1 ? 1.15 : 1.0;
+    const finalVx = (totalVx / (combinedLen || 1)) * this.baseSpeed * speedBoost;
+    const finalVy = (totalVy / (combinedLen || 1)) * this.baseSpeed * speedBoost;
+
     return {
-      vx: 0,
-      vy: 0,
-      zoneType: CurrentZoneType.COLD,
-      targetColor: '#1e293b',
+      vx: finalVx,
+      vy: finalVy,
+      zoneType: primaryZone,
+      targetColor: ZONE_COLOR_MAP[primaryZone],
       isWater: true
     };
   }
