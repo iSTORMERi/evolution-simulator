@@ -1,8 +1,5 @@
-// src/visuals/CurrentParticlesDebug.ts
-
 import * as PIXI from 'pixi.js';
 import { OceanCurrentsManager, CurrentZoneType } from '../simulation/OceanCurrentsManager';
-import { WorldMap } from '../world/WorldMap';
 
 interface Particle {
   x: number;
@@ -14,7 +11,6 @@ export class CurrentParticlesDebug {
   public container: PIXI.Container;
   private particles: Particle[] = [];
   private currentsManager: OceanCurrentsManager;
-  private worldMap: WorldMap;
 
   private particleTexture: PIXI.Texture;
 
@@ -23,20 +19,14 @@ export class CurrentParticlesDebug {
   private readonly colorCold = 0x00aaff;
   private readonly worldSize = 8000;
 
-  constructor(currentsManager: OceanCurrentsManager, worldMap: WorldMap, count: number = 2000) {
+  constructor(currentsManager: OceanCurrentsManager, count: number = 1800) {
     this.currentsManager = currentsManager;
-    this.worldMap = worldMap;
     this.container = new PIXI.Container();
 
-    // Создаем белую круглую текстуру радиусом 3px один раз в памяти
     this.particleTexture = this.generateCircleTexture(3);
-
     this.initParticles(count);
   }
 
-  /**
-   * Генерация круглой текстуры через Canvas (без зависимости от Renderer/Application)
-   */
   private generateCircleTexture(radius: number): PIXI.Texture {
     const canvas = document.createElement('canvas');
     const size = radius * 2;
@@ -51,7 +41,6 @@ export class CurrentParticlesDebug {
       ctx.fill();
     }
 
-    // Совместимый с PixiJS v8 формат создания текстуры из Canvas
     return PIXI.Texture.from(canvas);
   }
 
@@ -59,12 +48,10 @@ export class CurrentParticlesDebug {
     for (let i = 0; i < count; i++) {
       const sprite = new PIXI.Sprite(this.particleTexture);
       
-      // Центрируем якорь, чтобы координатой был центр круга
       sprite.anchor.set(0.5);
       sprite.alpha = 0.8;
       sprite.tint = this.colorMixed;
 
-      // Используем безопасный метод спавна на воде вместо случайных координат
       const pos = this.getRandomWaterPosition();
 
       sprite.position.set(pos.x, pos.y);
@@ -79,7 +66,7 @@ export class CurrentParticlesDebug {
     let ry = Math.random() * this.worldSize;
     let attempts = 0;
 
-    while (!this.currentsManager.isWater(rx, ry) && attempts < 15) {
+    while (!this.currentsManager.isWater(rx, ry) && attempts < 20) {
       rx = Math.random() * this.worldSize;
       ry = Math.random() * this.worldSize;
       attempts++;
@@ -117,13 +104,13 @@ export class CurrentParticlesDebug {
         }
       }
 
-      // Границы мира 8000x8000 (Зацикливание)
+      // Зацикливание по краям карты 8000x8000
       if (p.x > this.worldSize) p.x = 0;
       if (p.x < 0) p.x = this.worldSize;
       if (p.y > this.worldSize) p.y = 0;
       if (p.y < 0) p.y = this.worldSize;
 
-      // Окрашиваем спрайт через GPU-tinting без пересборки геометрии
+      // Цветовая динамика по зонам
       switch (current.zoneType) {
         case CurrentZoneType.WARM:
           p.sprite.tint = this.colorWarm;
@@ -136,7 +123,6 @@ export class CurrentParticlesDebug {
           break;
       }
 
-      // Обновляем позицию визуального спрайта
       p.sprite.x = p.x;
       p.sprite.y = p.y;
     }

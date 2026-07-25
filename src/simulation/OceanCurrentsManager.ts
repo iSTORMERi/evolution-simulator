@@ -1,6 +1,4 @@
-// src/simulation/OceanCurrentsManager.ts
-
-import { WorldMap } from '../world/WorldMap';
+import { OCEAN_ZONES_CONFIG, LAND_ZONE_CONFIG } from '../world/zoneConfig';
 import { ZoneConfig } from '../world/types';
 
 export enum CurrentZoneType {
@@ -13,53 +11,137 @@ export interface CurrentData {
   vx: number;
   vy: number;
   zoneType: CurrentZoneType;
-  zoneConfig?: ZoneConfig;
   isWater: boolean;
 }
 
 export class OceanCurrentsManager {
-  private worldMap: WorldMap;
+  private worldWidth: number;
+  private worldHeight: number;
   public baseSpeed: number = 200;
 
-  // Центр и радиус вращения гира (круговорота)
   private readonly centerPoint = 4000;
 
-  constructor(worldMap: WorldMap) {
-    this.worldMap = worldMap;
+  // Автономный контекст для чтения маски суши/биомов
+  private maskCanvas: HTMLCanvasElement;
+  private maskCtx: CanvasRenderingContext2D | null;
+  private maskData?: ImageData;
+  private isLoaded: boolean = false;
+
+  constructor(worldWidth: number, worldHeight: number) {
+    this.worldWidth = worldWidth;
+    this.worldHeight = worldHeight;
+
+    this.maskCanvas = document.createElement('canvas');
+    this.maskCtx = this.maskCanvas.getContext('2d', { willReadFrequently: true });
+
+    this.loadMask();
   }
 
   /**
-   * Безопасное получение зоны с защитой от ошибок загрузки/маски
+   * Фоновая автономная загрузка маски биомов
    */
-  public getZoneSafely(x: number, y: number): ZoneConfig | null {
+  private async loadMask(): Promise<void> {
     try {
-      return this.worldMap.getZoneAt(x, y) ?? null;
-    } catch {
-      return null;
+      const img = new Image();
+      img.src = 'assets/ocean_zones_mask.png';
+
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error('Currents: Mask image load failed'));
+      });
+
+      this.maskCanvas.width = img.width;
+      this.maskCanvas.height = img.height;
+
+      if (this.maskCtx) {
+        this.maskCtx.drawImage(img, 0, 0);
+        this.maskData = this.maskCtx.getImageData(0, 0, img.width, img.height);
+      }
+
+      this.isLoaded = true;
+    } catch (e) {
+      console.warn('OceanCurrentsManager: Маска не загружена, используется геометрический фоллбэк', e);
     }
   }
 
+  private rgbToHex(r: number, g: number, b: number): string {
+    const toHex = (c: number) => c.toString(16).padStart(2, '0');
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+  }
+
+  private colorDistance(hex1: string, hex2: string): number {
+    const r1 = parseInt(hex1.substring(1, 3), 16);
+    const g1 = parseInt(hex1.substring(3, 5), 16);
+    const b1 = parseInt(hex1.substring(5, 7), 16);
+
+    const r2 = parseInt(hex2.substring(1, 3), 16);
+    const g2 = parseInt(hex2.substring(3, 5), 16);
+    const b2 = parseInt(hex2.substring(5, 7), 16);
+
+    return Math.sqrt((r1 - r2) ** 2 + (g1 - g2) ** 2 + (b1 - b2) ** 2);
+  }
+
   /**
-   * Безопасная проверка на воду с защитой от незагрузившейся маски
+   * Определение зоны по координатам напрямую из маски
+   */
+  private getZoneAt(x: number, y: number): ZoneConfig | null {
+    if (!this.isLoaded || !this.maskData) return null;
+
+    const normalizedX = Math.max(0, Math.min(1, x / this.worldWidth));
+    const normalizedY = Math.max(0, Math.min(1, y / this.worldHeight));
+
+    const pixelX = Math.floor(normalizedX * (this.maskData.width - 1));
+    const pixelY = Math.floor(normalizedY * (this.maskData.height - 1));
+
+    const index = (pixelY * this.maskData.width + pixelX) * 4;
+    const r = this.maskData.data[index];
+    const g = this.maskData.data[index + 1];
+    const b = this.maskData.data[index + 2];
+
+    const sampledHex = this.rgbToHex(r, g, b);
+
+    if (this.colorDistance(sampledHex, LAND_ZONE_CONFIG.hexColor) < 80) {
+      return LAND_ZONE_CONFIG;
+    }
+
+    let closestZone = OCEAN_ZONES_CONFIG[0];
+    let minDistance = Infinity;
+
+    for (const zone of OCEAN_ZONES_CONFIG) {
+      const dist = this.colorDistance(sampledHex, zone.hexColor);
+      if (dist < minDistance) {
+        minDistance = dist;
+        closestZone = zone;
+      }
+    }
+
+    return closestZone;
+  }
+
+  /**
+   * Автономная проверка на воду без участия WorldMap
    */
   public isWater(x: number, y: number): boolean {
-    const zone = this.getZoneSafely(x, y);
-    // Если зона не определена/маска не готова -- по умолчанию считаем водой
+    if (!this.isLoaded) {
+      // Пока маска грузится в память -- безопасная круговая зона
+      const dist = Math.hypot(x - this.centerPoint, y - this.centerPoint);
+      return dist > 600 && dist < 3700;
+    }
+
+    const zone = this.getZoneAt(x, y);
     return zone ? !zone.isLand : true;
   }
 
   /**
-   * Расчет вектора и типа течения в точке (x, y)
+   * Расчет вектора течения и типа зоны
    */
   public getCurrentAt(x: number, y: number): CurrentData {
-    const zone = this.getZoneSafely(x, y);
-    const isWater = zone ? !zone.isLand : true;
+    const isWater = this.isWater(x, y);
 
-    // 1. Расчет вектора базового океанического круговорота (Gyre)
+    // Вектор океанического гира (вращение вокруг центра 4000x4000)
     const nx = (x - this.centerPoint) / this.centerPoint;
     const ny = (y - this.centerPoint) / this.centerPoint;
 
-    // Тангенциальный вектор вращения с легкой асимметрией
     let vx = -ny * 1.1;
     let vy = nx * 0.9;
 
@@ -67,33 +149,18 @@ export class OceanCurrentsManager {
     vx = (vx / len) * this.baseSpeed;
     vy = (vy / len) * this.baseSpeed;
 
-    // 2. Определение температурного типа течения на основе зоны
+    const zone = this.getZoneAt(x, y);
     const zoneType = this.resolveZoneType(zone);
 
-    return {
-      vx,
-      vy,
-      zoneType,
-      zoneConfig: zone ?? undefined,
-      isWater
-    };
+    return { vx, vy, zoneType, isWater };
   }
 
-  /**
-   * Вспомогательный метод определения типа течения по ID зоны
-   */
   private resolveZoneType(zone: ZoneConfig | null): CurrentZoneType {
-    if (!zone) return CurrentZoneType.MIXED;
+    if (!zone || zone.id.toLowerCase() === 'land') return CurrentZoneType.MIXED;
 
     const zoneId = zone.id.toLowerCase();
-
-    if (zoneId.includes('shallow') || zoneId.includes('shelf')) {
-      return CurrentZoneType.WARM;
-    }
-    
-    if (zoneId.includes('trench') || zoneId.includes('abyssal')) {
-      return CurrentZoneType.COLD;
-    }
+    if (zoneId.includes('shallow') || zoneId.includes('shelf')) return CurrentZoneType.WARM;
+    if (zoneId.includes('trench') || zoneId.includes('abyssal')) return CurrentZoneType.COLD;
 
     return CurrentZoneType.MIXED;
   }
