@@ -72,10 +72,9 @@ async function initApp() {
     
     app.stage.addChild(worldMap.container);
 
-    // 1.1. Инициализация течений и установка частиц
-    // Передаём worldMap в менеджеры для точной синхронизации с акваторией
-    const oceanCurrents = new OceanCurrentsManager(worldMap);
-    const debugParticles = new CurrentParticlesDebug(oceanCurrents, worldMap, 1800);
+    // 1.1. Инициализация течений и установка частиц ПОВЕРХ PNG карты
+    const oceanCurrents = new OceanCurrentsManager(WORLD_WIDTH, WORLD_HEIGHT);
+    const debugParticles = new CurrentParticlesDebug(oceanCurrents, 1800);
     
     // Выставляем высокий zIndex для частиц течения
     debugParticles.container.zIndex = 100;
