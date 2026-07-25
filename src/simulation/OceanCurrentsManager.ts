@@ -6,7 +6,7 @@ export interface ShorePoint {
 }
 
 export enum CurrentZoneType {
-  WARM = 'WARM', // 🟠 Прибрежное теплое течение (S-образный стадион вдоль берега)
+  WARM = 'WARM', // 🟠 Прибрежное теплое течение (S-образный массив вдоль берега)
   COLD = 'COLD'  // 🔵 Глубоководное холодное течение (повернутый овал слева)
 }
 
@@ -168,7 +168,6 @@ export class OceanCurrentsManager {
   ): Point2D | null {
     const { cx, cy, halfLength, radius, angleRad } = track;
 
-    // 1. Перевод координат в локальную систему стадиона
     const dx = x - cx;
     const dy = y - cy;
     const cosA = Math.cos(-angleRad);
@@ -181,7 +180,6 @@ export class OceanCurrentsManager {
     let lvy = 0;
     let inside = false;
 
-    // 2. Расчет в локальной системе
     if (Math.abs(lx) <= halfLength) {
       if (Math.abs(ly) <= radius) {
         lvx = ly < 0 ? 1 : -1;
@@ -206,7 +204,6 @@ export class OceanCurrentsManager {
 
     if (!inside) return null;
 
-    // 3. Поворот вектора обратно в мировые координаты
     const cosR = Math.cos(angleRad);
     const sinR = Math.sin(angleRad);
     return {
@@ -234,9 +231,7 @@ export class OceanCurrentsManager {
     let minDist = Infinity;
     let closestProj: Point2D | null = null;
     let activeDir: Point2D = { x: 0, y: 1 };
-    let segmentIndex = -1;
 
-    // Поиск ближайшего сегмента
     for (let i = 0; i < segments.length; i++) {
       const { a, b } = segments[i];
       const dx = b.x - a.x;
@@ -254,7 +249,6 @@ export class OceanCurrentsManager {
         closestProj = { x: projX, y: projY };
         const len = Math.sqrt(lenSq);
         activeDir = { x: dx / len, y: dy / len };
-        segmentIndex = i;
       }
     }
 
@@ -275,11 +269,8 @@ export class OceanCurrentsManager {
       return { x: -dy, y: dx };
     }
 
-    // Определяем, с какой стороны от оси находится точка (Векторное произведение)
     const cross = activeDir.x * (py - closestProj.y) - activeDir.y * (px - closestProj.x);
 
-    // Вдоль берега (справа от оси) -> течем вниз
-    // В глубокой воде (слева от оси) -> течем вверх обратно
     if (cross > 0) {
       return { x: activeDir.x, y: activeDir.y };
     } else {
@@ -299,13 +290,13 @@ export class OceanCurrentsManager {
       };
     }
 
-    // --- 1. ХОЛОДНОЕ ТЕЧЕНИЕ (Слева сверху -- выровнено под угол берега) ---
+    // --- 1. ХОЛОДНОЕ ТЕЧЕНИЕ (Наклонено слева снизу -> вправо вверх) ---
     const coldTrack = {
       cx: 2200,
       cy: 2500,
       halfLength: 1800,
       radius: 800,
-      angleRad: (25 * Math.PI) / 180 // Поворот на 25 градусов параллельно берегу
+      angleRad: (-30 * Math.PI) / 180 // Отрицательный угол поворачивает овал снизу-слева вверх-направо
     };
 
     const coldVec = this.getRotatedStadiumVector(x, y, coldTrack);
@@ -320,11 +311,11 @@ export class OceanCurrentsManager {
       };
     }
 
-    // --- 2. ТЕПЛОЕ ТЕЧЕНИЕ (Справа -- S-образный стадион вдоль 3 опорных точек берега) ---
-    const warmP0 = { x: 6200, y: 1500 }; // Верх пляжа
-    const warmP1 = { x: 4800, y: 4800 }; // Выступающий мыс по центру
-    const warmP2 = { x: 6000, y: 7200 }; // Низ пляжа
-    const warmRadius = 900;
+    // --- 2. ТЕПЛОЕ ТЕЧЕНИЕ (Массивный S-образный гигант от самого верха справа до самого низа) ---
+    const warmP0 = { x: 7200, y: 500 };  // Продлено в верхнюю правую границу
+    const warmP1 = { x: 4500, y: 4200 }; // Выступающий мыс по центру
+    const warmP2 = { x: 5200, y: 7600 }; // Продлено в нижнюю границу
+    const warmRadius = 1500;             // Существенно увеличена ширина потока
 
     const warmVec = this.getBentStadiumVector(x, y, warmP0, warmP1, warmP2, warmRadius);
     if (warmVec) {
