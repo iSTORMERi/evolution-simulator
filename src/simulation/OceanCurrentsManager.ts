@@ -6,11 +6,11 @@ export interface ShorePoint {
 }
 
 export enum CurrentZoneType {
-  WARM = 'WARM',             // 🟠 Теплое течение (повернутый стадион справа и левый нижний угол)
-  COLD = 'COLD',             // 🔵 Холодное течение (повернутый стадион слева)
-  TRANSIT = 'TRANSIT',       // 🟡 Выносящие течения по бокам (желтые полумесяцы)
-  CONNECTING = 'CONNECTING', // 🟢 Прямое соединительное течение в центре (зеленое)
-  DRIFT = 'DRIFT'            // 🌊 Локальный выносящий дрейф (подпитка магистралей)
+  WARM = 'WARM',             // 🟠 Теплое течение
+  COLD = 'COLD',             // 🔵 Холодное течение
+  TRANSIT = 'TRANSIT',       // 🟡 Выносящие течения по бокам
+  CONNECTING = 'CONNECTING', // 🟢 Прямое соединительное течение в центре
+  DRIFT = 'DRIFT'            // 🌊 Локальный выносящий дрейф
 }
 
 export interface CurrentData {
@@ -26,7 +26,16 @@ export const ZONE_COLOR_MAP: Record<CurrentZoneType, string> = {
   [CurrentZoneType.COLD]: '#00BFFF',       // Ледяной синий
   [CurrentZoneType.TRANSIT]: '#FFD700',    // Ярко-жёлтый
   [CurrentZoneType.CONNECTING]: '#00FF66', // Сочно-зелёный
-  [CurrentZoneType.DRIFT]: '#1e3a5f'       // Глубокий тёмно-морской (локальный дрейф)
+  [CurrentZoneType.DRIFT]: '#1e3a5f'       // Глубокий тёмно-морской
+};
+
+// Мультипликаторы скоростей для разных зон
+export const ZONE_SPEED_MULTIPLIERS: Record<CurrentZoneType, number> = {
+  [CurrentZoneType.CONNECTING]: 1.3,  // 🟢 Узкая центральная магистраль (самая быстрая)
+  [CurrentZoneType.TRANSIT]: 1.1,     // 🟡 Транзитные выносящие дуги
+  [CurrentZoneType.WARM]: 0.9,        // 🟠 Активные тёплые вихри
+  [CurrentZoneType.COLD]: 0.75,       // 🔵 Плотные и более вязкие холодные массы
+  [CurrentZoneType.DRIFT]: 0.35       // 🌊 Медленный подпитывающий дрейф стоячей воды
 };
 
 interface Point2D {
@@ -37,14 +46,14 @@ interface Point2D {
 export class OceanCurrentsManager {
   private worldWidth: number;
   private worldHeight: number;
-  public baseSpeed: number = 200;
+  // Снижено в 3 раза (было 200, стало 65)
+  public baseSpeed: number = 65;
 
   private readonly MASK_SIZE = 1000;
   private shorelineLimits: Float32Array = new Float32Array(this.MASK_SIZE).fill(0);
   private waterSpawnPoints: Point2D[] = [];
   public isLoaded: boolean = false;
 
-  // Ключевые узловые центры магистральных течений для притяжения стоячей воды
   private readonly MAIN_STREAM_ANCHORS: Point2D[] = [
     { x: 2200, y: 2800 }, // Центр холодного стадиона
     { x: 4200, y: 4200 }, // Центр теплого стадиона
@@ -52,7 +61,7 @@ export class OceanCurrentsManager {
     { x: 3150, y: 3450 }, // Центральное зеленое русло
     { x: 4500, y: 1100 }, // Верхний транзитный полумесяц
     { x: 2600, y: 6300 }, // Нижний транзитный полумесяц
-    { x: 1400, y: 6800 }  // Тёплый круговорот в самом левом нижнем углу
+    { x: 1400, y: 6800 }  // Тёплый круговорот в левом нижнем углу
   ];
 
   constructor(worldWidth: number = 8000, worldHeight: number = 8000) {
@@ -175,9 +184,6 @@ export class OceanCurrentsManager {
     return { x: 500, y: 4000 };
   }
 
-  /**
-   * Вектор притяжения стоячей воды к ближайшему магистральному руслу
-   */
   private getDriftTowardsNearestStream(x: number, y: number): Point2D {
     let minDistanceSq = Infinity;
     let targetAnchor = this.MAIN_STREAM_ANCHORS[0];
@@ -202,9 +208,6 @@ export class OceanCurrentsManager {
     };
   }
 
-  /**
-   * Универсальный вектор для повернутого стадиона
-   */
   private getRotatedStadiumVector(
     x: number,
     y: number,
@@ -256,9 +259,6 @@ export class OceanCurrentsManager {
     };
   }
 
-  /**
-   * Вектор замкнутого кольцевого (кругового) течения
-   */
   private getCircularGyreVector(
     x: number,
     y: number,
@@ -273,7 +273,6 @@ export class OceanCurrentsManager {
 
     if (dist < innerR || dist > outerR) return null;
 
-    // Вращение (по часовой или против)
     const dir = gyre.clockwise === false ? -1 : 1;
     const tangentX = -dir * (dy / dist);
     const tangentY = dir * (dx / dist);
@@ -284,9 +283,6 @@ export class OceanCurrentsManager {
     };
   }
 
-  /**
-   * Вектор замкнутого треугольного круговорота со сглаженными вершинами
-   */
   private getTriangleGyreVector(
     x: number,
     y: number,
@@ -352,9 +348,6 @@ export class OceanCurrentsManager {
     return bestDir;
   }
 
-  /**
-   * Незамкнутое дугообразное течение (полумесяц) на основе квадратичной кривой Безье
-   */
   private getCrescentStreamVector(
     x: number,
     y: number,
@@ -394,9 +387,6 @@ export class OceanCurrentsManager {
     };
   }
 
-  /**
-   * Прямое линейное течение из точки P0 в точку P1
-   */
   private getLinearStreamVector(
     x: number,
     y: number,
@@ -465,7 +455,7 @@ export class OceanCurrentsManager {
       coldWeight += 1.0;
     }
 
-    // --- 2. СЕВЕРНЫЙ ТРЕУГОЛЬНЫЙ ГИР (Верхний левый угол) ---
+    // --- 2. СЕВЕРНЫЙ ТРЕУГОЛЬНЫЙ ГИР ---
     const northTriangle = {
       p0: { x: 800, y: 600 },
       p1: { x: 3200, y: 800 },
@@ -572,7 +562,7 @@ export class OceanCurrentsManager {
       connectingWeight += 2.0;
     }
 
-    // --- 7. ТЁПЛОЕ ТЕЧЕНИЕ В ЛЕВОМ НИЖНЕМ УГЛУ (Замкнутый оранжевый вихрь) ---
+    // --- 7. ТЁПЛОЕ ТЕЧЕНИЕ В ЛЕВОМ НИЖНЕМ УГЛУ ---
     const bottomLeftWarmGyre = {
       cx: 1400,
       cy: 6800,
@@ -586,13 +576,13 @@ export class OceanCurrentsManager {
       totalVx += bottomLeftWarmVec.x;
       totalVy += bottomLeftWarmVec.y;
       activeCount++;
-      warmWeight += 2.0; // Высокий приоритет тёплой (оранжевой) зоны
+      warmWeight += 2.0;
     }
 
     // --- ОБРАБОТКА СТОЯЧЕЙ ВОДЫ (ЛОКАЛЬНЫЙ ВЫНОСНОЙ ДРЕЙФ) ---
     if (activeCount === 0) {
       const driftVec = this.getDriftTowardsNearestStream(x, y);
-      const driftSpeed = this.baseSpeed * 0.35; // Мягкое течение для подпитки магистралей
+      const driftSpeed = this.baseSpeed * ZONE_SPEED_MULTIPLIERS[CurrentZoneType.DRIFT];
 
       return {
         vx: driftVec.x * driftSpeed,
@@ -603,23 +593,25 @@ export class OceanCurrentsManager {
       };
     }
 
-    // --- РЕЗУЛЬТИРУЮЩИЙ РАСЧЕТ И ВЕКТОРНОЕ СЛОЖЕНИЕ ДЛЯ МАГИСТРАЛЕЙ ---
-    const combinedLen = Math.hypot(totalVx, totalVy);
-    const speedBoost = activeCount > 1 ? 1.15 : 1.0;
-    const finalVx = (totalVx / (combinedLen || 1)) * this.baseSpeed * speedBoost;
-    const finalVy = (totalVy / (combinedLen || 1)) * this.baseSpeed * speedBoost;
-
-    // Определение доминирующего цвета
+    // Определение доминирующего типа течения
     let primaryZone = CurrentZoneType.COLD;
     const maxWeight = Math.max(warmWeight, coldWeight, transitWeight, connectingWeight);
 
     if (maxWeight === warmWeight) {
-      primaryZone = CurrentZoneType.WARM;       // 🟠 Оранжевый цвет (Тёплое)
+      primaryZone = CurrentZoneType.WARM;
     } else if (maxWeight === connectingWeight) {
-      primaryZone = CurrentZoneType.CONNECTING; // 🟢 Зеленый цвет
+      primaryZone = CurrentZoneType.CONNECTING;
     } else if (maxWeight === transitWeight) {
-      primaryZone = CurrentZoneType.TRANSIT;    // 🟡 Жёлтый цвет
+      primaryZone = CurrentZoneType.TRANSIT;
     }
+
+    // РАСЧЕТ ИТОГОВОЙ СКОРОСТИ С УЧЕТОМ МУЛЬТИПЛИКАТОРА ЗОНЫ
+    const combinedLen = Math.hypot(totalVx, totalVy);
+    const speedBoost = activeCount > 1 ? 1.15 : 1.0;
+    const zoneSpeed = this.baseSpeed * ZONE_SPEED_MULTIPLIERS[primaryZone] * speedBoost;
+
+    const finalVx = (totalVx / (combinedLen || 1)) * zoneSpeed;
+    const finalVy = (totalVy / (combinedLen || 1)) * zoneSpeed;
 
     return {
       vx: finalVx,
