@@ -33,10 +33,61 @@
       overflow: hidden;
       touch-action: none;
     }
+
+    /* --- СТИЛИ ДЛЯ КНОПКИ ТЕЧЕНИЙ --- */
+    .fab-btn {
+      position: absolute;
+      right: 20px;
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      background: rgba(18, 32, 47, 0.75);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+      transition: background 0.25s ease, border-color 0.25s ease, color 0.25s ease, transform 0.15s ease, opacity 0.25s ease;
+      z-index: 100;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    /* Позиция ровно над кнопкой поиска/лупы */
+    .currents-btn {
+      bottom: 84px; /* 20px (отступ лупы снизу) + 52px (высота) + 12px (зазор) */
+      opacity: 0.75;
+    }
+
+    .fab-btn:active {
+      transform: scale(0.92);
+    }
+
+    /* Состояние, когда течения ВКЛЮЧЕНЫ */
+    .currents-btn.active {
+      opacity: 1;
+      background: rgba(0, 191, 255, 0.25);
+      border-color: #00BFFF;
+      color: #00BFFF;
+      box-shadow: 0 0 15px rgba(0, 191, 255, 0.4);
+    }
   </style>
 </head>
 <body>
   <div id="app"></div>
+
+  <!-- Кнопка включения визуализации течений -->
+  <button id="toggle-currents-btn" class="fab-btn currents-btn" title="Визуализация течений">
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+      <path d="M2 6c2.5 0 2.5 2 5 2s2.5-2 5-2 2.5 2 5 2 2.5-2 5-2"></path>
+      <path d="M2 12c2.5 0 2.5 2 5 2s2.5-2 5-2 2.5 2 5 2 2.5-2 5-2"></path>
+      <path d="M2 18c2.5 0 2.5 2 5 2s2.5-2 5-2 2.5 2 5 2 2.5-2 5-2"></path>
+    </svg>
+  </button>
+
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

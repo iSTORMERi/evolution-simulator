@@ -7,9 +7,10 @@ import { LightingController } from './world/LightingController';
 import { TimeDebugUI } from './ui/TimeDebugUI';
 import { BiomeScanner } from './ui/BiomeScanner';
 
-// 1. Импортируем обновленный менеджер течений и частицы
+// 1. Импортируем менеджер течений, частицы и контроллер кнопки UI
 import { OceanCurrentsManager } from './simulation/OceanCurrentsManager';
 import { CurrentParticlesDebug } from './visuals/CurrentParticlesDebug';
+import { CurrentsToggleUI } from './ui/CurrentsToggleUI';
 
 let currentApp: PIXI.Application | null = null;
 let resizeHandler: (() => void) | null = null;
@@ -80,6 +81,17 @@ async function initApp() {
     debugParticles.container.zIndex = 100;
     worldMap.container.addChild(debugParticles.container);
 
+    // 1.2. Управление видимостью течений с помощью кнопки UI
+    const currentsUI = new CurrentsToggleUI('toggle-currents-btn');
+    
+    // Изначально течения не видны
+    debugParticles.container.visible = currentsUI.isCurrentsVisible;
+
+    // Реакция на нажатие кнопки
+    currentsUI.onToggle((visible) => {
+      debugParticles.container.visible = visible;
+    });
+
     // 2. Инициализация камеры
     const camera = new CameraController(worldMap.container, canvas, WORLD_WIDTH, WORLD_HEIGHT);
     
@@ -102,8 +114,10 @@ async function initApp() {
       // Обновляем физику и анимации воды
       worldMap.update(deltaSeconds);
 
-      // Обновляем движение частиц океанических течений
-      debugParticles.update(deltaSeconds);
+      // Обновляем физику частиц (если они видимы)
+      if (debugParticles.container.visible) {
+        debugParticles.update(deltaSeconds);
+      }
 
       // Синхронизируем состояние дня/ночи на карте
       if (typeof (lightingController as any).getCurrentHours === 'function') {
