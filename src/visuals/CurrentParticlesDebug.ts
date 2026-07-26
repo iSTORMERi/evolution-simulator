@@ -1,31 +1,23 @@
 import * as PIXI from 'pixi.js';
 import { OceanCurrentsManager, CurrentZoneType } from '../simulation/OceanCurrentsManager';
 
-interface Point2D {
-  x: number;
-  y: number;
-}
-
 interface Particle {
   x: number;
   y: number;
   life: number;
   maxLife: number;
-  lengthScale: number;
-  history: Point2D[];   // История координат для динамического следа
-  maxHistory: number;  // Максимальная длина шлейфа
+  lengthScale: number; // Индивидуальный множитель длины
   sprite: PIXI.Sprite;
 }
 
 export class CurrentParticlesDebug {
   public container: PIXI.Container;
-  private trailGraphics: PIXI.Graphics; // Графика для отрисовки изогнутых следов
   private particles: Particle[] = [];
   private currentsManager: OceanCurrentsManager;
 
   private particleTexture: PIXI.Texture;
 
-  // Неоновая палитра течений
+  // Цветовая палитра PIXI Hex
   private readonly colorWarm = 0xff8c00;       // 🟠 Оранжевый
   private readonly colorCold = 0x00bfff;       // 🔵 Синий
   private readonly colorTransit = 0xffd700;    // 🟡 Жёлтый
@@ -34,24 +26,17 @@ export class CurrentParticlesDebug {
 
   private readonly worldSize = 8000;
 
-  constructor(currentsManager: OceanCurrentsManager, count: number = 1800) {
+  constructor(currentsManager: OceanCurrentsManager, count: number = 2200) {
     this.currentsManager = currentsManager;
     this.container = new PIXI.Container();
 
-    // Режим аддитивного наложения для эффектного свечения в местах слияния течений
-    this.container.blendMode = PIXI.BLEND_MODES.ADD;
-
-    // Слой для искривлённых динамических следов (рисуется под кометами)
-    this.trailGraphics = new PIXI.Graphics();
-    this.container.addChild(this.trailGraphics);
-
-    // Генерация текстуры кометы (64px x 6px)
-    this.particleTexture = this.generateCometTexture(64, 6);
+    // Генерируем текстуру кометы (64px x 8px) с градиентным хвостом
+    this.particleTexture = this.generateCometTexture(64, 8);
     this.initParticles(count);
   }
 
   /**
-   * Генерация текстуры кометы с мягким градиентным хвостом
+   * Генерация текстуры кометы: плавный прозрачный хвост слева, яркая голова справа
    */
   private generateCometTexture(width: number, height: number): PIXI.Texture {
     const canvas = document.createElement('canvas');
@@ -60,20 +45,20 @@ export class CurrentParticlesDebug {
 
     const ctx = canvas.getContext('2d');
     if (ctx) {
-      // Градиент: полностью прозрачный хвост (слева) -> яркая голова (справа)
+      // Градиент прозрачности вдоль оси X
       const gradient = ctx.createLinearGradient(0, 0, width, 0);
-      gradient.addColorStop(0, 'rgba(255, 255, 255, 0)');
-      gradient.addColorStop(0.6, 'rgba(255, 255, 255, 0.4)');
-      gradient.addColorStop(1, 'rgba(255, 255, 255, 1.0)');
+      gradient.addColorStop(0, 'rgba(255, 255, 255, 0)');     // Хвост (полная прозрачность)
+      gradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.4)'); // Тело
+      gradient.addColorStop(1, 'rgba(255, 255, 255, 1.0)');   // Голова (яркая)
 
       ctx.fillStyle = gradient;
       ctx.beginPath();
 
       const centerY = height / 2;
       ctx.moveTo(0, centerY);                                        // Острый хвост
-      ctx.lineTo(width - height, 0);                                 // Верхнее плечо
-      ctx.arcTo(width, centerY, width - height, height, height / 2); // Скругленный носовой обтекатель
-      ctx.lineTo(width - height, height);                            // Нижнее плечо
+      ctx.lineTo(width - height, 0);                                 // Верхнее ребро
+      ctx.arcTo(width, centerY, width - height, height, height / 2); // Скругленная голова
+      ctx.lineTo(width - height, height);                            // Нижнее ребро
       ctx.closePath();
       ctx.fill();
     }
@@ -85,27 +70,27 @@ export class CurrentParticlesDebug {
     for (let i = 0; i < count; i++) {
       const sprite = new PIXI.Sprite(this.particleTexture);
       
-      // Точка привязки справа по центру (1.0, 0.5) -- голова кометы на острие вектора
+      // Устанавливаем анкор в голову кометы (правый край: x=1.0, y=0.5), 
+      // чтобы частица вращалась и двигалась точно своим «носом» вперед.
       sprite.anchor.set(1.0, 0.5);
 
       const pos = this.currentsManager.getRandomWaterPosition();
       sprite.position.set(pos.x, pos.y);
 
-      const maxLife = 3 + Math.random() * 4; // Время жизни 3-7 секунд
+      const maxLife = 4 + Math.random() * 4;
       const life = Math.random() * maxLife;
-      const lengthScale = 0.8 + Math.random() * 1.8;
-      const maxHistory = 6 + Math.floor(Math.random() * 8); // 6-14 звеньев шлейфа
+      
+      // Разнородная длина: от 0.8x до 2.5x
+      const lengthScale = 0.8 + Math.random() * 1.7;
 
       this.container.addChild(sprite);
-      this.particles.push({
-        x: pos.x,
-        y: pos.y,
-        life,
-        maxLife,
-        lengthScale,
-        history: [{ x: pos.x, y: pos.y }],
-        maxHistory,
-        sprite
+      this.particles.push({ 
+        x: pos.x, 
+        y: pos.y, 
+        life, 
+        maxLife, 
+        lengthScale, 
+        sprite 
       });
     }
   }
@@ -115,18 +100,13 @@ export class CurrentParticlesDebug {
     p.x = pos.x;
     p.y = pos.y;
     p.life = 0;
-    p.maxLife = 3 + Math.random() * 4;
-    p.lengthScale = 0.8 + Math.random() * 1.8;
-    p.maxHistory = 6 + Math.floor(Math.random() * 8);
-    p.history = [{ x: pos.x, y: pos.y }];
+    p.maxLife = 4 + Math.random() * 4;
+    p.lengthScale = 0.8 + Math.random() * 1.7;
     p.sprite.position.set(p.x, p.y);
   }
 
   public update(deltaSeconds: number): void {
     const total = this.particles.length;
-
-    // Очищаем векторный слой следов перед каждым кадром
-    this.trailGraphics.clear();
 
     for (let i = 0; i < total; i++) {
       const p = this.particles[i];
@@ -146,90 +126,69 @@ export class CurrentParticlesDebug {
       const nextX = p.x + dx;
       const nextY = p.y + dy;
 
-      // Проверка столкновения с сушей и выпадания за карту
-      if (!this.currentsManager.isWater(nextX, nextY) ||
-          nextX > this.worldSize || nextX < 0 ||
-          nextY > this.worldSize || nextY < 0) {
+      // Проверка на столкновение с сушей
+      if (this.currentsManager.isWater(nextX, nextY)) {
+        p.x = nextX;
+        p.y = nextY;
+      } else {
         this.respawnParticle(p);
         continue;
       }
 
-      p.x = nextX;
-      p.y = nextY;
-
-      // Записываем позицию в историю шлейфа
-      p.history.unshift({ x: p.x, y: p.y });
-      if (p.history.length > p.maxHistory) {
-        p.history.pop();
+      // Зацикливание по краям карты
+      if (p.x > this.worldSize || p.x < 0 || p.y > this.worldSize || p.y < 0) {
+        this.respawnParticle(p);
+        continue;
       }
 
-      // Вычисление базовой прозрачности (Fade In / Fade Out)
-      const progress = p.life / p.maxLife;
-      let alpha = 0.85;
-      if (progress < 0.15) alpha = (progress / 0.15) * 0.85;
-      if (progress > 0.85) alpha = ((1 - progress) / 0.15) * 0.85;
-
-      // Получаем цвет зоны
-      const color = this.getZoneColor(current.zoneType);
-
-      // --- 1. ОТРЕСОВКА ДИНАМИЧЕСКОГО ИЗОГНУТОГО ШЛЕЙФА ---
-      if (p.history.length >= 2) {
-        for (let j = 0; j < p.history.length - 1; j++) {
-          const p1 = p.history[j];
-          const p2 = p.history[j + 1];
-
-          // Плавное сужение и затухание от головы к хвосту
-          const segmentRatio = 1 - j / p.history.length;
-          const segAlpha = alpha * Math.pow(segmentRatio, 1.8);
-          const thickness = 0.8 + segmentRatio * 2.2;
-
-          this.trailGraphics.lineStyle(thickness, color, segAlpha);
-          this.trailGraphics.moveTo(p1.x, p1.y);
-          this.trailGraphics.lineTo(p2.x, p2.y);
-        }
-      }
-
-      // --- 2. ОТРЕСОВКА ГОЛОВНОЙ КОМЕТЫ (СПРАЙТА) ---
+      // Поворот кометы вдоль направления скорости
       const speed = Math.hypot(current.vx, current.vy);
       if (speed > 0.01) {
         p.sprite.rotation = Math.atan2(current.vy, current.vx);
       }
 
-      // Растяжение кометы по скорости
+      // Динамический размер: длина зависит от индивидуального коэффициента и скорости течения
       const currentSpeedFactor = Math.min(2.0, Math.max(0.5, speed / 200));
       p.sprite.scale.x = p.lengthScale * currentSpeedFactor;
-      p.sprite.scale.y = 1.0;
+      p.sprite.scale.y = 1.0; // Аккуратная толщина кометы
 
+      // Прозрачность с мягким проявлением и затуханием (Fade In / Fade Out)
+      const progress = p.life / p.maxLife;
+      let alpha = 0.85;
+      if (progress < 0.2) alpha = (progress / 0.2) * 0.85;
+      if (progress > 0.8) alpha = ((1 - progress) / 0.2) * 0.85;
       p.sprite.alpha = alpha;
-      p.sprite.tint = color;
+
+      // Окрашивание в соответствии со всеми зонами течений
+      switch (current.zoneType) {
+        case CurrentZoneType.WARM:
+          p.sprite.tint = this.colorWarm;
+          break;
+        case CurrentZoneType.COLD:
+          p.sprite.tint = this.colorCold;
+          break;
+        case CurrentZoneType.TRANSIT:
+          p.sprite.tint = this.colorTransit;
+          break;
+        case CurrentZoneType.CONNECTING:
+          p.sprite.tint = this.colorConnecting;
+          break;
+        case CurrentZoneType.DRIFT:
+          p.sprite.tint = this.colorDrift;
+          break;
+        default:
+          p.sprite.tint = this.colorCold;
+          break;
+      }
+
       p.sprite.x = p.x;
       p.sprite.y = p.y;
-    }
-  }
-
-  private getZoneColor(zoneType: CurrentZoneType): number {
-    switch (zoneType) {
-      case CurrentZoneType.WARM:
-        return this.colorWarm;
-      case CurrentZoneType.COLD:
-        return this.colorCold;
-      case CurrentZoneType.TRANSIT:
-        return this.colorTransit;
-      case CurrentZoneType.CONNECTING:
-        return this.colorConnecting;
-      case CurrentZoneType.DRIFT:
-        return this.colorDrift;
-      default:
-        return this.colorCold;
     }
   }
 
   public destroy(): void {
     if (this.particleTexture) {
       this.particleTexture.destroy(true);
-    }
-    if (this.trailGraphics) {
-      this.trailGraphics.destroy();
     }
     this.container.destroy({ children: true });
   }
