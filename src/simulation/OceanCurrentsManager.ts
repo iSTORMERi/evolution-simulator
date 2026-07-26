@@ -51,7 +51,8 @@ export class OceanCurrentsManager {
     { x: 2000, y: 1500 }, // Северный треугольник
     { x: 3150, y: 3450 }, // Центральное зеленое русло
     { x: 4500, y: 1100 }, // Верхний транзитный полумесяц
-    { x: 2600, y: 6300 }  // Нижний транзитный полумесяц
+    { x: 2600, y: 6300 }, // Нижний транзитный полумесяц
+    { x: 1900, y: 6100 }  // Замкнутый вихрь сброса отходов (левый нижний угол)
   ];
 
   constructor(worldWidth: number = 8000, worldHeight: number = 8000) {
@@ -252,6 +253,34 @@ export class OceanCurrentsManager {
     return {
       x: lvx * cosR - lvy * sinR,
       y: lvx * sinR + lvy * cosR
+    };
+  }
+
+  /**
+   * Вектор замкнутого кольцевого (кругового) течения
+   */
+  private getCircularGyreVector(
+    x: number,
+    y: number,
+    gyre: { cx: number; cy: number; radius: number; thickness: number; clockwise?: boolean }
+  ): Point2D | null {
+    const dx = x - gyre.cx;
+    const dy = y - gyre.cy;
+    const dist = Math.hypot(dx, dy);
+
+    const innerR = Math.max(0, gyre.radius - gyre.thickness / 2);
+    const outerR = gyre.radius + gyre.thickness / 2;
+
+    if (dist < innerR || dist > outerR) return null;
+
+    // Вращение (по часовой или против)
+    const dir = gyre.clockwise === false ? -1 : 1;
+    const tangentX = -dir * (dy / dist);
+    const tangentY = dir * (dx / dist);
+
+    return {
+      x: tangentX,
+      y: tangentY
     };
   }
 
@@ -543,6 +572,23 @@ export class OceanCurrentsManager {
       connectingWeight += 2.0;
     }
 
+    // --- 7. ЗАМКНУТЫЙ ВИХРЬ СБРОСА ОТХОДОВ (Левый нижний угол) ---
+    const bottomLeftWasteGyre = {
+      cx: 1900,
+      cy: 6100,
+      radius: 650,
+      thickness: 500,
+      clockwise: true
+    };
+
+    const wasteGyreVec = this.getCircularGyreVector(x, y, bottomLeftWasteGyre);
+    if (wasteGyreVec) {
+      totalVx += wasteGyreVec.x;
+      totalVy += wasteGyreVec.y;
+      activeCount++;
+      connectingWeight += 1.2; // Сочно-зеленый цвет кольца
+    }
+
     // --- ОБРАБОТКА СТОЯЧЕЙ ВОДЫ (ЛОКАЛЬНЫЙ ВЫНОСНОЙ ДРЕЙФ) ---
     if (activeCount === 0) {
       const driftVec = this.getDriftTowardsNearestStream(x, y);
@@ -568,9 +614,9 @@ export class OceanCurrentsManager {
     const maxWeight = Math.max(warmWeight, coldWeight, transitWeight, connectingWeight);
 
     if (maxWeight === connectingWeight) {
-      primaryZone = CurrentZoneType.CONNECTING; // 🟢 Зеленый цвет для прямого течения
+      primaryZone = CurrentZoneType.CONNECTING; // 🟢 Зеленый цвет для прямого течения и кольца
     } else if (maxWeight === transitWeight) {
-      primaryZone = CurrentZoneType.TRANSIT;    // 🟡 Жёлтый цвет для полумесяцев
+      primaryZone = CurrentZoneType.TRANSIT;    // 🟡 Жёлтый цвет для полумесяцев (подхватывает сброс)
     } else if (maxWeight === warmWeight) {
       primaryZone = CurrentZoneType.WARM;       // 🟠 Оранжевый цвет
     }
