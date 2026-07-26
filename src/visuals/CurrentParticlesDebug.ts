@@ -1,185 +1,163 @@
 import * as PIXI from 'pixi.js';
 import { OceanCurrentsManager, CurrentZoneType } from '../simulation/OceanCurrentsManager';
 
-interface Particle {
+interface Point2D {
+  x: number;
+  y: number;
+}
+
+interface TrailParticle {
   x: number;
   y: number;
   life: number;
   maxLife: number;
-  lengthScale: number; // Индивидуальный множитель длины
-  sprite: PIXI.Sprite;
+  history: Point2D[];   // История последних координат (след)
+  maxHistory: number;  // Длина следа в точках
+  zoneType: CurrentZoneType;
 }
 
 export class CurrentParticlesDebug {
   public container: PIXI.Container;
-  private particles: Particle[] = [];
+  private graphics: PIXI.Graphics;
+  private particles: TrailParticle[] = [];
   private currentsManager: OceanCurrentsManager;
 
-  private particleTexture: PIXI.Texture;
-
-  // Цветовая палитра PIXI Hex
-  private readonly colorWarm = 0xff8c00;       // 🟠 Оранжевый
-  private readonly colorCold = 0x00bfff;       // 🔵 Синий
-  private readonly colorTransit = 0xffd700;    // 🟡 Жёлтый
-  private readonly colorConnecting = 0x00ff66; // 🟢 Сочно-зелёный
-  private readonly colorDrift = 0x1e3a5f;      // 🌊 Тёмно-морской
+  // Неоновые цвета с поддержкой ADD-смешивания
+  private readonly colorWarm = 0xff7700;       // 🟠 Оранжевый
+  private readonly colorCold = 0x00d5ff;       // 🔵 Голубой / Ледяной
+  private readonly colorTransit = 0xffe600;    // 🟡 Жёлтый
+  private readonly colorConnecting = 0x00ff66; // 🟢 Зелёный
+  private readonly colorDrift = 0x2a52be;      // 🌊 Глубокий синий
 
   private readonly worldSize = 8000;
 
-  constructor(currentsManager: OceanCurrentsManager, count: number = 2200) {
+  constructor(currentsManager: OceanCurrentsManager, count: number = 1800) {
     this.currentsManager = currentsManager;
     this.container = new PIXI.Container();
+    
+    // Включаем аддитивное смешивание для красивого свечения перекрестных течений
+    this.container.blendMode = PIXI.BLEND_MODES.ADD;
 
-    // Базовая увеличенная текстура (72px x 8px вместо 18px x 4px)
-    this.particleTexture = this.generateDashTexture(72, 8);
+    this.graphics = new PIXI.Graphics();
+    this.container.addChild(this.graphics);
+
     this.initParticles(count);
-  }
-
-  /**
-   * Генерация вытянутой текстуры черточки со скругленными краями
-   */
-  private generateDashTexture(width: number, height: number): PIXI.Texture {
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-
-    const ctx = canvas.getContext('2d');
-    if (ctx) {
-      ctx.fillStyle = '#ffffff';
-      ctx.beginPath();
-      if (typeof ctx.roundRect === 'function') {
-        ctx.roundRect(0, 0, width, height, height / 2);
-      } else {
-        ctx.rect(0, 0, width, height);
-      }
-      ctx.fill();
-    }
-
-    return PIXI.Texture.from(canvas);
   }
 
   private initParticles(count: number): void {
     for (let i = 0; i < count; i++) {
-      const sprite = new PIXI.Sprite(this.particleTexture);
-      // Центрируем анкор для ровного вращения вокруг центра
-      sprite.anchor.set(0.5);
-
       const pos = this.currentsManager.getRandomWaterPosition();
-      sprite.position.set(pos.x, pos.y);
+      const maxLife = 3 + Math.random() * 4; // 3-7 секунд жизни
+      const maxHistory = 6 + Math.floor(Math.random() * 8); // От 6 до 14 звеньев в шлейфе
 
-      const maxLife = 4 + Math.random() * 4;
-      const life = Math.random() * maxLife;
-      
-      // Разнородная длина: от 1.0x до 3.5x
-      const lengthScale = 1.0 + Math.random() * 2.5;
-
-      this.container.addChild(sprite);
-      this.particles.push({ 
-        x: pos.x, 
-        y: pos.y, 
-        life, 
-        maxLife, 
-        lengthScale, 
-        sprite 
+      this.particles.push({
+        x: pos.x,
+        y: pos.y,
+        life: Math.random() * maxLife,
+        maxLife,
+        history: [{ x: pos.x, y: pos.y }],
+        maxHistory,
+        zoneType: CurrentZoneType.COLD
       });
     }
   }
 
-  private respawnParticle(p: Particle): void {
+  private respawnParticle(p: TrailParticle): void {
     const pos = this.currentsManager.getRandomWaterPosition();
     p.x = pos.x;
     p.y = pos.y;
     p.life = 0;
-    p.maxLife = 4 + Math.random() * 4;
-    p.lengthScale = 1.0 + Math.random() * 2.5; // Пересчет длины при респавне
-    p.sprite.position.set(p.x, p.y);
+    p.maxLife = 3 + Math.random() * 4;
+    p.maxHistory = 6 + Math.floor(Math.random() * 8); // Разная длина шлейфа
+    p.history = [{ x: pos.x, y: pos.y }];
   }
 
   public update(deltaSeconds: number): void {
     const total = this.particles.length;
 
+    // Очищаем векторную графику перед каждым кадром
+    this.graphics.clear();
+
     for (let i = 0; i < total; i++) {
       const p = this.particles[i];
       p.life += deltaSeconds;
 
-      // Респавн по истечении времени жизни
       if (p.life >= p.maxLife) {
         this.respawnParticle(p);
         continue;
       }
 
       const current = this.currentsManager.getCurrentAt(p.x, p.y);
+      p.zoneType = current.zoneType;
 
-      const dx = current.vx * deltaSeconds;
-      const dy = current.vy * deltaSeconds;
+      const nextX = p.x + current.vx * deltaSeconds;
+      const nextY = p.y + current.vy * deltaSeconds;
 
-      const nextX = p.x + dx;
-      const nextY = p.y + dy;
-
-      // Проверка на столкновение с сушей
-      if (this.currentsManager.isWater(nextX, nextY)) {
-        p.x = nextX;
-        p.y = nextY;
-      } else {
+      // Проверка суши и границ карты
+      if (!this.currentsManager.isWater(nextX, nextY) || 
+          nextX > this.worldSize || nextX < 0 || 
+          nextY > this.worldSize || nextY < 0) {
         this.respawnParticle(p);
         continue;
       }
 
-      // Зацикливание по краям карты
-      if (p.x > this.worldSize || p.x < 0 || p.y > this.worldSize || p.y < 0) {
-        this.respawnParticle(p);
-        continue;
+      p.x = nextX;
+      p.y = nextY;
+
+      // Добавляем текущую позицию в голову истории
+      p.history.unshift({ x: p.x, y: p.y });
+      if (p.history.length > p.maxHistory) {
+        p.history.pop();
       }
 
-      // Поворот черточки вдоль направления скорости
-      const speed = Math.hypot(current.vx, current.vy);
-      if (speed > 0.01) {
-        p.sprite.rotation = Math.atan2(current.vy, current.vx);
-      }
+      // Если в шлейфе недостаточно точек для линии -- пропускаем отрисовку
+      if (p.history.length < 2) continue;
 
-      // Динамический размер: длина зависит от индивидуального коэффициента и скорости течения
-      const currentSpeedFactor = Math.min(2.0, Math.max(0.5, speed / 200));
-      p.sprite.scale.x = p.lengthScale * currentSpeedFactor;
-      p.sprite.scale.y = 1.2; // Толщина палочки
-
-      // Прозрачность с мягким проявлением и затуханием (Fade In / Fade Out)
+      // Вычисляем общую прозрачность частиц (Fade In / Fade Out)
       const progress = p.life / p.maxLife;
-      let alpha = 0.85;
-      if (progress < 0.2) alpha = (progress / 0.2) * 0.85;
-      if (progress > 0.8) alpha = ((1 - progress) / 0.2) * 0.85;
-      p.sprite.alpha = alpha;
+      let baseAlpha = 0.8;
+      if (progress < 0.15) baseAlpha = (progress / 0.15) * 0.8;
+      if (progress > 0.85) baseAlpha = ((1 - progress) / 0.15) * 0.8;
 
-      // Окрашивание в соответствии со всеми зонами течений
-      switch (current.zoneType) {
-        case CurrentZoneType.WARM:
-          p.sprite.tint = this.colorWarm;
-          break;
-        case CurrentZoneType.COLD:
-          p.sprite.tint = this.colorCold;
-          break;
-        case CurrentZoneType.TRANSIT:
-          p.sprite.tint = this.colorTransit;
-          break;
-        case CurrentZoneType.CONNECTING:
-          p.sprite.tint = this.colorConnecting;
-          break;
-        case CurrentZoneType.DRIFT:
-          p.sprite.tint = this.colorDrift;
-          break;
-        default:
-          p.sprite.tint = this.colorCold;
-          break;
+      // Получаем цвет зоны
+      const color = this.getZoneColor(p.zoneType);
+
+      // --- ОТРИСОВКА ДИНАМИЧЕСКОГО ШЛЕЙФА ---
+      for (let j = 0; j < p.history.length - 1; j++) {
+        const p1 = p.history[j];
+        const p2 = p.history[j + 1];
+
+        // Затухание толщины и прозрачности к хвосту
+        const segmentRatio = 1 - j / p.history.length;
+        const alpha = baseAlpha * Math.pow(segmentRatio, 1.5); // Плавное затухание
+        const thickness = 1.0 + segmentRatio * 2.5;            // От 1px (хвост) до 3.5px (голова)
+
+        this.graphics.lineStyle(thickness, color, alpha);
+        this.graphics.moveTo(p1.x, p1.y);
+        this.graphics.lineTo(p2.x, p2.y);
       }
+    }
+  }
 
-      p.sprite.x = p.x;
-      p.sprite.y = p.y;
+  private getZoneColor(zoneType: CurrentZoneType): number {
+    switch (zoneType) {
+      case CurrentZoneType.WARM:
+        return this.colorWarm;
+      case CurrentZoneType.COLD:
+        return this.colorCold;
+      case CurrentZoneType.TRANSIT:
+        return this.colorTransit;
+      case CurrentZoneType.CONNECTING:
+        return this.colorConnecting;
+      case CurrentZoneType.DRIFT:
+        return this.colorDrift;
+      default:
+        return this.colorCold;
     }
   }
 
   public destroy(): void {
-    if (this.particleTexture) {
-      this.particleTexture.destroy(true);
-    }
+    this.graphics.destroy();
     this.container.destroy({ children: true });
   }
 }
