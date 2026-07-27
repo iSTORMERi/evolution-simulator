@@ -49,7 +49,14 @@ export class CurrentsBackgroundOverlay {
     const stepX = this.worldWidth / this.GRID_SIZE;
     const stepY = this.worldHeight / this.GRID_SIZE;
 
-    const imgData = this.offscreenCtx.createImageData(this.GRID_SIZE, this.GRID_SIZE);
+    // 1. Создаем временный холст для сырой пиксельной сетки
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = this.GRID_SIZE;
+    tempCanvas.height = this.GRID_SIZE;
+    const tempCtx = tempCanvas.getContext('2d');
+    if (!tempCtx) return;
+
+    const imgData = tempCtx.createImageData(this.GRID_SIZE, this.GRID_SIZE);
     const data = imgData.data;
 
     let idx = 0;
@@ -69,21 +76,35 @@ export class CurrentsBackgroundOverlay {
             data[idx + 3] = 255;
           }
         } else {
-          data[idx + 3] = 0;
+          data[idx + 3] = 0; // Суша
         }
         idx += 4;
       }
     }
 
-    this.offscreenCtx.putImageData(imgData, 0, 0);
+    tempCtx.putImageData(imgData, 0, 0);
+
+    // 2. Переносим сырую сетку на основной холст С ГАУССОВЫМ РАЗМЫТИЕМ
+    // blur(6px) на разрешении 160х160 даёт потрясающий мягкий градиент на карте 8000х8000
+    this.offscreenCtx.clearRect(0, 0, this.GRID_SIZE, this.GRID_SIZE);
+    this.offscreenCtx.filter = 'blur(6px)';
+    this.offscreenCtx.drawImage(tempCanvas, 0, 0);
+
     this.isGenerated = true;
 
-    // Создаём текстуру и спрайт PixiJS из offscreen canvas
+    // 3. Создаём текстуру PixiJS с линейной фильтрацией
     const texture = PIXI.Texture.from(this.offscreenCanvas);
+    if (texture.source) {
+      texture.source.scaleMode = 'linear'; // Линейное сглаживание масштабирования
+    }
+
     this.sprite = new PIXI.Sprite(texture);
     this.sprite.width = this.worldWidth;
     this.sprite.height = this.worldHeight;
-    this.sprite.alpha = 0.35; // Прозрачность фонового слоя течений
+    
+    // Мягкая прозрачность и органичный режим наложения на воду
+    this.sprite.alpha = 0.3;
+    this.sprite.blendMode = 'soft-light'; 
 
     this.container.addChild(this.sprite);
   }
