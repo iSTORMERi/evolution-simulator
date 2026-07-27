@@ -59,14 +59,14 @@ export class PlanktonOverlay {
 
     container.addChild(g);
 
-    // Минимальный блюр (2px) -- лишь слегка сглаживает векторные пиксели, не утомляя глаза
-    container.filters = [new PIXI.BlurFilter({ strength: 2, quality: 2 })];
+    // Микро-сглаживание (0.8px) -- предотвращает лесенку пикселей, не создавая мыла
+    container.filters = [new PIXI.BlurFilter({ strength: 0.8, quality: 1 })];
 
     return container;
   }
 
   /**
-   * Генерация волнистых органических полигонов
+   * Генерация органических волнистых контуров
    */
   private generateOrganicPolygon(
     baseRadiusX: number,
@@ -91,28 +91,28 @@ export class PlanktonOverlay {
   }
 
   /**
-   * 1. Диатомеи: Оливково-золотое пятно с чётким микро-ядром
+   * 1. Диатомеи: Легкий вытянутый оливково-золотой оттенок
    */
   private drawDiatomsColony(g: PIXI.Graphics, colony: SurfacePlankton): void {
     const r = colony.radius;
     const goldColor = 0xC59B27;
     const oliveColor = 0x6B8E23;
 
-    // Легкий внешний полупрозрачный ореол
+    // Очень прозрачный внешний ореол
     const outerShape = this.generateOrganicPolygon(r * 1.35, r * 0.48, colony.seed, 18);
-    g.poly(outerShape).fill({ color: goldColor, alpha: 0.18 * colony.density });
+    g.poly(outerShape).fill({ color: goldColor, alpha: 0.10 * colony.density });
 
     // Среднее тело
     const midShape = this.generateOrganicPolygon(r * 0.95, r * 0.35, colony.seed + 1.5, 16);
-    g.poly(midShape).fill({ color: goldColor, alpha: 0.38 * colony.density });
+    g.poly(midShape).fill({ color: goldColor, alpha: 0.22 * colony.density });
 
-    // Яркое читаемое ядро
+    // Просвечивающее ядро
     const coreShape = this.generateOrganicPolygon(r * 0.55, r * 0.20, colony.seed + 3.0, 14);
-    g.poly(coreShape).fill({ color: oliveColor, alpha: 0.65 * colony.density });
+    g.poly(coreShape).fill({ color: oliveColor, alpha: 0.40 * colony.density });
   }
 
   /**
-   * 2. Динофлагеллаты: Багрово-красное мягкое пятно с прорисованным центром
+   * 2. Динофлагеллаты: Полупрозрачное багровое пятно
    */
   private drawDinoflagellatesColony(g: PIXI.Graphics, colony: SurfacePlankton): void {
     const r = colony.radius;
@@ -120,17 +120,17 @@ export class PlanktonOverlay {
     const deepMaroon = 0x6B0000;
 
     const outerShape = this.generateOrganicPolygon(r * 1.1, r * 0.85, colony.seed, 16);
-    g.poly(outerShape).fill({ color: rustRed, alpha: 0.20 * colony.density });
+    g.poly(outerShape).fill({ color: rustRed, alpha: 0.12 * colony.density });
 
     const midShape = this.generateOrganicPolygon(r * 0.72, r * 0.52, colony.seed + 1.2, 14);
-    g.poly(midShape).fill({ color: rustRed, alpha: 0.42 * colony.density });
+    g.poly(midShape).fill({ color: rustRed, alpha: 0.25 * colony.density });
 
     const coreShape = this.generateOrganicPolygon(r * 0.40, r * 0.30, colony.seed + 2.5, 12);
-    g.poly(coreShape).fill({ color: deepMaroon, alpha: 0.70 * colony.density });
+    g.poly(coreShape).fill({ color: deepMaroon, alpha: 0.45 * colony.density });
   }
 
   /**
-   * 3. Кокколитофориды: Дымчато-бирюзовое облако
+   * 3. Кокколитофориды: Нежное дымчато-бирюзовое облако
    */
   private drawCoccolithophoresColony(g: PIXI.Graphics, colony: SurfacePlankton): void {
     const r = colony.radius;
@@ -138,7 +138,7 @@ export class PlanktonOverlay {
     const milkyWhite = 0xF0FFFF;
 
     const outerShape = this.generateOrganicPolygon(r * 1.2, r * 0.95, colony.seed, 18);
-    g.poly(outerShape).fill({ color: turquoise, alpha: 0.20 * colony.density });
+    g.poly(outerShape).fill({ color: turquoise, alpha: 0.12 * colony.density });
 
     for (let i = 0; i < 3; i++) {
       const offsetX = Math.cos(i * 2.1 + colony.seed) * (r * 0.20);
@@ -146,26 +146,24 @@ export class PlanktonOverlay {
       const cloudShape = this.generateOrganicPolygon(r * 0.42, r * 0.38, colony.seed + i * 4, 12);
       
       const shiftedPoints = cloudShape.map((val, idx) => idx % 2 === 0 ? val + offsetX : val + offsetY);
-      g.poly(shiftedPoints).fill({ color: milkyWhite, alpha: 0.35 * colony.density });
+      g.poly(shiftedPoints).fill({ color: milkyWhite, alpha: 0.20 * colony.density });
     }
 
     const coreShape = this.generateOrganicPolygon(r * 0.35, r * 0.30, colony.seed + 5, 12);
-    g.poly(coreShape).fill({ color: milkyWhite, alpha: 0.60 * colony.density });
+    g.poly(coreShape).fill({ color: milkyWhite, alpha: 0.38 * colony.density });
   }
 
   /**
-   * 4. Цианобактерии: Чёткие тонкие салатовые волокна с подложкой
+   * 4. Цианобактерии: Полупрозрачные тонкие волокна
    */
   private drawCyanobacteriaColony(g: PIXI.Graphics, colony: SurfacePlankton): void {
     const r = colony.radius;
     const limeColor = 0x22C55E;
     const darkGreen = 0x15803D;
 
-    // Очень легкий фоновый подтон
     const outerShape = this.generateOrganicPolygon(r * 1.1, r * 0.65, colony.seed, 16);
-    g.poly(outerShape).fill({ color: darkGreen, alpha: 0.15 * colony.density });
+    g.poly(outerShape).fill({ color: darkGreen, alpha: 0.08 * colony.density });
 
-    // Тонкие, читаемые нити (глаз легко за них цепляется)
     const numLines = 9;
     for (let i = 0; i < numLines; i++) {
       const offsetY = ((i - numLines / 2) / numLines) * (r * 0.70);
@@ -178,7 +176,7 @@ export class PlanktonOverlay {
 
       g.moveTo(p1X, p1Y)
        .lineTo(p2X, p2Y)
-       .stroke({ width: 3.5, color: limeColor, alpha: 0.55 * colony.density });
+       .stroke({ width: 2.5, color: limeColor, alpha: 0.30 * colony.density });
     }
   }
 
