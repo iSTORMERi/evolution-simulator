@@ -7,8 +7,9 @@ import { LightingController } from './world/LightingController';
 import { TimeDebugUI } from './ui/TimeDebugUI';
 import { BiomeScanner } from './ui/BiomeScanner';
 
-// 1. Импортируем менеджер течений, частицы и контроллер кнопки UI
+// 1. Импортируем менеджер течений, подложку, частицы и контроллер кнопки UI
 import { OceanCurrentsManager } from './simulation/OceanCurrentsManager';
+import { CurrentsBackgroundOverlay } from './visuals/CurrentsBackgroundOverlay';
 import { CurrentParticlesDebug } from './visuals/CurrentParticlesDebug';
 import { CurrentsToggleUI } from './ui/CurrentsToggleUI';
 
@@ -73,22 +74,29 @@ async function initApp() {
     
     app.stage.addChild(worldMap.container);
 
-    // 1.1. Инициализация течений и визуализации частиц
+    // 1.1. Инициализация течений, подложки и частиц
     const oceanCurrents = new OceanCurrentsManager(WORLD_WIDTH, WORLD_HEIGHT);
+    const currentsOverlay = new CurrentsBackgroundOverlay(oceanCurrents, WORLD_WIDTH, WORLD_HEIGHT);
     const debugParticles = new CurrentParticlesDebug(oceanCurrents, 1800);
     
-    // Помещаем частицы поверх основных слоев карты
+    // Настраиваем порядок слоев (подложка под частицами)
+    currentsOverlay.container.zIndex = 99;
     debugParticles.container.zIndex = 100;
+
+    worldMap.container.addChild(currentsOverlay.container);
     worldMap.container.addChild(debugParticles.container);
 
     // 1.2. Управление видимостью течений с помощью кнопки UI
     const currentsUI = new CurrentsToggleUI('toggle-currents-btn');
     
-    // Изначально течения не видны
-    debugParticles.container.visible = currentsUI.isCurrentsVisible;
+    // Синхронизируем начальное состояние (подложка и частицы включаются/выключаются вместе)
+    const initialVisibility = currentsUI.isVisible;
+    currentsOverlay.container.visible = initialVisibility;
+    debugParticles.container.visible = initialVisibility;
 
     // Реакция на нажатие кнопки
     currentsUI.onToggle((visible) => {
+      currentsOverlay.container.visible = visible;
       debugParticles.container.visible = visible;
     });
 
