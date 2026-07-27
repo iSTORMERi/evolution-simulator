@@ -7,48 +7,52 @@ import { OceanCurrentsManager } from '../simulation/OceanCurrentsManager';
 export class PlanktonOverlay {
   public container: PIXI.Container;
   private planktonList: SurfacePlankton[] = [];
-  private colonySprites: PIXI.Sprite[] = [];
+  private colonyGraphics: PIXI.Container[] = [];
   private currentsManager: OceanCurrentsManager;
-  private app: PIXI.Application;
   private worldWidth: number;
   private worldHeight: number;
 
   constructor(
-    app: PIXI.Application,
+    _app: PIXI.Application,
     currentsManager: OceanCurrentsManager,
     _count: number = 200,
     worldWidth: number = 8000,
     worldHeight: number = 8000,
     customColonies?: SurfacePlankton[]
   ) {
-    this.app = app;
     this.container = new PIXI.Container();
     this.currentsManager = currentsManager;
     this.worldWidth = worldWidth;
     this.worldHeight = worldHeight;
 
-    // 1. Единый BlurFilter на весь родительский контейнер (1 проход GPU вместо 200)
+    // 🎯 ГЛАВНАЯ ОПТИМИЗАЦИЯ: Всего 1 проход размытия на ВЕСЬ планктон вместе
+    // Вместо 200 тяжелых фильтров на каждом объекте
     this.container.filters = [new PIXI.BlurFilter({ strength: 0.8, quality: 1 })];
 
-    // Автоматическая загрузка экологически заспавненных 200 колоний
+    // Загрузка 200 колоний
     this.planktonList = customColonies ?? SurfacePlankton.createDefaultTestColonies(
       this.worldWidth,
       this.worldHeight,
       this.currentsManager
     );
 
-    // 2. Генерация векторной формы один раз -> Запекание в Текстуру -> PIXI.Sprite
+    // Легкая отрисовка без создания гигантских текстур в VRAM
     for (const colony of this.planktonList) {
-      const sprite = this.createColonySprite(colony);
-      this.colonySprites.push(sprite);
-      this.container.addChild(sprite);
+      const visual = this.createColonyGraphics(colony);
+      this.colonyGraphics.push(visual);
+      this.container.addChild(visual);
     }
   }
 
   /**
-   * Фабрика: превращает векторную форму Graphics в запечённый PIXI.Sprite
+   * Фабрика создания индивидуального PIXI-контейнера (без индивидуальных фильтров!)
    */
-  private createColonySprite(colony: SurfacePlankton): PIXI.Sprite {
+  private createColonyGraphics(colony: SurfacePlankton): PIXI.Container {
+    const container = new PIXI.Container();
+    container.x = colony.x;
+    container.y = colony.y;
+    container.rotation = colony.rotation;
+
     const g = new PIXI.Graphics();
 
     switch (colony.type) {
@@ -66,17 +70,9 @@ export class PlanktonOverlay {
         break;
     }
 
-    // Запекаем вектор в легкую GPU-текстуру
-    const texture = this.app.renderer.generateTexture(g);
-    g.destroy(); // Освобождаем память от векторной заготовки
-
-    const sprite = new PIXI.Sprite(texture);
-    sprite.anchor.set(0.5); // Центрируем точку вращения
-    sprite.x = colony.x;
-    sprite.y = colony.y;
-    sprite.rotation = colony.rotation;
-
-    return sprite;
+    container.addChild(g);
+    // Фильтр отсюда убран!
+    return container;
   }
 
   /**
@@ -105,28 +101,25 @@ export class PlanktonOverlay {
   }
 
   /**
-   * 1. Диатомеи: Едва заметный оливково-золотой туман (Прозрачность x3)
+   * 1. Диатомеи
    */
   private drawDiatomsColony(g: PIXI.Graphics, colony: SurfacePlankton): void {
     const r = colony.radius;
     const goldColor = 0xC59B27;
     const oliveColor = 0x6B8E23;
 
-    // Внешний ореол (alpha снижен в 3 раза)
     const outerShape = this.generateOrganicPolygon(r * 1.35, r * 0.48, colony.seed, 18);
     g.poly(outerShape).fill({ color: goldColor, alpha: (0.04 / 3) * colony.density });
 
-    // Среднее тело
     const midShape = this.generateOrganicPolygon(r * 0.95, r * 0.35, colony.seed + 1.5, 16);
     g.poly(midShape).fill({ color: goldColor, alpha: (0.05 / 3) * colony.density });
 
-    // Легкое ядро
     const coreShape = this.generateOrganicPolygon(r * 0.55, r * 0.20, colony.seed + 3.0, 14);
     g.poly(coreShape).fill({ color: oliveColor, alpha: (0.06 / 3) * colony.density });
   }
 
   /**
-   * 2. Динофлагеллаты: Едва уловимое багровое размытие (Прозрачность x3)
+   * 2. Динофлагеллаты
    */
   private drawDinoflagellatesColony(g: PIXI.Graphics, colony: SurfacePlankton): void {
     const r = colony.radius;
@@ -144,7 +137,7 @@ export class PlanktonOverlay {
   }
 
   /**
-   * 3. Кокколитофориды: Призрачное дымчато-бирюзовое облако (Прозрачность x3)
+   * 3. Кокколитофориды
    */
   private drawCoccolithophoresColony(g: PIXI.Graphics, colony: SurfacePlankton): void {
     const r = colony.radius;
@@ -168,7 +161,7 @@ export class PlanktonOverlay {
   }
 
   /**
-   * 4. Цианобактерии: Полупрозрачные тонкие волокна (Прозрачность x3)
+   * 4. Цианобактерии
    */
   private drawCyanobacteriaColony(g: PIXI.Graphics, colony: SurfacePlankton): void {
     const r = colony.radius;
@@ -195,8 +188,7 @@ export class PlanktonOverlay {
   }
 
   /**
-   * Обновление состояния: запуск физики движения + синхронизация со спрайтами + отсечение вне экрана
-   * @param cameraBounds Мировые границы видимой области камеры (опционально)
+   * Обновление состояния: физика + скрытие невидимых объектов (Frustum Culling)
    */
   public update(
     dt: number,
@@ -206,19 +198,19 @@ export class PlanktonOverlay {
     for (let i = 0; i < this.planktonList.length; i++) {
       const colony = this.planktonList[i];
 
-      // 1. Физика дрейфа и скольжения по береговой линии
+      // 1. Движение
       colony.update(dt, this.currentsManager);
 
-      // 2. Синхронизация спрайта и отсечение невидимых объектов (Frustum Culling)
-      const sprite = this.colonySprites[i];
-      if (sprite) {
-        sprite.x = colony.x;
-        sprite.y = colony.y;
-        sprite.rotation = colony.rotation;
+      // 2. Синхронизация и скрытие за экраном
+      const visual = this.colonyGraphics[i];
+      if (visual) {
+        visual.x = colony.x;
+        visual.y = colony.y;
+        visual.rotation = colony.rotation;
 
         if (cameraBounds) {
           const margin = colony.radius * 1.5;
-          sprite.visible =
+          visual.visible =
             colony.x + margin >= cameraBounds.left &&
             colony.x - margin <= cameraBounds.right &&
             colony.y + margin >= cameraBounds.top &&
