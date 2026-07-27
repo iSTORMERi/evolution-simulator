@@ -7,23 +7,28 @@ import { OceanCurrentsManager } from '../simulation/OceanCurrentsManager';
 export class PlanktonOverlay {
   public container: PIXI.Container;
   private planktonList: SurfacePlankton[] = [];
-  private colonyGraphics: PIXI.Container[] = [];
+  private colonySprites: PIXI.Sprite[] = [];
   private currentsManager: OceanCurrentsManager;
+  private app: PIXI.Application;
   private worldWidth: number;
   private worldHeight: number;
 
   constructor(
-    _app: PIXI.Application,
+    app: PIXI.Application,
     currentsManager: OceanCurrentsManager,
-    _count: number = 200, // Уменьшено по умолчанию до 200
+    _count: number = 200,
     worldWidth: number = 8000,
     worldHeight: number = 8000,
     customColonies?: SurfacePlankton[]
   ) {
+    this.app = app;
     this.container = new PIXI.Container();
     this.currentsManager = currentsManager;
     this.worldWidth = worldWidth;
     this.worldHeight = worldHeight;
+
+    // 1. Единый BlurFilter на весь родительский контейнер (1 проход GPU вместо 200)
+    this.container.filters = [new PIXI.BlurFilter({ strength: 0.8, quality: 1 })];
 
     // Автоматическая загрузка экологически заспавненных 200 колоний
     this.planktonList = customColonies ?? SurfacePlankton.createDefaultTestColonies(
@@ -32,23 +37,18 @@ export class PlanktonOverlay {
       this.currentsManager
     );
 
-    // Отрисовка графических контейнеров PIXI для каждой стартовой колонии
+    // 2. Генерация векторной формы один раз -> Запекание в Текстуру -> PIXI.Sprite
     for (const colony of this.planktonList) {
-      const visual = this.createColonyGraphics(colony);
-      this.colonyGraphics.push(visual);
-      this.container.addChild(visual);
+      const sprite = this.createColonySprite(colony);
+      this.colonySprites.push(sprite);
+      this.container.addChild(sprite);
     }
   }
 
   /**
-   * Фабрика создания индивидуального PIXI-контейнера колонии с легким размытием
+   * Фабрика: превращает векторную форму Graphics в запечённый PIXI.Sprite
    */
-  private createColonyGraphics(colony: SurfacePlankton): PIXI.Container {
-    const container = new PIXI.Container();
-    container.x = colony.x;
-    container.y = colony.y;
-    container.rotation = colony.rotation;
-
+  private createColonySprite(colony: SurfacePlankton): PIXI.Sprite {
     const g = new PIXI.Graphics();
 
     switch (colony.type) {
@@ -66,12 +66,17 @@ export class PlanktonOverlay {
         break;
     }
 
-    container.addChild(g);
+    // Запекаем вектор в легкую GPU-текстуру
+    const texture = this.app.renderer.generateTexture(g);
+    g.destroy(); // Освобождаем память от векторной заготовки
 
-    // Микро-сглаживание (0.8px) -- предотвращает лестничный эффект (aliasing) без потери чёткости
-    container.filters = [new PIXI.BlurFilter({ strength: 0.8, quality: 1 })];
+    const sprite = new PIXI.Sprite(texture);
+    sprite.anchor.set(0.5); // Центрируем точку вращения
+    sprite.x = colony.x;
+    sprite.y = colony.y;
+    sprite.rotation = colony.rotation;
 
-    return container;
+    return sprite;
   }
 
   /**
@@ -190,21 +195,35 @@ export class PlanktonOverlay {
   }
 
   /**
-   * Обновление состояния: запуск физики движения и скольжения колоний + синхронизация с PIXI
+   * Обновление состояния: запуск физики движения + синхронизация со спрайтами + отсечение вне экрана
+   * @param cameraBounds Мировые границы видимой области камеры (опционально)
    */
-  public update(dt: number, _isNight: boolean): void {
+  public update(
+    dt: number,
+    _isNight: boolean,
+    cameraBounds?: { left: number; right: number; top: number; bottom: number }
+  ): void {
     for (let i = 0; i < this.planktonList.length; i++) {
       const colony = this.planktonList[i];
 
       // 1. Физика дрейфа и скольжения по береговой линии
       colony.update(dt, this.currentsManager);
 
-      // 2. Синхронизация визуального контейнера с новым положением колонии
-      const visual = this.colonyGraphics[i];
-      if (visual) {
-        visual.x = colony.x;
-        visual.y = colony.y;
-        visual.rotation = colony.rotation;
+      // 2. Синхронизация спрайта и отсечение невидимых объектов (Frustum Culling)
+      const sprite = this.colonySprites[i];
+      if (sprite) {
+        sprite.x = colony.x;
+        sprite.y = colony.y;
+        sprite.rotation = colony.rotation;
+
+        if (cameraBounds) {
+          const margin = colony.radius * 1.5;
+          sprite.visible =
+            colony.x + margin >= cameraBounds.left &&
+            colony.x - margin <= cameraBounds.right &&
+            colony.y + margin >= cameraBounds.top &&
+            colony.y - margin <= cameraBounds.bottom;
+        }
       }
     }
   }
