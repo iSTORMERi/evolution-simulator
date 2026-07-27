@@ -79,10 +79,14 @@ async function initApp() {
 
     // 1.1. Инициализация течений, мягкой подложки, частиц и планктона
     const oceanCurrents = new OceanCurrentsManager(WORLD_WIDTH, WORLD_HEIGHT);
+
+    // ВАЖНО: Дожидаемся асинхронной загрузки и сканирования маски береговой линии!
+    await oceanCurrents.initScanner();
+
     const currentsOverlay = new CurrentsBackgroundOverlay(oceanCurrents, WORLD_WIDTH, WORLD_HEIGHT);
     const debugParticles = new CurrentParticlesDebug(oceanCurrents, 1800);
     
-    // Безопасная инициализация планктона
+    // Безопасная инициализация планктона (теперь гарантированно с готовым сканером)
     let planktonOverlay: PlanktonOverlay | null = null;
     try {
       planktonOverlay = new PlanktonOverlay(app, oceanCurrents, 600, WORLD_WIDTH, WORLD_HEIGHT);

@@ -25,7 +25,11 @@ export class PlanktonOverlay {
     this.worldWidth = worldWidth;
     this.worldHeight = worldHeight;
 
-    this.planktonList = customColonies ?? SurfacePlankton.createDefaultTestColonies(worldWidth, worldHeight);
+    this.planktonList = customColonies ?? SurfacePlankton.createDefaultTestColonies(
+      worldWidth,
+      worldHeight,
+      this.currentsManager
+    );
 
     for (const colony of this.planktonList) {
       const visual = this.createColonyGraphics(colony);
@@ -180,11 +184,18 @@ export class PlanktonOverlay {
     }
   }
 
-  public update(_dt: number, _isNight: boolean): void {
+  /**
+   * Обновление состояния: запуск физики движения и скольжения колоний + синхронизация с PIXI
+   */
+  public update(dt: number, _isNight: boolean): void {
     for (let i = 0; i < this.planktonList.length; i++) {
       const colony = this.planktonList[i];
-      const visual = this.colonyGraphics[i];
 
+      // 1. Физика дрейфа и скольжения по береговой линии
+      colony.update(dt, this.currentsManager);
+
+      // 2. Синхронизация визуального контейнера с новым положением колонии
+      const visual = this.colonyGraphics[i];
       if (visual) {
         visual.x = colony.x;
         visual.y = colony.y;

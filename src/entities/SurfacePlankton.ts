@@ -1,5 +1,7 @@
 // src/entities/SurfacePlankton.ts
 
+import { OceanCurrentsManager } from '../simulation/OceanCurrentsManager';
+
 /**
  * Четыре основных биологических типа фитопланктона
  */
@@ -43,16 +45,50 @@ export class SurfacePlankton {
   }
 
   /**
-   * Обновление состояния колонии (задел на будущее движение/деление/рост)
+   * Обновление состояния и позиции колонии: движение по течению + скольжение вдоль берега
    */
-  public update(_dt: number, _worldWidth: number, _worldHeight: number): void {
-    // На текущем этапе колонии статично располагаются на карте
+  public update(dt: number, currentsManager: OceanCurrentsManager): void {
+    if (!currentsManager) return;
+
+    // 1. Получаем скорость и направление течения в текущей точке
+    const velocity = currentsManager.getVelocityAt(this.x, this.y);
+    if (!velocity) return;
+
+    const dx = velocity.vx * dt;
+    const dy = velocity.vy * dt;
+
+    // Плавно разворачиваем колонию по направлению течения, если есть движение
+    if (dx !== 0 || dy !== 0) {
+      this.rotation = Math.atan2(dy, dx);
+    }
+
+    const nextX = this.x + dx;
+    const nextY = this.y + dy;
+
+    // 2. Вариант А: Плывём свободно (впереди чистая вода)
+    if (currentsManager.isWater(nextX, nextY)) {
+      this.x = nextX;
+      this.y = nextY;
+    } 
+    // 3. Вариант Б: Впереди берег! Пробуем скользить по горизонтали (по X)
+    else if (currentsManager.isWater(nextX, this.y)) {
+      this.x = nextX;
+    } 
+    // 4. Вариант В: Пробуем скользить по вертикали (по Y)
+    else if (currentsManager.isWater(this.x, nextY)) {
+      this.y = nextY;
+    }
+    // 5. Вариант Г: Тупик / Угол суши -- прижимаемся и стоим на месте (this.x, this.y не меняются)
   }
 
   /**
    * Вспомогательный генератор тестового набора средних колоний всех 4 типов
    */
-  public static createDefaultTestColonies(worldWidth: number, worldHeight: number): SurfacePlankton[] {
+  public static createDefaultTestColonies(
+    worldWidth: number,
+    worldHeight: number,
+    currentsManager?: OceanCurrentsManager
+  ): SurfacePlankton[] {
     const types = [
       PlanktonType.DIATOMS,
       PlanktonType.DINOFLAGELLATES,
@@ -62,12 +98,22 @@ export class SurfacePlankton {
 
     const colonies: SurfacePlankton[] = [];
 
-    // Создаем по 2 средние колонии каждого типа для первичного визуального теста
+    // Создаем по 2 средние колонии каждого типа
     types.forEach((type, typeIdx) => {
       for (let i = 0; i < 2; i++) {
-        const margin = 150;
-        const x = margin + Math.random() * (worldWidth - margin * 2);
-        const y = margin + Math.random() * (worldHeight - margin * 2);
+        let x: number;
+        let y: number;
+
+        // Если сканер передан -- выбираем гарантированные точки воды
+        if (currentsManager) {
+          const waterPos = currentsManager.getRandomWaterPosition();
+          x = waterPos.x;
+          y = waterPos.y;
+        } else {
+          const margin = 150;
+          x = margin + Math.random() * (worldWidth - margin * 2);
+          y = margin + Math.random() * (worldHeight - margin * 2);
+        }
 
         colonies.push(
           new SurfacePlankton({
