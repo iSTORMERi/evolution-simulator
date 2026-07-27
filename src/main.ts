@@ -13,7 +13,7 @@ import { CurrentsBackgroundOverlay } from './visuals/CurrentsBackgroundOverlay';
 import { CurrentParticlesDebug } from './visuals/CurrentParticlesDebug';
 import { CurrentsToggleUI } from './ui/CurrentsToggleUI';
 
-// Импортируем слой поверхностного планктона
+// Импортируем оверлей планктона
 import { PlanktonOverlay } from './visuals/PlanktonOverlay';
 
 let currentApp: PIXI.Application | null = null;
@@ -82,17 +82,22 @@ async function initApp() {
     const currentsOverlay = new CurrentsBackgroundOverlay(oceanCurrents, WORLD_WIDTH, WORLD_HEIGHT);
     const debugParticles = new CurrentParticlesDebug(oceanCurrents, 1800);
     
-    // Инициализация слоя планктона (800 колоний)
-    const planktonOverlay = new PlanktonOverlay(app, oceanCurrents, 800, WORLD_WIDTH, WORLD_HEIGHT);
-    
-    // Порядок слоёв: подложка (99) -> частицы течений (100) -> планктон (101)
+    // Безопасная инициализация планктона
+    let planktonOverlay: PlanktonOverlay | null = null;
+    try {
+      planktonOverlay = new PlanktonOverlay(app, oceanCurrents, 600, WORLD_WIDTH, WORLD_HEIGHT);
+      planktonOverlay.container.zIndex = 101;
+      worldMap.container.addChild(planktonOverlay.container);
+    } catch (e) {
+      console.error('Failed to initialize PlanktonOverlay:', e);
+    }
+
+    // Порядок слоёв: подложка (99) под частицами (100)
     currentsOverlay.container.zIndex = 99;
     debugParticles.container.zIndex = 100;
-    planktonOverlay.container.zIndex = 101;
 
     worldMap.container.addChild(currentsOverlay.container);
     worldMap.container.addChild(debugParticles.container);
-    worldMap.container.addChild(planktonOverlay.container);
 
     // 1.2. Синхронное управление видимостью подложки и частиц единой кнопкой
     const currentsUI = new CurrentsToggleUI('toggle-currents-btn');
@@ -133,17 +138,23 @@ async function initApp() {
         debugParticles.update(deltaSeconds);
       }
 
-      // Вычисляем текущее время суток для переключения режима дня/ночи планктона
-      const currentHours = typeof (lightingController as any).getCurrentHours === 'function'
-        ? (lightingController as any).getCurrentHours()
-        : 12;
-      const isNight = currentHours < 6 || currentHours > 18;
-
-      // Обновляем кинематику дрейфа и внешний вид планктона
-      planktonOverlay.update(deltaSeconds, isNight);
+      // Безопасное обновление планктона
+      if (planktonOverlay) {
+        try {
+          const currentHours = typeof (lightingController as any).getCurrentHours === 'function'
+            ? (lightingController as any).getCurrentHours()
+            : 12;
+          const isNight = currentHours < 6 || currentHours > 18;
+          planktonOverlay.update(deltaSeconds, isNight);
+        } catch (e) {
+          console.error('Error in PlanktonOverlay loop:', e);
+        }
+      }
 
       // Синхронизируем состояние дня/ночи на карте
-      worldMap.updateTimeState(currentHours);
+      if (typeof (lightingController as any).getCurrentHours === 'function') {
+        worldMap.updateTimeState((lightingController as any).getCurrentHours());
+      }
 
       // Обновление сканера биомов
       scanner.update();
