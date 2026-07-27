@@ -23,7 +23,7 @@ export interface PlanktonColonyConfig {
 }
 
 /**
- * Конфигурация начального экологического распределения видов
+ * Конфигурация начального экологического распределения видов (Всего 200 колоний)
  */
 export interface SpeciesEcologyConfig {
   type: PlanktonType;
@@ -36,28 +36,28 @@ export interface SpeciesEcologyConfig {
 export const PLANKTON_ECOLOGY_CONFIG: SpeciesEcologyConfig[] = [
   {
     type: PlanktonType.DIATOMS,
-    totalCount: 180, // 30% от 600
+    totalCount: 60, // 30% от 200
     optimumZones: [CurrentZoneType.COLD],
     normalZones: [CurrentZoneType.CONNECTING, CurrentZoneType.TRANSIT],
     optimumRatio: 0.70
   },
   {
     type: PlanktonType.DINOFLAGELLATES,
-    totalCount: 140, // ~23% от 600
+    totalCount: 46, // ~23% от 200
     optimumZones: [CurrentZoneType.WARM],
     normalZones: [CurrentZoneType.DRIFT, CurrentZoneType.TRANSIT],
     optimumRatio: 0.70
   },
   {
     type: PlanktonType.COCCOLITHOPHORES,
-    totalCount: 130, // ~22% от 600
+    totalCount: 44, // ~22% от 200
     optimumZones: [CurrentZoneType.TRANSIT],
     normalZones: [CurrentZoneType.CONNECTING, CurrentZoneType.WARM],
     optimumRatio: 0.70
   },
   {
     type: PlanktonType.CYANOBACTERIA,
-    totalCount: 150, // 25% от 600
+    totalCount: 50, // 25% от 200
     optimumZones: [CurrentZoneType.DRIFT],
     normalZones: [CurrentZoneType.WARM, CurrentZoneType.TRANSIT],
     optimumRatio: 0.70
@@ -80,7 +80,8 @@ export class SurfacePlankton {
     this.x = config.x;
     this.y = config.y;
     this.type = config.type;
-    this.radius = config.radius ?? (120 + Math.random() * 60); // Средний размер колонии
+    // Радиус увеличен в 3 раза: (120..180) * 3 = 360..540
+    this.radius = config.radius ?? (360 + Math.random() * 180);
     this.density = config.density ?? (0.7 + Math.random() * 0.3);
     this.rotation = config.rotation ?? (Math.random() * Math.PI * 2);
     this.seed = config.seed ?? (Math.random() * 1000);
@@ -145,7 +146,7 @@ export class SurfacePlankton {
   }
 
   /**
-   * Генерация сбалансированной экосистемы из 600 стартовых колоний по целевым биомам
+   * Генерация сбалансированной экосистемы из 200 увеличенных колоний по целевым биомам
    */
   public static createEcologicalInitialColonies(
     worldWidth: number,
@@ -158,7 +159,7 @@ export class SurfacePlankton {
       const optimumCount = Math.round(config.totalCount * config.optimumRatio);
       const normalCount = config.totalCount - optimumCount;
 
-      // 1. Спавн 70% колоний в зонах Оптимума
+      // 1. Спавн 70% колоний в зонах Оптимума (Радиус x3)
       for (let i = 0; i < optimumCount; i++) {
         const pos = this.findWaterPositionInZones(currentsManager, config.optimumZones);
         colonies.push(
@@ -166,7 +167,7 @@ export class SurfacePlankton {
             x: pos.x,
             y: pos.y,
             type: config.type,
-            radius: 120 + Math.random() * 60,
+            radius: 360 + Math.random() * 180, // x3 от исходного значения
             density: 0.75 + Math.random() * 0.25,
             rotation: Math.random() * Math.PI * 2,
             seed: Math.random() * 1000,
@@ -174,7 +175,7 @@ export class SurfacePlankton {
         );
       }
 
-      // 2. Спавн 30% колоний в зонах Нормы
+      // 2. Спавн 30% колоний в зонах Нормы (Радиус x3)
       for (let i = 0; i < normalCount; i++) {
         const pos = this.findWaterPositionInZones(currentsManager, config.normalZones);
         colonies.push(
@@ -182,7 +183,7 @@ export class SurfacePlankton {
             x: pos.x,
             y: pos.y,
             type: config.type,
-            radius: 110 + Math.random() * 50,
+            radius: 330 + Math.random() * 150, // x3 от исходного значения
             density: 0.65 + Math.random() * 0.25,
             rotation: Math.random() * Math.PI * 2,
             seed: Math.random() * 1000,
@@ -196,7 +197,7 @@ export class SurfacePlankton {
 
   /**
    * Генератор стартового набора: если передан currentsManager -- создаёт полную 
-   * экосистему из 600 колоний по их естественным биомам.
+   * экосистему из 200 колоний по их естественным биомам.
    */
   public static createDefaultTestColonies(
     worldWidth: number,
@@ -228,7 +229,7 @@ export class SurfacePlankton {
             x,
             y,
             type,
-            radius: 130 + Math.random() * 50,
+            radius: 390 + Math.random() * 150, // x3 от исходного значения
             density: 0.85,
             rotation: Math.random() * Math.PI * 2,
             seed: typeIdx * 100 + i * 17 + Math.random() * 5,
