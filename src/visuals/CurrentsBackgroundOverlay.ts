@@ -13,6 +13,9 @@ export class CurrentsBackgroundOverlay {
   private readonly GRID_SIZE = 160;
   private isGenerated: boolean = false;
 
+  // Базовый цвет для медленной / фоновой воды (тёмный океанический индиго)
+  private readonly SLOW_WATER_COLOR = { r: 10, g: 26, b: 48 };
+
   constructor(
     currentsManager: OceanCurrentsManager, 
     worldWidth: number = 8000, 
@@ -49,7 +52,7 @@ export class CurrentsBackgroundOverlay {
     const stepX = this.worldWidth / this.GRID_SIZE;
     const stepY = this.worldHeight / this.GRID_SIZE;
 
-    // 1. Создаем временный холст для сырой пиксельной сетки
+    // Временный холст для точечного расчета пикселей
     const tempCanvas = document.createElement('canvas');
     tempCanvas.width = this.GRID_SIZE;
     tempCanvas.height = this.GRID_SIZE;
@@ -68,15 +71,25 @@ export class CurrentsBackgroundOverlay {
         const currentData = this.currentsManager.getCurrentAt(worldX, worldY);
 
         if (currentData.isWater) {
-          const rgb = this.hexToRgb(currentData.targetColor);
-          if (rgb) {
-            data[idx] = rgb.r;
-            data[idx + 1] = rgb.g;
-            data[idx + 2] = rgb.b;
-            data[idx + 3] = 255;
+          const zoneColor = this.hexToRgb(currentData.targetColor);
+          
+          // Нормализуем скорость (от 0 до 1), чтобы определить яркость течения
+          const speedFactor = Math.min(Math.max((currentData.speed || 0) / 4.0, 0), 1);
+
+          if (zoneColor && speedFactor > 0.05) {
+            // Интерполяция между тёмной базовой водой и ярким цветом зоны
+            data[idx]     = Math.round(this.lerp(this.SLOW_WATER_COLOR.r, zoneColor.r, speedFactor));
+            data[idx + 1] = Math.round(this.lerp(this.SLOW_WATER_COLOR.g, zoneColor.g, speedFactor));
+            data[idx + 2] = Math.round(this.lerp(this.SLOW_WATER_COLOR.b, zoneColor.b, speedFactor));
+          } else {
+            // Медленное течение -- заливаем тёмным базовым цветом
+            data[idx]     = this.SLOW_WATER_COLOR.r;
+            data[idx + 1] = this.SLOW_WATER_COLOR.g;
+            data[idx + 2] = this.SLOW_WATER_COLOR.b;
           }
+          data[idx + 3] = 255; // Полная плотность для всей воды
         } else {
-          data[idx + 3] = 0; // Суша
+          data[idx + 3] = 0; // Суша остается прозрачной
         }
         idx += 4;
       }
@@ -84,32 +97,36 @@ export class CurrentsBackgroundOverlay {
 
     tempCtx.putImageData(imgData, 0, 0);
 
-    // 2. Переносим сырую сетку на основной холст С ГАУССОВЫМ РАЗМЫТИЕМ
-    // blur(6px) на разрешении 160х160 даёт потрясающий мягкий градиент на карте 8000х8000
+    // Применяем мягкое размытие (blur) при отрисовке на финальный холст
     this.offscreenCtx.clearRect(0, 0, this.GRID_SIZE, this.GRID_SIZE);
-    this.offscreenCtx.filter = 'blur(6px)';
+    this.offscreenCtx.filter = 'blur(10px)';
     this.offscreenCtx.drawImage(tempCanvas, 0, 0);
 
     this.isGenerated = true;
 
-    // 3. Создаём текстуру PixiJS с линейной фильтрацией
+    // Создаём PixiJS текстуру с линейным сглаживанием
     const texture = PIXI.Texture.from(this.offscreenCanvas);
     if (texture.source) {
-      texture.source.scaleMode = 'linear'; // Линейное сглаживание масштабирования
+      texture.source.scaleMode = 'linear';
     }
 
     this.sprite = new PIXI.Sprite(texture);
     this.sprite.width = this.worldWidth;
     this.sprite.height = this.worldHeight;
     
-    // Мягкая прозрачность и органичный режим наложения на воду
-    this.sprite.alpha = 0.3;
-    this.sprite.blendMode = 'soft-light'; 
+    // Полупрозрачное мягкое наложение поверх текстуры океана
+    this.sprite.alpha = 0.45;
+    this.sprite.blendMode = 'soft-light';
 
     this.container.addChild(this.sprite);
   }
 
+  private lerp(start: number, end: number, t: number): number {
+    return start + (end - start) * t;
+  }
+
   private hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+    if (!hex) return null;
     const cleanHex = hex.replace('#', '');
     if (cleanHex.length !== 6) return null;
     return {

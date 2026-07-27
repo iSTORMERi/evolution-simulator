@@ -20,7 +20,7 @@ export class CurrentsToggleUI {
   }
 
   /**
-   * Переключает состояние видимости слоев течений
+   * Переключает состояние видимости слоёв течений
    */
   public toggle(): void {
     this.setVisible(!this._isVisible);

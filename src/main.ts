@@ -74,27 +74,26 @@ async function initApp() {
     
     app.stage.addChild(worldMap.container);
 
-    // 1.1. Инициализация течений, подложки и частиц
+    // 1.1. Инициализация течений, мягкой подложки и частиц
     const oceanCurrents = new OceanCurrentsManager(WORLD_WIDTH, WORLD_HEIGHT);
     const currentsOverlay = new CurrentsBackgroundOverlay(oceanCurrents, WORLD_WIDTH, WORLD_HEIGHT);
     const debugParticles = new CurrentParticlesDebug(oceanCurrents, 1800);
     
-    // Настраиваем порядок слоев (подложка под частицами)
+    // Порядок слоёв: подложка (99) под частицами (100)
     currentsOverlay.container.zIndex = 99;
     debugParticles.container.zIndex = 100;
 
     worldMap.container.addChild(currentsOverlay.container);
     worldMap.container.addChild(debugParticles.container);
 
-    // 1.2. Управление видимостью течений с помощью кнопки UI
+    // 1.2. Синхронное управление видимостью подложки и частиц единой кнопкой
     const currentsUI = new CurrentsToggleUI('toggle-currents-btn');
     
-    // Синхронизируем начальное состояние (подложка и частицы включаются/выключаются вместе)
     const initialVisibility = currentsUI.isVisible;
     currentsOverlay.container.visible = initialVisibility;
     debugParticles.container.visible = initialVisibility;
 
-    // Реакция на нажатие кнопки
+    // Реакция на переключение кнопки
     currentsUI.onToggle((visible) => {
       currentsOverlay.container.visible = visible;
       debugParticles.container.visible = visible;
@@ -111,18 +110,17 @@ async function initApp() {
     const lightingController = new LightingController(worldMap.container);
     new TimeDebugUI(lightingController);
 
-    // 4. Инициализация сканера биомов (передаём lightingController)
+    // 4. Инициализация сканера биомов
     const scanner = new BiomeScanner(worldMap, lightingController);
 
     // 5. Главный игровой цикл
     app.ticker.add((ticker) => {
-      // Честное время кадра в секундах
       const deltaSeconds = ticker.deltaMS / 1000;
       
       // Обновляем физику и анимации воды
       worldMap.update(deltaSeconds);
 
-      // Обновляем физику частиц (если они видимы)
+      // Обновляем физику частиц (только когда слой видим)
       if (debugParticles.container.visible) {
         debugParticles.update(deltaSeconds);
       }
@@ -132,11 +130,11 @@ async function initApp() {
         worldMap.updateTimeState((lightingController as any).getCurrentHours());
       }
 
-      // Живое обновление карточки сканера
+      // Обновление сканера биомов
       scanner.update();
     });
 
-    // Обработка изменения размера окна с безопасной очисткой
+    // Обработка ресайза
     resizeHandler = () => {
       if (typeof camera.fillScreen === 'function') {
         camera.fillScreen(app.screen.width, app.screen.height);
