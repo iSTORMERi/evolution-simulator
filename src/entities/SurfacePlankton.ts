@@ -1,6 +1,6 @@
 // src/entities/SurfacePlankton.ts
 
-import { OceanCurrentsManager } from '../simulation/OceanCurrentsManager';
+import { OceanCurrentsManager, CurrentZoneType } from '../simulation/OceanCurrentsManager';
 
 /**
  * Четыре основных биологических типа фитопланктона
@@ -21,6 +21,48 @@ export interface PlanktonColonyConfig {
   rotation?: number; // Ориентация колонии по течению (в радианах)
   seed?: number;     // Семечко генератора случайных форм
 }
+
+/**
+ * Конфигурация начального экологического распределения видов
+ */
+export interface SpeciesEcologyConfig {
+  type: PlanktonType;
+  totalCount: number;
+  optimumZones: CurrentZoneType[];
+  normalZones: CurrentZoneType[];
+  optimumRatio: number; // 0.70 = 70% в идеальных зонах
+}
+
+export const PLANKTON_ECOLOGY_CONFIG: SpeciesEcologyConfig[] = [
+  {
+    type: PlanktonType.DIATOMS,
+    totalCount: 180, // 30% от 600
+    optimumZones: [CurrentZoneType.COLD],
+    normalZones: [CurrentZoneType.CONNECTING, CurrentZoneType.TRANSIT],
+    optimumRatio: 0.70
+  },
+  {
+    type: PlanktonType.DINOFLAGELLATES,
+    totalCount: 140, // ~23% от 600
+    optimumZones: [CurrentZoneType.WARM],
+    normalZones: [CurrentZoneType.DRIFT, CurrentZoneType.TRANSIT],
+    optimumRatio: 0.70
+  },
+  {
+    type: PlanktonType.COCCOLITHOPHORES,
+    totalCount: 130, // ~22% от 600
+    optimumZones: [CurrentZoneType.TRANSIT],
+    normalZones: [CurrentZoneType.CONNECTING, CurrentZoneType.WARM],
+    optimumRatio: 0.70
+  },
+  {
+    type: PlanktonType.CYANOBACTERIA,
+    totalCount: 150, // 25% от 600
+    optimumZones: [CurrentZoneType.DRIFT],
+    normalZones: [CurrentZoneType.WARM, CurrentZoneType.TRANSIT],
+    optimumRatio: 0.70
+  }
+];
 
 /**
  * Класс, представляющий отдельную колонию (поле плотности) фитопланктона
@@ -82,13 +124,90 @@ export class SurfacePlankton {
   }
 
   /**
-   * Вспомогательный генератор тестового набора средних колоний всех 4 типов
+   * Метод поиска точки в воде, принадлежащей конкретным типам зон течений
+   */
+  private static findWaterPositionInZones(
+    currentsManager: OceanCurrentsManager,
+    targetZones: CurrentZoneType[],
+    maxAttempts: number = 400
+  ): { x: number; y: number } {
+    for (let i = 0; i < maxAttempts; i++) {
+      const candidate = currentsManager.getRandomWaterPosition();
+      const currentData = currentsManager.getCurrentAt(candidate.x, candidate.y);
+
+      if (currentData && currentData.isWater && targetZones.includes(currentData.zoneType)) {
+        return candidate;
+      }
+    }
+
+    // Резервный фолбэк (любая случайная точка воды), если за maxAttempts зона не найдена
+    return currentsManager.getRandomWaterPosition();
+  }
+
+  /**
+   * Генерация сбалансированной экосистемы из 600 стартовых колоний по целевым биомам
+   */
+  public static createEcologicalInitialColonies(
+    worldWidth: number,
+    worldHeight: number,
+    currentsManager: OceanCurrentsManager
+  ): SurfacePlankton[] {
+    const colonies: SurfacePlankton[] = [];
+
+    for (const config of PLANKTON_ECOLOGY_CONFIG) {
+      const optimumCount = Math.round(config.totalCount * config.optimumRatio);
+      const normalCount = config.totalCount - optimumCount;
+
+      // 1. Спавн 70% колоний в зонах Оптимума
+      for (let i = 0; i < optimumCount; i++) {
+        const pos = this.findWaterPositionInZones(currentsManager, config.optimumZones);
+        colonies.push(
+          new SurfacePlankton({
+            x: pos.x,
+            y: pos.y,
+            type: config.type,
+            radius: 120 + Math.random() * 60,
+            density: 0.75 + Math.random() * 0.25,
+            rotation: Math.random() * Math.PI * 2,
+            seed: Math.random() * 1000,
+          })
+        );
+      }
+
+      // 2. Спавн 30% колоний в зонах Нормы
+      for (let i = 0; i < normalCount; i++) {
+        const pos = this.findWaterPositionInZones(currentsManager, config.normalZones);
+        colonies.push(
+          new SurfacePlankton({
+            x: pos.x,
+            y: pos.y,
+            type: config.type,
+            radius: 110 + Math.random() * 50,
+            density: 0.65 + Math.random() * 0.25,
+            rotation: Math.random() * Math.PI * 2,
+            seed: Math.random() * 1000,
+          })
+        );
+      }
+    }
+
+    return colonies;
+  }
+
+  /**
+   * Генератор стартового набора: если передан currentsManager -- создаёт полную 
+   * экосистему из 600 колоний по их естественным биомам.
    */
   public static createDefaultTestColonies(
     worldWidth: number,
     worldHeight: number,
     currentsManager?: OceanCurrentsManager
   ): SurfacePlankton[] {
+    if (currentsManager) {
+      return this.createEcologicalInitialColonies(worldWidth, worldHeight, currentsManager);
+    }
+
+    // Резервный базовый спавн (для изолированных тестов без карты течений)
     const types = [
       PlanktonType.DIATOMS,
       PlanktonType.DINOFLAGELLATES,
@@ -98,22 +217,11 @@ export class SurfacePlankton {
 
     const colonies: SurfacePlankton[] = [];
 
-    // Создаем по 2 средние колонии каждого типа
     types.forEach((type, typeIdx) => {
       for (let i = 0; i < 2; i++) {
-        let x: number;
-        let y: number;
-
-        // Если сканер передан -- выбираем гарантированные точки воды
-        if (currentsManager) {
-          const waterPos = currentsManager.getRandomWaterPosition();
-          x = waterPos.x;
-          y = waterPos.y;
-        } else {
-          const margin = 150;
-          x = margin + Math.random() * (worldWidth - margin * 2);
-          y = margin + Math.random() * (worldHeight - margin * 2);
-        }
+        const margin = 150;
+        const x = margin + Math.random() * (worldWidth - margin * 2);
+        const y = margin + Math.random() * (worldHeight - margin * 2);
 
         colonies.push(
           new SurfacePlankton({

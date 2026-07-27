@@ -25,12 +25,14 @@ export class PlanktonOverlay {
     this.worldWidth = worldWidth;
     this.worldHeight = worldHeight;
 
+    // Автоматическая загрузка экологически заспавненных 600 колоний
     this.planktonList = customColonies ?? SurfacePlankton.createDefaultTestColonies(
-      worldWidth,
-      worldHeight,
+      this.worldWidth,
+      this.worldHeight,
       this.currentsManager
     );
 
+    // Отрисовка графических контейнеров PIXI для каждой стартовой колонии
     for (const colony of this.planktonList) {
       const visual = this.createColonyGraphics(colony);
       this.colonyGraphics.push(visual);
@@ -38,6 +40,9 @@ export class PlanktonOverlay {
     }
   }
 
+  /**
+   * Фабрика создания индивидуального PIXI-контейнера колонии с легким размытием
+   */
   private createColonyGraphics(colony: SurfacePlankton): PIXI.Container {
     const container = new PIXI.Container();
     container.x = colony.x;
@@ -63,7 +68,7 @@ export class PlanktonOverlay {
 
     container.addChild(g);
 
-    // Микро-сглаживание (0.8px) -- предотвращает лесенку пикселей, не создавая мыла
+    // Микро-сглаживание (0.8px) -- предотвращает лестничный эффект (aliasing) без потери чёткости
     container.filters = [new PIXI.BlurFilter({ strength: 0.8, quality: 1 })];
 
     return container;
@@ -160,7 +165,7 @@ export class PlanktonOverlay {
   }
 
   /**
-   * 4. Цианобактерии: Полупрозрачные тонкие волокна (без изменений)
+   * 4. Цианобактерии: Полупрозрачные тонкие волокна
    */
   private drawCyanobacteriaColony(g: PIXI.Graphics, colony: SurfacePlankton): void {
     const r = colony.radius;
