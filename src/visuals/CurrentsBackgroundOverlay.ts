@@ -10,8 +10,8 @@ export class CurrentsBackgroundOverlay {
   private worldWidth: number;
   private worldHeight: number;
 
-  // Увеличиваем разрешение до 512х512 для исключения пиксельных ступенек
-  private readonly GRID_SIZE = 512;
+  // Плотная сетка 1024x1024 для ультра-плавных градиентов
+  private readonly GRID_SIZE = 1024;
   private isGenerated: boolean = false;
 
   // Цвет глубинного затемнения океана (глубокий тёмно-синий)
@@ -84,14 +84,14 @@ export class CurrentsBackgroundOverlay {
 
     tempCtx.putImageData(imgData, 0, 0);
 
-    // Размытие 16px на высоком разрешении даёт безупречно мягкий прибой
+    // Глубокое мягкое размытие 24px на высоком разрешении
     this.offscreenCtx.clearRect(0, 0, this.GRID_SIZE, this.GRID_SIZE);
-    this.offscreenCtx.filter = 'blur(16px)';
+    this.offscreenCtx.filter = 'blur(24px)';
     this.offscreenCtx.drawImage(tempCanvas, 0, 0);
 
     this.isGenerated = true;
 
-    // Создаём текстуру PixiJS с линейной фильтрацией
+    // Создаём текстуру PixiJS с линейным сглаживанием
     const texture = PIXI.Texture.from(this.offscreenCanvas);
     if (texture.source) {
       texture.source.scaleMode = 'linear';
