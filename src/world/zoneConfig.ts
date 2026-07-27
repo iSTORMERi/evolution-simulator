@@ -27,9 +27,9 @@ export const OCEAN_ZONES_CONFIG: ZoneConfig[] = [
       baseLight: 0.0,
       baseTemperature: 2.3,
       tempSensitivity: 0.0,
-      pressure: 400.0,
+      pressure: 850.0,      // Научно скорректировано (глубина ~8500 м)
       oxygen: 0.2,
-      salinity: 36.0,
+      salinity: 36.0,       // Повышенная из-за сжатия на ультраглубинах
       acidity: 7.4,
       current: 0.0,
       viscosity: 2.0,
@@ -46,7 +46,7 @@ export const OCEAN_ZONES_CONFIG: ZoneConfig[] = [
       baseLight: 0.0,
       baseTemperature: 2.0,
       tempSensitivity: 0.0,
-      pressure: 200.0,
+      pressure: 500.0,      // Научно скорректировано (глубина ~5000 м)
       oxygen: 0.3,
       salinity: 35.0,
       acidity: 7.6,
@@ -65,7 +65,7 @@ export const OCEAN_ZONES_CONFIG: ZoneConfig[] = [
       baseLight: 0.0,
       baseTemperature: 4.0,
       tempSensitivity: 0.0,
-      pressure: 50.0,
+      pressure: 250.0,      // Научно скорректировано (глубина ~2500 м)
       oxygen: 0.4,
       salinity: 35.0,
       acidity: 7.8,
@@ -84,7 +84,7 @@ export const OCEAN_ZONES_CONFIG: ZoneConfig[] = [
       baseLight: 0.1,
       baseTemperature: 8.0,
       tempSensitivity: 0.0,
-      pressure: 15.0,
+      pressure: 60.0,       // Научно скорректировано (глубина ~600 м)
       oxygen: 0.5,
       salinity: 35.0,
       acidity: 7.9,
@@ -103,7 +103,7 @@ export const OCEAN_ZONES_CONFIG: ZoneConfig[] = [
       baseLight: 0.7,
       baseTemperature: 14.0,
       tempSensitivity: 0.0,
-      pressure: 3.0,
+      pressure: 10.0,       // Научно скорректировано (глубина ~100 м)
       oxygen: 0.8,
       salinity: 35.0,
       acidity: 8.1,
@@ -122,7 +122,7 @@ export const OCEAN_ZONES_CONFIG: ZoneConfig[] = [
       baseLight: 0.9,
       baseTemperature: 16.0,
       tempSensitivity: 0.30,
-      pressure: 1.5,
+      pressure: 3.0,        // Научно скорректировано (глубина ~20 м)
       oxygen: 0.9,
       salinity: 35.0,
       acidity: 8.2,
@@ -141,9 +141,9 @@ export const OCEAN_ZONES_CONFIG: ZoneConfig[] = [
       baseLight: 1.0,
       baseTemperature: 18.0,
       tempSensitivity: 0.80,
-      pressure: 1.0,
+      pressure: 1.2,        // Научно скорректировано (мелководье ~2 м)
       oxygen: 1.0,
-      salinity: 30.0,
+      salinity: 30.0,       // Опреснённая вода (стоки, осадки)
       acidity: 8.0,
       current: 0.8,
       viscosity: 1.0,
@@ -162,9 +162,9 @@ export const LAND_ZONE_CONFIG: ZoneConfig = {
     baseLight: 1.0,
     baseTemperature: 20.0,
     tempSensitivity: 1.00,
-    pressure: 1.0,
+    pressure: 1.0,        // Атмосферное давление на уровне моря
     oxygen: 1.0,
-    salinity: 0.0,
+    salinity: 0.0,        // Пресная среда
     acidity: 7.0,
     current: 0.0,
     viscosity: 1.0,
