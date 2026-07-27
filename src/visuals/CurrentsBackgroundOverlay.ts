@@ -70,13 +70,11 @@ export class CurrentsBackgroundOverlay {
         const currentData = this.currentsManager.getCurrentAt(worldX, worldY);
 
         if (currentData.isWater) {
-          // Заливаем всю воду единым тёмным тоном
           data[idx]     = this.DARK_OCEAN_COLOR.r;
           data[idx + 1] = this.DARK_OCEAN_COLOR.g;
           data[idx + 2] = this.DARK_OCEAN_COLOR.b;
           data[idx + 3] = 255; 
         } else {
-          // Суша остается полностью прозрачной (берег не затемняется)
           data[idx + 3] = 0; 
         }
         idx += 4;
@@ -85,14 +83,14 @@ export class CurrentsBackgroundOverlay {
 
     tempCtx.putImageData(imgData, 0, 0);
 
-    // Легкое размытие края для плавного примыкания к береговой линии
+    // Увеличенный blur(8px) полностью сглаживает пиксельные ступеньки на берегу
     this.offscreenCtx.clearRect(0, 0, this.GRID_SIZE, this.GRID_SIZE);
-    this.offscreenCtx.filter = 'blur(3px)';
+    this.offscreenCtx.filter = 'blur(8px)';
     this.offscreenCtx.drawImage(tempCanvas, 0, 0);
 
     this.isGenerated = true;
 
-    // Создаём текстуру PixiJS
+    // Создаём текстуру PixiJS с линейным сглаживанием
     const texture = PIXI.Texture.from(this.offscreenCanvas);
     if (texture.source) {
       texture.source.scaleMode = 'linear';
@@ -102,9 +100,8 @@ export class CurrentsBackgroundOverlay {
     this.sprite.width = this.worldWidth;
     this.sprite.height = this.worldHeight;
     
-    // Плотность затемнения (0.65 даёт идеальный глубокий контраст для свечения частиц)
     this.sprite.alpha = 0.65;
-    this.sprite.blendMode = 'multiply'; // Плавное эстетичное затемнение воды
+    this.sprite.blendMode = 'multiply';
 
     this.container.addChild(this.sprite);
   }
