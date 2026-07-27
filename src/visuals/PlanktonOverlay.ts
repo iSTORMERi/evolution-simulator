@@ -34,9 +34,6 @@ export class PlanktonOverlay {
     }
   }
 
-  /**
-   * Генерация визуального стиля колонии в виде мягкого органического пятна
-   */
   private createColonyGraphics(colony: SurfacePlankton): PIXI.Container {
     const container = new PIXI.Container();
     container.x = colony.x;
@@ -62,15 +59,14 @@ export class PlanktonOverlay {
 
     container.addChild(g);
 
-    // Главный секрет акварельного растворения: накладываем размытие на всю колонию
-    const blurStrength = colony.radius * 0.18 + 12;
-    container.filters = [new PIXI.BlurFilter({ strength: blurStrength, quality: 3 })];
+    // Легкий размывающий фильтр исключительно для сглаживания граней
+    container.filters = [new PIXI.BlurFilter({ strength: 5, quality: 2 })];
 
     return container;
   }
 
   /**
-   * Генератор органических деформированных полигонов (без жесткой геометрии)
+   * Генерация волнистых органических полигонов
    */
   private generateOrganicPolygon(
     baseRadiusX: number,
@@ -82,9 +78,8 @@ export class PlanktonOverlay {
     for (let i = 0; i < numPoints; i++) {
       const angle = (i / numPoints) * Math.PI * 2;
       
-      // Наложение двух синусоид создает естественную асимметричную деформацию
-      const noise1 = Math.sin(angle * 3 + seed) * 0.22;
-      const noise2 = Math.cos(angle * 5 + seed * 1.7) * 0.15;
+      const noise1 = Math.sin(angle * 3 + seed) * 0.20;
+      const noise2 = Math.cos(angle * 5 + seed * 1.7) * 0.12;
       const factor = 1 + noise1 + noise2;
 
       const rx = baseRadiusX * factor;
@@ -96,97 +91,93 @@ export class PlanktonOverlay {
   }
 
   /**
-   * 1. Диатомеи: Нежное оливково-золотое пятно, вытянутое по течению
+   * 1. Диатомеи: Вытянутая оливково-золотая струя
    */
   private drawDiatomsColony(g: PIXI.Graphics, colony: SurfacePlankton): void {
     const r = colony.radius;
-    const goldColor = 0x9E7808; // Янтарно-золотой
-    const oliveColor = 0x4D5E21; // Оливковый
+    const goldColor = 0xC59B27;  // Более сочный золотой
+    const oliveColor = 0x6B8E23; // Насыщенный оливковый
 
-    // Внешний размытый ореол (очень прозрачный)
-    const outerShape = this.generateOrganicPolygon(r * 1.5, r * 0.55, colony.seed, 20);
-    g.poly(outerShape).fill({ color: goldColor, alpha: 0.12 * colony.density });
+    // Размытый внешний ореол
+    const outerShape = this.generateOrganicPolygon(r * 1.4, r * 0.5, colony.seed, 18);
+    g.poly(outerShape).fill({ color: goldColor, alpha: 0.25 * colony.density });
 
-    // Средний слой
-    const midShape = this.generateOrganicPolygon(r * 1.1, r * 0.4, colony.seed + 1.5, 18);
-    g.poly(midShape).fill({ color: goldColor, alpha: 0.22 * colony.density });
+    // Среднее тело струи
+    const midShape = this.generateOrganicPolygon(r * 1.0, r * 0.38, colony.seed + 1.5, 16);
+    g.poly(midShape).fill({ color: goldColor, alpha: 0.50 * colony.density });
 
-    // Плотное, но размытое ядро
-    const coreShape = this.generateOrganicPolygon(r * 0.6, r * 0.25, colony.seed + 3.0, 14);
-    g.poly(coreShape).fill({ color: oliveColor, alpha: 0.35 * colony.density });
+    // Плотное ядро
+    const coreShape = this.generateOrganicPolygon(r * 0.6, r * 0.22, colony.seed + 3.0, 14);
+    g.poly(coreShape).fill({ color: oliveColor, alpha: 0.75 * colony.density });
   }
 
   /**
-   * 2. Динофлагеллаты: Мягкое полупрозрачное багрово-красное пятно
+   * 2. Динофлагеллаты: Багрово-красное очерченное пятно
    */
   private drawDinoflagellatesColony(g: PIXI.Graphics, colony: SurfacePlankton): void {
     const r = colony.radius;
-    const rustRed = 0x8B2222;
-    const deepMaroon = 0x500A0A;
+    const rustRed = 0xB22222;  // Яркий багровый
+    const deepMaroon = 0x6B0000;
 
-    // Внешняя асимметричная полутень
-    const outerShape = this.generateOrganicPolygon(r * 1.1, r * 0.9, colony.seed, 16);
-    g.poly(outerShape).fill({ color: rustRed, alpha: 0.15 * colony.density });
+    const outerShape = this.generateOrganicPolygon(r * 1.1, r * 0.85, colony.seed, 16);
+    g.poly(outerShape).fill({ color: rustRed, alpha: 0.30 * colony.density });
 
-    // Внутреннее полупрозрачное ядро
-    const coreShape = this.generateOrganicPolygon(r * 0.6, r * 0.5, colony.seed + 2.1, 14);
-    g.poly(coreShape).fill({ color: deepMaroon, alpha: 0.30 * colony.density });
+    const midShape = this.generateOrganicPolygon(r * 0.75, r * 0.55, colony.seed + 1.2, 14);
+    g.poly(midShape).fill({ color: rustRed, alpha: 0.55 * colony.density });
+
+    const coreShape = this.generateOrganicPolygon(r * 0.45, r * 0.35, colony.seed + 2.5, 12);
+    g.poly(coreShape).fill({ color: deepMaroon, alpha: 0.80 * colony.density });
   }
 
   /**
-   * 3. Кокколитофориды: Молочно-бирюзовое дымчатое облако
+   * 3. Кокколитофориды: Яркое молочно-бирюзовое облако
    */
   private drawCoccolithophoresColony(g: PIXI.Graphics, colony: SurfacePlankton): void {
     const r = colony.radius;
-    const turquoise = 0x30D5C8;
-    const milkyWhite = 0xDBF3F0;
+    const turquoise = 0x00CED1; // Яркая бирюза
+    const milkyWhite = 0xF0FFFF; // Светло-молочный
 
-    // Внешний дымчатый ореол
-    const outerShape = this.generateOrganicPolygon(r * 1.3, r * 1.1, colony.seed, 18);
-    g.poly(outerShape).fill({ color: turquoise, alpha: 0.14 * colony.density });
+    const outerShape = this.generateOrganicPolygon(r * 1.2, r * 1.0, colony.seed, 18);
+    g.poly(outerShape).fill({ color: turquoise, alpha: 0.28 * colony.density });
 
-    // Несколько наложенных смещенных суб-облаков (создают эффект вихря)
+    // Вихревые пятна
     for (let i = 0; i < 3; i++) {
-      const offsetX = Math.cos(i * 2.1 + colony.seed) * (r * 0.25);
-      const offsetY = Math.sin(i * 2.1 + colony.seed) * (r * 0.25);
-      const cloudShape = this.generateOrganicPolygon(r * 0.5, r * 0.45, colony.seed + i * 4, 12);
+      const offsetX = Math.cos(i * 2.1 + colony.seed) * (r * 0.22);
+      const offsetY = Math.sin(i * 2.1 + colony.seed) * (r * 0.22);
+      const cloudShape = this.generateOrganicPolygon(r * 0.45, r * 0.4, colony.seed + i * 4, 12);
       
-      // Сдвигаем координаты точек
       const shiftedPoints = cloudShape.map((val, idx) => idx % 2 === 0 ? val + offsetX : val + offsetY);
-      g.poly(shiftedPoints).fill({ color: milkyWhite, alpha: 0.18 * colony.density });
+      g.poly(shiftedPoints).fill({ color: milkyWhite, alpha: 0.45 * colony.density });
     }
 
-    // Молочный центр
     const coreShape = this.generateOrganicPolygon(r * 0.4, r * 0.35, colony.seed + 5, 12);
-    g.poly(coreShape).fill({ color: milkyWhite, alpha: 0.28 * colony.density });
+    g.poly(coreShape).fill({ color: milkyWhite, alpha: 0.70 * colony.density });
   }
 
   /**
-   * 4. Цианобактерии: Волнистая салатовая туманность с мягкой волокнистостью
+   * 4. Цианобактерии: Сочная салатовая нитевидная паутина
    */
   private drawCyanobacteriaColony(g: PIXI.Graphics, colony: SurfacePlankton): void {
     const r = colony.radius;
-    const limeColor = 0x22C55E;
-    const darkGreen = 0x15803D;
+    const limeColor = 0x00FF66;  // Кислотно-салатовый
+    const darkGreen = 0x1E8449;
 
-    // Мягкое фоновое пятно
     const outerShape = this.generateOrganicPolygon(r * 1.2, r * 0.7, colony.seed, 16);
-    g.poly(outerShape).fill({ color: darkGreen, alpha: 0.10 * colony.density });
+    g.poly(outerShape).fill({ color: darkGreen, alpha: 0.22 * colony.density });
 
-    // Изогнутые волокнистые штрихи, размытые в единую массу
-    const numLines = 8;
+    const numLines = 10;
     for (let i = 0; i < numLines; i++) {
-      const offsetY = ((i - numLines / 2) / numLines) * (r * 0.8);
-      const curve = Math.sin(i * 0.8 + colony.seed) * 15;
+      const offsetY = ((i - numLines / 2) / numLines) * (r * 0.75);
+      const curve = Math.sin(i * 0.8 + colony.seed) * 12;
       
-      const p1X = -r * 0.8;
+      const p1X = -r * 0.75;
       const p1Y = offsetY - curve;
-      const p2X = r * 0.8;
+      const p2X = r * 0.75;
       const p2Y = offsetY + curve;
 
       g.moveTo(p1X, p1Y)
        .lineTo(p2X, p2Y)
-       .stroke({ width: 6 + Math.random() * 4, color: limeColor, alpha: 0.18 * colony.density });
+       .stroke({ width: 5 + Math.random() * 3, color: limeColor, alpha: 0.50 * colony.density });
     }
   }
 
