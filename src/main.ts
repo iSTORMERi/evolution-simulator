@@ -13,6 +13,9 @@ import { CurrentsBackgroundOverlay } from './visuals/CurrentsBackgroundOverlay';
 import { CurrentParticlesDebug } from './visuals/CurrentParticlesDebug';
 import { CurrentsToggleUI } from './ui/CurrentsToggleUI';
 
+// Импортируем слой поверхностного планктона
+import { PlanktonOverlay } from './visuals/PlanktonOverlay';
+
 let currentApp: PIXI.Application | null = null;
 let resizeHandler: (() => void) | null = null;
 
@@ -74,17 +77,22 @@ async function initApp() {
     
     app.stage.addChild(worldMap.container);
 
-    // 1.1. Инициализация течений, мягкой подложки и частиц
+    // 1.1. Инициализация течений, мягкой подложки, частиц и планктона
     const oceanCurrents = new OceanCurrentsManager(WORLD_WIDTH, WORLD_HEIGHT);
     const currentsOverlay = new CurrentsBackgroundOverlay(oceanCurrents, WORLD_WIDTH, WORLD_HEIGHT);
     const debugParticles = new CurrentParticlesDebug(oceanCurrents, 1800);
     
-    // Порядок слоёв: подложка (99) под частицами (100)
+    // Инициализация слоя планктона (800 колоний)
+    const planktonOverlay = new PlanktonOverlay(app, oceanCurrents, 800, WORLD_WIDTH, WORLD_HEIGHT);
+    
+    // Порядок слоёв: подложка (99) -> частицы течений (100) -> планктон (101)
     currentsOverlay.container.zIndex = 99;
     debugParticles.container.zIndex = 100;
+    planktonOverlay.container.zIndex = 101;
 
     worldMap.container.addChild(currentsOverlay.container);
     worldMap.container.addChild(debugParticles.container);
+    worldMap.container.addChild(planktonOverlay.container);
 
     // 1.2. Синхронное управление видимостью подложки и частиц единой кнопкой
     const currentsUI = new CurrentsToggleUI('toggle-currents-btn');
@@ -125,10 +133,17 @@ async function initApp() {
         debugParticles.update(deltaSeconds);
       }
 
+      // Вычисляем текущее время суток для переключения режима дня/ночи планктона
+      const currentHours = typeof (lightingController as any).getCurrentHours === 'function'
+        ? (lightingController as any).getCurrentHours()
+        : 12;
+      const isNight = currentHours < 6 || currentHours > 18;
+
+      // Обновляем кинематику дрейфа и внешний вид планктона
+      planktonOverlay.update(deltaSeconds, isNight);
+
       // Синхронизируем состояние дня/ночи на карте
-      if (typeof (lightingController as any).getCurrentHours === 'function') {
-        worldMap.updateTimeState((lightingController as any).getCurrentHours());
-      }
+      worldMap.updateTimeState(currentHours);
 
       // Обновление сканера биомов
       scanner.update();
