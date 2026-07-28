@@ -13,9 +13,6 @@ import { CurrentsBackgroundOverlay } from './visuals/CurrentsBackgroundOverlay';
 import { CurrentParticlesDebug } from './visuals/CurrentParticlesDebug';
 import { CurrentsToggleUI } from './ui/CurrentsToggleUI';
 
-// Импортируем оверлей планктона
-import { PlanktonOverlay } from './visuals/PlanktonOverlay';
-
 let currentApp: PIXI.Application | null = null;
 let resizeHandler: (() => void) | null = null;
 
@@ -77,7 +74,7 @@ async function initApp() {
     
     app.stage.addChild(worldMap.container);
 
-    // 1.1. Инициализация течений, мягкой подложки, частиц и планктона
+    // 1.1. Инициализация течений, мягкой подложки и частиц
     const oceanCurrents = new OceanCurrentsManager(WORLD_WIDTH, WORLD_HEIGHT);
 
     // ВАЖНО: Дожидаемся асинхронной загрузки и сканирования маски береговой линии!
@@ -85,16 +82,6 @@ async function initApp() {
 
     const currentsOverlay = new CurrentsBackgroundOverlay(oceanCurrents, WORLD_WIDTH, WORLD_HEIGHT);
     const debugParticles = new CurrentParticlesDebug(oceanCurrents, 1800);
-    
-    // Безопасная инициализация планктона (теперь гарантированно с готовым сканером)
-    let planktonOverlay: PlanktonOverlay | null = null;
-    try {
-      planktonOverlay = new PlanktonOverlay(app, oceanCurrents, 600, WORLD_WIDTH, WORLD_HEIGHT);
-      planktonOverlay.container.zIndex = 101;
-      worldMap.container.addChild(planktonOverlay.container);
-    } catch (e) {
-      console.error('Failed to initialize PlanktonOverlay:', e);
-    }
 
     // Порядок слоёв: подложка (99) под частицами (100)
     currentsOverlay.container.zIndex = 99;
@@ -140,19 +127,6 @@ async function initApp() {
       // Обновляем физику частиц (только когда слой видим)
       if (debugParticles.container.visible) {
         debugParticles.update(deltaSeconds);
-      }
-
-      // Безопасное обновление планктона
-      if (planktonOverlay) {
-        try {
-          const currentHours = typeof (lightingController as any).getCurrentHours === 'function'
-            ? (lightingController as any).getCurrentHours()
-            : 12;
-          const isNight = currentHours < 6 || currentHours > 18;
-          planktonOverlay.update(deltaSeconds, isNight);
-        } catch (e) {
-          console.error('Error in PlanktonOverlay loop:', e);
-        }
       }
 
       // Синхронизируем состояние дня/ночи на карте
