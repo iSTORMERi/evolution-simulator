@@ -38,11 +38,11 @@ export const ZONE_SPEED_MULTIPLIERS: Record<CurrentZoneType, number> = {
   [CurrentZoneType.WARM]: 1.15
 };
 
-// 🔥 РАСПРЕДЕЛЕНИЕ 8000 ЧАСТИЦ ПО ЗОНАМ
+// 🔥 РАСПРЕДЕЛЕНИЕ 10 000 ЧАСТИЦ ПО ЗОНАМ
 export const ZONE_PARTICLE_COUNTS: Record<CurrentZoneType, number> = {
   [CurrentZoneType.DEEP]: 1000, // 🟣 Оставляем как есть (эталонная плотность)
-  [CurrentZoneType.COLD]: 5250, // 🔵 МАКСИМУМ: Заполняем огромную центральную зону
-  [CurrentZoneType.WARM]: 1750  // 🟠 Усиленный прибрежный поток
+  [CurrentZoneType.COLD]: 6750, // 🔵 МАКСИМУМ: Заполняем огромную центральную зону (+1500)
+  [CurrentZoneType.WARM]: 2250  // 🟠 Усиленный прибрежный поток (+500)
 };
 
 export class OceanCurrentsManager {
@@ -395,7 +395,7 @@ export class OceanCurrentsManager {
   }
 
   /**
-   * 🔥 УДОБНЫЙ МЕТОД: Возвращает сразу все 8000 частиц для трех зон
+   * 🔥 УДОБНЫЙ МЕТОД: Возвращает сразу все 10 000 частиц для трех зон
    */
   public getAllInitialParticles(): Array<Point2D & { zone: CurrentZoneType; color: string }> {
     const result: Array<Point2D & { zone: CurrentZoneType; color: string }> = [];
