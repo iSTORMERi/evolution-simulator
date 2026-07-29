@@ -150,7 +150,7 @@ export class OceanCurrentsManager {
   }
 
   /**
-   * ГЕНЕРАЦИЯ ЗАТЕМНЯЮЩЕГО СЛОЯ ОКЕАНА С МЯГКОЙ БЕРЕГОВОЙ ЛИНИЕЙ (GPU TINTING)
+   * ГЕНЕРАЦИЯ ЗАТЕМНЯЮЩЕГО СЛОЯ ОКЕАНА (GPU TINTING С ЯВНЫМ МАСШТАБИРОВАНИЕМ)
    */
   public createDarkeningOverlay(opacity: number = 0.6, blurRadius: number = 12): PIXI.Sprite {
     this.overlayOpacity = opacity;
@@ -163,22 +163,19 @@ export class OceanCurrentsManager {
 
     this.darkeningSprite = new PIXI.Sprite();
     
-    // Масштабируем спрайт на весь игровой мир
-    this.darkeningSprite.width = this.worldWidth;
-    this.darkeningSprite.height = this.worldHeight;
+    // Настраиваем текстуру и явный scale
+    this.refreshDarkeningTexture();
 
-    // Назначаем сине-черный цвет поверх белого силуэта океана средствами GPU
+    // Сине-черный цвет поверх белого силуэта океана
     this.darkeningSprite.tint = 0x050C1C;
     this.darkeningSprite.alpha = 0;
     this.darkeningSprite.visible = false;
-
-    this.refreshDarkeningTexture();
 
     return this.darkeningSprite;
   }
 
   /**
-   * Пересоздание и принудительное обновление текстуры в памяти WebGL
+   * Пересоздание текстуры и жесткая привязка масштаба к размеру игрового мира
    */
   private refreshDarkeningTexture(): void {
     if (!this.darkeningSprite) return;
@@ -190,31 +187,58 @@ export class OceanCurrentsManager {
 
     if (ctx) {
       if (this.maskCanvas) {
-        // 1. Применяем размытие для мягкого градиента у берега
         if (this.overlayBlur > 0) {
           ctx.filter = `blur(${this.overlayBlur}px)`;
         }
-
-        // 2. Рисуем белый силуэт маски океана
         ctx.drawImage(this.maskCanvas, 0, 0, this.MASK_SIZE, this.MASK_SIZE);
       } else {
-        // Временный прямоугольник пока маска загружается
+        // Фолбэк: если маска ещё не загрузилась, рисуем сплошной белый квадрат
         ctx.fillStyle = '#FFFFFF';
         ctx.fillRect(0, 0, this.MASK_SIZE, this.MASK_SIZE);
       }
     }
 
-    const texture = PIXI.Texture.from(renderCanvas);
-    texture.update(); // Отправляем обновленные пиксели прямиком на видеокарту
+    // Создаем новую текстуру и очищаем старую из памяти WebGL
+    const newTexture = PIXI.Texture.from(renderCanvas);
+    newTexture.update();
 
-    this.darkeningSprite.texture = texture;
+    const oldTexture = this.darkeningSprite.texture;
+    this.darkeningSprite.texture = newTexture;
+
+    if (oldTexture && oldTexture !== PIXI.Texture.EMPTY) {
+      oldTexture.destroy(true);
+    }
+
+    // Использование scale вместо width/height решает проблему деления на 0 в PIXI
+    const scaleX = this.worldWidth / this.MASK_SIZE;
+    const scaleY = this.worldHeight / this.MASK_SIZE;
+    this.darkeningSprite.scale.set(scaleX, scaleY);
     this.darkeningSprite.tint = 0x050C1C;
   }
 
   /**
-   * Анимация плавного появления/исчезновения затемнения
+   * Прямое переключение видимости затемнения (для моментального отклика по клику)
    */
-  public updateDarkening(deltaSeconds: number, showCurrents: boolean, fadeSpeed: number = 2.5): void {
+  public setDarkeningVisible(visible: boolean, immediate: boolean = false): void {
+    if (!this.darkeningSprite) return;
+
+    if (visible) {
+      this.darkeningSprite.visible = true;
+      if (immediate) {
+        this.darkeningSprite.alpha = this.overlayOpacity;
+      }
+    } else {
+      if (immediate) {
+        this.darkeningSprite.alpha = 0;
+        this.darkeningSprite.visible = false;
+      }
+    }
+  }
+
+  /**
+   * Анимация плавного появления/исчезновения затемнения (для игрового цикла)
+   */
+  public updateDarkening(deltaSeconds: number, showCurrents: boolean, fadeSpeed: number = 4.0): void {
     if (!this.darkeningSprite) return;
 
     const targetAlpha = showCurrents ? this.overlayOpacity : 0.0;
@@ -224,7 +248,8 @@ export class OceanCurrentsManager {
     }
 
     if (Math.abs(this.darkeningSprite.alpha - targetAlpha) > 0.01) {
-      this.darkeningSprite.alpha += (targetAlpha - this.darkeningSprite.alpha) * deltaSeconds * fadeSpeed;
+      const step = (targetAlpha - this.darkeningSprite.alpha) * Math.min(1, deltaSeconds * fadeSpeed);
+      this.darkeningSprite.alpha += step;
     } else {
       this.darkeningSprite.alpha = targetAlpha;
       if (targetAlpha === 0) {
