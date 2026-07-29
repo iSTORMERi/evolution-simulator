@@ -7,8 +7,6 @@ interface Particle {
   vx: number;
   vy: number;
   zone: CurrentZoneType;
-  life: number;
-  maxLife: number;
   lengthScale: number; // Индивидуальный множитель длины
   sprite: PIXI.Sprite;
 }
@@ -30,7 +28,6 @@ export class CurrentParticlesDebug {
 
   // --- Параметры Spatial Grid & Flocking ---
   private readonly CELL_SIZE = 200;
-  private readonly NEIGHBOR_RADIUS = 180;
   private readonly NEIGHBOR_RADIUS_SQ = 180 * 180;
   private readonly FLOCKING_STRENGTH = 0.15; // Коэффициент подстройки к направлению соседей (15%)
   private gridCols: number;
@@ -64,7 +61,6 @@ export class CurrentParticlesDebug {
 
     const ctx = canvas.getContext('2d');
     if (ctx) {
-      // Градиент прозрачности вдоль оси X
       const gradient = ctx.createLinearGradient(0, 0, width, 0);
       gradient.addColorStop(0, 'rgba(255, 255, 255, 0)');     // Хвост (полная прозрачность)
       gradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.4)'); // Тело
@@ -99,8 +95,6 @@ export class CurrentParticlesDebug {
         // Устанавливаем анкор в голову кометы (правый край: x=1.0, y=0.5)
         sprite.anchor.set(1.0, 0.5);
 
-        const maxLife = 4 + Math.random() * 4;
-        const life = Math.random() * maxLife;
         const lengthScale = 0.8 + Math.random() * 1.7;
 
         // Случайный вектор направления при создании (360 градусов)
@@ -113,8 +107,6 @@ export class CurrentParticlesDebug {
           vx: Math.cos(angle),
           vy: Math.sin(angle),
           zone,
-          life,
-          maxLife,
           lengthScale,
           sprite
         });
@@ -122,21 +114,19 @@ export class CurrentParticlesDebug {
     }
   }
 
-  private respawnParticle(p: Particle): void {
+  /**
+   * Единоразовое позиционирование при полной загрузке маски
+   */
+  private relocateToZone(p: Particle): void {
     const pts = this.currentsManager.getInitialParticlesForZone(p.zone, 1);
     const pos = pts[0] || { x: p.x, y: p.y };
 
     p.x = pos.x;
     p.y = pos.y;
 
-    // Случайный вектор направления при перерождении (360 градусов)
     const angle = Math.random() * Math.PI * 2;
     p.vx = Math.cos(angle);
     p.vy = Math.sin(angle);
-
-    p.life = 0;
-    p.maxLife = 4 + Math.random() * 4;
-    p.lengthScale = 0.8 + Math.random() * 1.7;
     p.sprite.position.set(p.x, p.y);
   }
 
@@ -173,7 +163,6 @@ export class CurrentParticlesDebug {
     let sumVy = 0;
     let neighborCount = 0;
 
-    // Проверяем текущую ячейку и 8 соседних ячеек
     const minX = Math.max(0, cx - 1);
     const maxX = Math.min(this.gridCols - 1, cx + 1);
     const minY = Math.max(0, cy - 1);
@@ -207,7 +196,6 @@ export class CurrentParticlesDebug {
       const avgVx = sumVx / neighborCount;
       const avgVy = sumVy / neighborCount;
 
-      // Плавное смешивание направления (Alignment)
       const blendedVx = p.vx + (avgVx - p.vx) * this.FLOCKING_STRENGTH;
       const blendedVy = p.vy + (avgVy - p.vy) * this.FLOCKING_STRENGTH;
 
@@ -218,15 +206,14 @@ export class CurrentParticlesDebug {
   }
 
   public update(deltaSeconds: number): void {
-    // Единоразовое распределение частиц по маске, как только изображение загрузится
+    // Единоразовое распределение по маске при старте загрузки
     if (this.currentsManager.isLoaded && !this.isInitializedWithMask) {
       for (const p of this.particles) {
-        this.respawnParticle(p);
+        this.relocateToZone(p);
       }
       this.isInitializedWithMask = true;
     }
 
-    // Обновляем сетку пространственной оптимизации перед расчетом стаи
     this.clearGrid();
     this.populateGrid();
 
@@ -234,18 +221,11 @@ export class CurrentParticlesDebug {
 
     for (let i = 0; i < total; i++) {
       const p = this.particles[i];
-      p.life += deltaSeconds;
 
-      // Респавн по истечении времени жизни (внутри своей же зоны)
-      if (p.life >= p.maxLife) {
-        this.respawnParticle(p);
-        continue;
-      }
-
-      // 1. Применяем коллективное выравнивание направления с соседями по зоне (Flocking)
+      // 1. Применяем коллективное выравнивание направления (Flocking Alignment)
       const flockedDir = this.applyFlocking(p);
 
-      // 2. Получаем физику движения с авто-удержанием в родной зоне
+      // 2. Физика движения и выталкивание из чужих зон обратно в свою
       const current = this.currentsManager.getCurrentVectorForParticle(
         p.x,
         p.y,
@@ -260,11 +240,11 @@ export class CurrentParticlesDebug {
       p.x += p.vx * deltaSeconds;
       p.y += p.vy * deltaSeconds;
 
-      // Проверка на вылет за границы мира
-      if (p.x > this.worldSize || p.x < 0 || p.y > this.worldSize || p.y < 0) {
-        this.respawnParticle(p);
-        continue;
-      }
+      // 3. Отскок от крайних границ карты (без уничтожения/спавна)
+      if (p.x <= 0) { p.x = 0; p.vx = Math.abs(p.vx); }
+      if (p.x >= this.worldSize) { p.x = this.worldSize; p.vx = -Math.abs(p.vx); }
+      if (p.y <= 0) { p.y = 0; p.vy = Math.abs(p.vy); }
+      if (p.y >= this.worldSize) { p.y = this.worldSize; p.vy = -Math.abs(p.vy); }
 
       // Поворот кометы вдоль направления движения
       const speed = Math.hypot(p.vx, p.vy);
@@ -272,17 +252,13 @@ export class CurrentParticlesDebug {
         p.sprite.rotation = Math.atan2(p.vy, p.vx);
       }
 
-      // Динамический размер: длина зависит от скорости течения
+      // Динамический размер в зависимости от скорости
       const currentSpeedFactor = Math.min(2.0, Math.max(0.5, speed / 100));
       p.sprite.scale.x = p.lengthScale * currentSpeedFactor;
       p.sprite.scale.y = 1.0;
 
-      // Прозрачность с мягким проявлением и затуханием (Fade In / Fade Out)
-      const progress = p.life / p.maxLife;
-      let alpha = 0.85;
-      if (progress < 0.2) alpha = (progress / 0.2) * 0.85;
-      if (progress > 0.8) alpha = ((1 - progress) / 0.2) * 0.85;
-      p.sprite.alpha = alpha;
+      // Постоянная видимость частицы
+      p.sprite.alpha = 0.85;
 
       // Окрашивание в цвет своей зоны
       switch (p.zone) {
