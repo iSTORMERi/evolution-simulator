@@ -113,6 +113,7 @@ export class OceanCurrentsManager {
 
   /**
    * Генерация белой маски воды (Вода = Белая 255,255,255, Суша = Прозрачная 0)
+   * Объединяет все три зоны океана в единый силуэт акватории.
    */
   private generateWaterAlphaCanvas(): void {
     if (!this.maskData) return;
@@ -168,8 +169,11 @@ export class OceanCurrentsManager {
 
     // Сине-черный цвет поверх белого силуэта океана
     this.darkeningSprite.tint = 0x050C1C;
-    this.darkeningSprite.alpha = 0;
-    this.darkeningSprite.visible = false;
+    
+    // ФИКС: Устанавливаем целевую прозрачность и видимость сразу.
+    // Управление отображением производится переключением родительского контейнера.
+    this.darkeningSprite.alpha = this.overlayOpacity;
+    this.darkeningSprite.visible = true;
 
     return this.darkeningSprite;
   }
@@ -214,6 +218,7 @@ export class OceanCurrentsManager {
     const scaleY = this.worldHeight / this.MASK_SIZE;
     this.darkeningSprite.scale.set(scaleX, scaleY);
     this.darkeningSprite.tint = 0x050C1C;
+    this.darkeningSprite.alpha = this.overlayOpacity; // Сохраняем заданную прозрачность
   }
 
   /**
