@@ -83,21 +83,21 @@ async function initApp() {
     const currentsOverlay = new CurrentsBackgroundOverlay(oceanCurrents, WORLD_WIDTH, WORLD_HEIGHT);
     const debugParticles = new CurrentParticlesDebug(oceanCurrents, 1800);
 
-    // Порядок слоёв: подложка (99) под частицами (100)
-    currentsOverlay.container.zIndex = 99;
+    // Порядок слоёв: подложка (1) прямо над картой (0), но под частицами (100) и береговыми эффектами
+    currentsOverlay.container.zIndex = 1;
     debugParticles.container.zIndex = 100;
 
     worldMap.container.addChild(currentsOverlay.container);
     worldMap.container.addChild(debugParticles.container);
 
-    // 1.2. Синхронное управление видимостью подложки и частиц единой кнопкой
+    // 1.2. Управление видимостью подложки и частиц
     const currentsUI = new CurrentsToggleUI('toggle-currents-btn');
     
-    const initialVisibility = currentsUI.isVisible;
-    currentsOverlay.container.visible = initialVisibility;
-    debugParticles.container.visible = initialVisibility;
+    // Принудительно включаем видимость для проверки работы оверлея
+    currentsOverlay.container.visible = true;
+    debugParticles.container.visible = true;
 
-    // Реакция на переключение кнопки
+    // Реакция на переключение кнопки UI
     currentsUI.onToggle((visible) => {
       currentsOverlay.container.visible = visible;
       debugParticles.container.visible = visible;
