@@ -28,9 +28,26 @@ export class CurrentParticlesDebug {
   private readonly worldSize = 8000;
   private isInitializedWithMask: boolean = false;
 
+  // --- Параметры Spatial Grid & Flocking ---
+  private readonly CELL_SIZE = 200;
+  private readonly NEIGHBOR_RADIUS = 180;
+  private readonly NEIGHBOR_RADIUS_SQ = 180 * 180;
+  private readonly FLOCKING_STRENGTH = 0.15; // Коэффициент подстройки к направлению соседей (15%)
+  private gridCols: number;
+  private gridRows: number;
+  private spatialGrid: Particle[][];
+
   constructor(currentsManager: OceanCurrentsManager, count: number = 2400) {
     this.currentsManager = currentsManager;
     this.container = new PIXI.Container();
+
+    // Инициализация пространственной сетки для оптимизации O(N)
+    this.gridCols = Math.ceil(this.worldSize / this.CELL_SIZE);
+    this.gridRows = Math.ceil(this.worldSize / this.CELL_SIZE);
+    this.spatialGrid = new Array(this.gridCols * this.gridRows);
+    for (let i = 0; i < this.spatialGrid.length; i++) {
+      this.spatialGrid[i] = [];
+    }
 
     // Генерируем текстуру кометы (64px x 8px) с градиентным хвостом
     this.particleTexture = this.generateCometTexture(64, 8);
@@ -114,6 +131,83 @@ export class CurrentParticlesDebug {
     p.sprite.position.set(p.x, p.y);
   }
 
+  // --- Методы Spatial Grid ---
+  private clearGrid(): void {
+    const totalCells = this.spatialGrid.length;
+    for (let i = 0; i < totalCells; i++) {
+      this.spatialGrid[i].length = 0;
+    }
+  }
+
+  private populateGrid(): void {
+    const total = this.particles.length;
+    for (let i = 0; i < total; i++) {
+      const p = this.particles[i];
+      const cx = Math.floor(p.x / this.CELL_SIZE);
+      const cy = Math.floor(p.y / this.CELL_SIZE);
+
+      if (cx >= 0 && cx < this.gridCols && cy >= 0 && cy < this.gridRows) {
+        const cellIndex = cy * this.gridCols + cx;
+        this.spatialGrid[cellIndex].push(p);
+      }
+    }
+  }
+
+  /**
+   * Расчет коллективного влияния (Flocking Alignment) от соседей той же зоны
+   */
+  private applyFlocking(p: Particle): { vx: number; vy: number } {
+    const cx = Math.floor(p.x / this.CELL_SIZE);
+    const cy = Math.floor(p.y / this.CELL_SIZE);
+
+    let sumVx = 0;
+    let sumVy = 0;
+    let neighborCount = 0;
+
+    // Проверяем текущую ячейку и 8 соседних ячеек
+    const minX = Math.max(0, cx - 1);
+    const maxX = Math.min(this.gridCols - 1, cx + 1);
+    const minY = Math.max(0, cy - 1);
+    const maxY = Math.min(this.gridRows - 1, cy + 1);
+
+    for (let y = minY; y <= maxY; y++) {
+      for (let x = minX; x <= maxX; x++) {
+        const cellIndex = y * this.gridCols + x;
+        const cell = this.spatialGrid[cellIndex];
+
+        for (let i = 0; i < cell.length; i++) {
+          const other = cell[i];
+
+          // Считаем только соседей ТОГО ЖЕ ТИПА зоны
+          if (other !== p && other.zone === p.zone) {
+            const dx = other.x - p.x;
+            const dy = other.y - p.y;
+            const distSq = dx * dx + dy * dy;
+
+            if (distSq < this.NEIGHBOR_RADIUS_SQ && distSq > 0.0001) {
+              sumVx += other.vx;
+              sumVy += other.vy;
+              neighborCount++;
+            }
+          }
+        }
+      }
+    }
+
+    if (neighborCount > 0) {
+      const avgVx = sumVx / neighborCount;
+      const avgVy = sumVy / neighborCount;
+
+      // Плавное смешивание направления (Alignment)
+      const blendedVx = p.vx + (avgVx - p.vx) * this.FLOCKING_STRENGTH;
+      const blendedVy = p.vy + (avgVy - p.vy) * this.FLOCKING_STRENGTH;
+
+      return { vx: blendedVx, vy: blendedVy };
+    }
+
+    return { vx: p.vx, vy: p.vy };
+  }
+
   public update(deltaSeconds: number): void {
     // Единоразовое распределение частиц по маске, как только изображение загрузится
     if (this.currentsManager.isLoaded && !this.isInitializedWithMask) {
@@ -122,6 +216,10 @@ export class CurrentParticlesDebug {
       }
       this.isInitializedWithMask = true;
     }
+
+    // Обновляем сетку пространственной оптимизации перед расчетом стаи
+    this.clearGrid();
+    this.populateGrid();
 
     const total = this.particles.length;
 
@@ -135,12 +233,15 @@ export class CurrentParticlesDebug {
         continue;
       }
 
-      // Получаем физику движения с авто-удержанием в родной зоне
+      // 1. Применяем коллективное выравнивание направления с соседями по зоне (Flocking)
+      const flockedDir = this.applyFlocking(p);
+
+      // 2. Получаем физику движения с авто-удержанием в родной зоне
       const current = this.currentsManager.getCurrentVectorForParticle(
         p.x,
         p.y,
-        p.vx,
-        p.vy,
+        flockedDir.vx,
+        flockedDir.vy,
         p.zone
       );
 
