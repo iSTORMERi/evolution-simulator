@@ -5,11 +5,10 @@ export interface ShorePoint {
   y: number;
 }
 
-// Три чистые поверхностные зоны (Layer 1)
 export enum CurrentZoneType {
-  DEEP = 'DEEP',   // 🟣 Фиолетовая (Глубоководное течение)
-  COLD = 'COLD',   // 🔵 Синяя (Среднее холодное течение)
-  WARM = 'WARM'    // 🟠 Оранжевое (Теплое прибрежное течение)
+  DEEP = 'DEEP',   // 🟣 Фиолетовая
+  COLD = 'COLD',   // 🔵 Синяя
+  WARM = 'WARM'    // 🟠 Оранжевая
 }
 
 export interface CurrentData {
@@ -26,9 +25,9 @@ export interface Point2D {
 }
 
 export const ZONE_COLOR_MAP: Record<CurrentZoneType, string> = {
-  [CurrentZoneType.DEEP]: '#8A00FF', // 🟣 Фиолетовый
-  [CurrentZoneType.COLD]: '#0000FF', // 🔵 Синий
-  [CurrentZoneType.WARM]: '#FF5500'  // 🟠 Оранжевый
+  [CurrentZoneType.DEEP]: '#8A00FF',
+  [CurrentZoneType.COLD]: '#0000FF',
+  [CurrentZoneType.WARM]: '#FF5500'
 };
 
 export const ZONE_SPEED_MULTIPLIERS: Record<CurrentZoneType, number> = {
@@ -44,13 +43,12 @@ export class OceanCurrentsManager {
 
   private readonly MASK_SIZE = 1000;
   private maskData: Uint8ClampedArray | null = null;
-  private maskCanvas: HTMLCanvasElement | null = null; // Canvas с белым силуэтом океана
-  private darkeningSprite: PIXI.Sprite | null = null;  // Спрайт затемнения PIXI
+  private maskCanvas: HTMLCanvasElement | null = null;
+  private darkeningSprite: PIXI.Sprite | null = null;
 
   private overlayOpacity: number = 0.6;
   private overlayBlur: number = 12;
 
-  // Точки для однократного спавна частиц по зонам
   private zoneSpawnPoints: Record<CurrentZoneType, Point2D[]> = {
     [CurrentZoneType.DEEP]: [],
     [CurrentZoneType.COLD]: [],
@@ -64,56 +62,71 @@ export class OceanCurrentsManager {
     this.worldHeight = worldHeight;
   }
 
-  // --- 1. ЗАГРУЗКА И СКАННИРОВАНИЕ МАСКИ СЛОЯ 1 ---
+  // --- 1. ЗАГРУЗКА МАСКИ И ИНИЦИАЛИЗАЦИЯ ---
   public async initScanner(): Promise<void> {
-    try {
-      const img = new Image();
-      // Поддержка относительных путей для Vite и GitHub Pages
-      const baseUrl = (import.meta as any).env?.BASE_URL || './';
-      const maskPath = `${baseUrl.replace(/\/$/, '')}/assets/ocean_surface_mask.png`;
+    const baseUrl = (import.meta as any).env?.BASE_URL || './';
+    const cleanBase = baseUrl.replace(/\/$/, '');
+    
+    // Пробуем сначала поверхностную маску, затем бинарную фолбэк-маску
+    const candidatePaths = [
+      `${cleanBase}/assets/ocean_surface_mask.png`,
+      `${cleanBase}/assets/ocean_binary_mask.png`
+    ];
 
-      img.src = maskPath;
+    let loadedImg: HTMLImageElement | null = null;
 
-      await new Promise<void>((resolve, reject) => {
-        img.onload = () => resolve();
-        img.onerror = () => reject(new Error(`Failed to load mask at ${maskPath}`));
-      });
-
-      const canvas = document.createElement('canvas');
-      canvas.width = this.MASK_SIZE;
-      canvas.height = this.MASK_SIZE;
-
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
-      if (!ctx) throw new Error('Canvas context unavailable');
-
-      ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(img, 0, 0, this.MASK_SIZE, this.MASK_SIZE);
-      const imgData = ctx.getImageData(0, 0, this.MASK_SIZE, this.MASK_SIZE);
-
-      this.maskData = imgData.data;
-
-      // Генерируем отдельную альфа-маску только для воды (суша = прозрачная)
-      this.generateWaterAlphaCanvas();
-
-      this.buildSpawnTables();
-      this.isLoaded = true;
-
-      // Если спрайт затемнения успели создать до завершения загрузки маски -- обновляем его!
-      if (this.darkeningSprite) {
-        this.refreshDarkeningTexture();
+    for (const path of candidatePaths) {
+      try {
+        loadedImg = await this.loadImage(path);
+        console.log(`[OceanCurrentsManager] Успешно загружена маска: ${path}`);
+        break;
+      } catch {
+        // Пробуем следующий путь
       }
+    }
 
-      console.log('[OceanCurrentsManager] Layer 1 Surface Mask successfully loaded.');
-    } catch (e) {
-      console.warn('[OceanCurrentsManager] Предупреждение: маска PNG не загружена, включаем процедурный фолбэк.', e);
+    if (!loadedImg) {
+      console.warn('[OceanCurrentsManager] Ни одна маска PNG не загружена. Включаем фолбэк.');
       this.generateFallbackSpawnPoints();
-      this.isLoaded = true; // Гарантируем запуск физики течений
+      this.isLoaded = true;
+      return;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = this.MASK_SIZE;
+    canvas.height = this.MASK_SIZE;
+
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return;
+
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(loadedImg, 0, 0, this.MASK_SIZE, this.MASK_SIZE);
+    const imgData = ctx.getImageData(0, 0, this.MASK_SIZE, this.MASK_SIZE);
+
+    this.maskData = imgData.data;
+
+    // Генерируем маску воды (Универсальный метод)
+    this.generateWaterAlphaCanvas();
+    this.buildSpawnTables();
+    this.isLoaded = true;
+
+    // Обновляем текстуру затемнения, если спрайт уже был создан
+    if (this.darkeningSprite) {
+      this.refreshDarkeningTexture();
     }
   }
 
+  private loadImage(src: string): Promise<HTMLImageElement> {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error(`Failed to load ${src}`));
+      img.src = src;
+    });
+  }
+
   /**
-   * Генерация белой маски воды (Вода = Белая 255,255,255, Суша = Прозрачная 0)
-   * Объединяет все три зоны океана в единый силуэт акватории.
+   * ГЕНЕРАЦИЯ МАСКИ ВОДЫ (Универсальная проверка: любой не-черный пиксель = вода)
    */
   private generateWaterAlphaCanvas(): void {
     if (!this.maskData) return;
@@ -130,19 +143,18 @@ export class OceanCurrentsManager {
       const r = this.maskData[i];
       const g = this.maskData[i + 1];
       const b = this.maskData[i + 2];
+      const a = this.maskData[i + 3];
 
-      // Проверяем принадлежность к любой из трех зон океана
-      const isWater = (r > 100 && b > 150 && g < 50) ||
-                      (b > 180 && r < 50 && g < 50) ||
-                      (r > 200 && g > 40 && b < 50);
+      // Гарантированно находит воду и на цветной, и на бинарной маске
+      const isWater = a > 50 && (r > 30 || g > 30 || b > 30);
 
       if (isWater) {
-        imgData.data[i]     = 255; // R
-        imgData.data[i + 1] = 255; // G
-        imgData.data[i + 2] = 255; // B
-        imgData.data[i + 3] = 255; // Альфа-канал
+        imgData.data[i]     = 255;
+        imgData.data[i + 1] = 255;
+        imgData.data[i + 2] = 255;
+        imgData.data[i + 3] = 255; // Заливаем белый силуэт акватории
       } else {
-        imgData.data[i + 3] = 0;   // Полная прозрачность для суши
+        imgData.data[i + 3] = 0;   // Прозрачно для суши
       }
     }
 
@@ -151,7 +163,7 @@ export class OceanCurrentsManager {
   }
 
   /**
-   * ГЕНЕРАЦИЯ ЗАТЕМНЯЮЩЕГО СЛОЯ ОКЕАНА (GPU TINTING С ЯВНЫМ МАСШТАБИРОВАНИЕМ)
+   * СОЗДАНИЕ СПРАЙТА ЗАТЕМНЕНИЯ
    */
   public createDarkeningOverlay(opacity: number = 0.6, blurRadius: number = 12): PIXI.Sprite {
     this.overlayOpacity = opacity;
@@ -163,15 +175,9 @@ export class OceanCurrentsManager {
     }
 
     this.darkeningSprite = new PIXI.Sprite();
-    
-    // Настраиваем текстуру и явный scale
     this.refreshDarkeningTexture();
 
-    // Сине-черный цвет поверх белого силуэта океана
     this.darkeningSprite.tint = 0x050C1C;
-    
-    // ФИКС: Устанавливаем целевую прозрачность и видимость сразу.
-    // Управление отображением производится переключением родительского контейнера.
     this.darkeningSprite.alpha = this.overlayOpacity;
     this.darkeningSprite.visible = true;
 
@@ -179,7 +185,7 @@ export class OceanCurrentsManager {
   }
 
   /**
-   * Пересоздание текстуры и жесткая привязка масштаба к размеру игрового мира
+   * ОБНОВЛЕНИЕ ТЕКСТУРЫ И МАСШТАБА
    */
   private refreshDarkeningTexture(): void {
     if (!this.darkeningSprite) return;
@@ -196,13 +202,11 @@ export class OceanCurrentsManager {
         }
         ctx.drawImage(this.maskCanvas, 0, 0, this.MASK_SIZE, this.MASK_SIZE);
       } else {
-        // Фолбэк: если маска ещё не загрузилась, рисуем сплошной белый квадрат
         ctx.fillStyle = '#FFFFFF';
         ctx.fillRect(0, 0, this.MASK_SIZE, this.MASK_SIZE);
       }
     }
 
-    // Создаем новую текстуру и очищаем старую из памяти WebGL
     const newTexture = PIXI.Texture.from(renderCanvas);
     newTexture.update();
 
@@ -213,25 +217,19 @@ export class OceanCurrentsManager {
       oldTexture.destroy(true);
     }
 
-    // Использование scale вместо width/height решает проблему деления на 0 в PIXI
     const scaleX = this.worldWidth / this.MASK_SIZE;
     const scaleY = this.worldHeight / this.MASK_SIZE;
     this.darkeningSprite.scale.set(scaleX, scaleY);
     this.darkeningSprite.tint = 0x050C1C;
-    this.darkeningSprite.alpha = this.overlayOpacity; // Сохраняем заданную прозрачность
+    this.darkeningSprite.alpha = this.overlayOpacity;
   }
 
-  /**
-   * Прямое переключение видимости затемнения (для моментального отклика по клику)
-   */
   public setDarkeningVisible(visible: boolean, immediate: boolean = false): void {
     if (!this.darkeningSprite) return;
 
     if (visible) {
       this.darkeningSprite.visible = true;
-      if (immediate) {
-        this.darkeningSprite.alpha = this.overlayOpacity;
-      }
+      if (immediate) this.darkeningSprite.alpha = this.overlayOpacity;
     } else {
       if (immediate) {
         this.darkeningSprite.alpha = 0;
@@ -240,9 +238,6 @@ export class OceanCurrentsManager {
     }
   }
 
-  /**
-   * Анимация плавного появления/исчезновения затемнения (для игрового цикла)
-   */
   public updateDarkening(deltaSeconds: number, showCurrents: boolean, fadeSpeed: number = 4.0): void {
     if (!this.darkeningSprite) return;
 
@@ -263,13 +258,10 @@ export class OceanCurrentsManager {
     }
   }
 
-  // Процедурная генерация спавн-точек если PNG не доступен
   private generateFallbackSpawnPoints(): void {
     const zones = [CurrentZoneType.DEEP, CurrentZoneType.COLD, CurrentZoneType.WARM];
-    const pointsPerZone = 400;
-
     for (const zone of zones) {
-      for (let i = 0; i < pointsPerZone; i++) {
+      for (let i = 0; i < 400; i++) {
         this.zoneSpawnPoints[zone].push({
           x: Math.random() * this.worldWidth,
           y: Math.random() * this.worldHeight
@@ -278,7 +270,6 @@ export class OceanCurrentsManager {
     }
   }
 
-  // Заполнение списков координат для спавна частиц
   private buildSpawnTables(): void {
     if (!this.maskData) return;
 
@@ -298,10 +289,8 @@ export class OceanCurrentsManager {
     }
   }
 
-  // --- 2. ОПРЕДЕЛЕНИЕ ЗОНЫ ПО КООРДИНАТАМ ---
   public getZoneAt(x: number, y: number): CurrentZoneType | null {
     if (!this.maskData) {
-      // Фолбэк зон по высоте если маска не была загружена
       if (y < this.worldHeight * 0.33) return CurrentZoneType.COLD;
       if (y < this.worldHeight * 0.66) return CurrentZoneType.DEEP;
       return CurrentZoneType.WARM;
@@ -316,21 +305,20 @@ export class OceanCurrentsManager {
     const g = this.maskData[index + 1];
     const b = this.maskData[index + 2];
 
-    // 🟣 Фиолетовый (DEEP)
     if (r > 100 && b > 150 && g < 50) return CurrentZoneType.DEEP;
-    // 🔵 Синий (COLD)
     if (b > 180 && r < 50 && g < 50) return CurrentZoneType.COLD;
-    // 🟠 Оранжевый (WARM)
     if (r > 200 && g > 40 && b < 50) return CurrentZoneType.WARM;
 
-    return null; // Суша (Черный)
+    // Если маска бинарная (чисто белая 255,255,255)
+    if (r > 200 && g > 200 && b > 200) return CurrentZoneType.DEEP;
+
+    return null;
   }
 
   public isWater(x: number, y: number): boolean {
     return this.getZoneAt(x, y) !== null;
   }
 
-  // --- 3. ПОЛУЧЕНИЕ НАЧАЛЬНЫХ ТОЧЕК СПАВНА ДЛЯ ЧАСТИЦ ---
   public getInitialParticlesForZone(zone: CurrentZoneType, count: number): Point2D[] {
     const points: Point2D[] = [];
     const pool = this.zoneSpawnPoints[zone];
@@ -356,7 +344,6 @@ export class OceanCurrentsManager {
     return points;
   }
 
-  // --- 4. РАСЧЕТ ДВИЖЕНИЯ И УДЕРЖАНИЕ ЧАСТИЦ В ЗОНЕ ---
   public getCurrentVectorForParticle(
     x: number,
     y: number,
@@ -374,7 +361,7 @@ export class OceanCurrentsManager {
 
     const speed = this.baseSpeed * ZONE_SPEED_MULTIPLIERS[assignedZone];
     const currentAngle = Math.atan2(vy, vx);
-    const PROBE_DIST = 35; // Дистанция проверки стены впереди
+    const PROBE_DIST = 35;
 
     const nextX = x + Math.cos(currentAngle) * PROBE_DIST;
     const nextY = y + Math.sin(currentAngle) * PROBE_DIST;
@@ -403,19 +390,15 @@ export class OceanCurrentsManager {
     }
 
     const len = Math.hypot(vx, vy) || 1;
-    const finalVx = (vx / len) * speed;
-    const finalVy = (vy / len) * speed;
-
     return {
-      vx: finalVx,
-      vy: finalVy,
+      vx: (vx / len) * speed,
+      vy: (vy / len) * speed,
       zoneType: assignedZone,
       targetColor: ZONE_COLOR_MAP[assignedZone],
       isWater: true
     };
   }
 
-  // Вспомогательный LERP цвета
   public static lerpColor(currentColor: string, targetColor: string, speed: number = 0.05): string {
     if (currentColor === targetColor) return currentColor;
     const c1 = OceanCurrentsManager.hexToRgb(currentColor);
