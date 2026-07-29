@@ -1,3 +1,5 @@
+import * as PIXI from 'pixi.js';
+
 export interface ShorePoint {
   x: number;
   y: number;
@@ -42,6 +44,8 @@ export class OceanCurrentsManager {
 
   private readonly MASK_SIZE = 1000;
   private maskData: Uint8ClampedArray | null = null;
+  private maskCanvas: HTMLCanvasElement | null = null; // Canvas с чистым силуэтом воды
+  private darkeningSprite: PIXI.Sprite | null = null;  // Спрайт затемнения PIXI
 
   // Точки для однократного спавна частиц по зонам
   private zoneSpawnPoints: Record<CurrentZoneType, Point2D[]> = {
@@ -84,6 +88,10 @@ export class OceanCurrentsManager {
       const imgData = ctx.getImageData(0, 0, this.MASK_SIZE, this.MASK_SIZE);
 
       this.maskData = imgData.data;
+
+      // Генерируем отдельную альфа-маску только для воды (суша = прозрачная)
+      this.generateWaterAlphaCanvas();
+
       this.buildSpawnTables();
       this.isLoaded = true;
       console.log('[OceanCurrentsManager] Layer 1 Surface Mask successfully loaded.');
@@ -91,6 +99,104 @@ export class OceanCurrentsManager {
       console.warn('[OceanCurrentsManager] Предупреждение: маска PNG не загружена, включаем процедурный фолбэк.', e);
       this.generateFallbackSpawnPoints();
       this.isLoaded = true; // Гарантируем запуск физики течений
+    }
+  }
+
+  /**
+   * Генерация монохромной маски воды с прозрачной сушей для точного затемнения
+   */
+  private generateWaterAlphaCanvas(): void {
+    if (!this.maskData) return;
+
+    const alphaCanvas = document.createElement('canvas');
+    alphaCanvas.width = this.MASK_SIZE;
+    alphaCanvas.height = this.MASK_SIZE;
+    const ctx = alphaCanvas.getContext('2d');
+    if (!ctx) return;
+
+    const imgData = ctx.createImageData(this.MASK_SIZE, this.MASK_SIZE);
+
+    for (let i = 0; i < this.maskData.length; i += 4) {
+      const r = this.maskData[i];
+      const g = this.maskData[i + 1];
+      const b = this.maskData[i + 2];
+
+      // Проверяем принадлежность к любой из трех зон океана
+      const isWater = (r > 100 && b > 150 && g < 50) ||
+                      (b > 180 && r < 50 && g < 50) ||
+                      (r > 200 && g > 40 && b < 50);
+
+      if (isWater) {
+        imgData.data[i] = 255;     // R
+        imgData.data[i + 1] = 255; // G
+        imgData.data[i + 2] = 255; // B
+        imgData.data[i + 3] = 255; // Альфа-канал (видимая вода)
+      } else {
+        imgData.data[i + 3] = 0;   // Полная прозрачность для суши
+      }
+    }
+
+    ctx.putImageData(imgData, 0, 0);
+    this.maskCanvas = alphaCanvas;
+  }
+
+  /**
+   * ГЕНЕРАЦИЯ ЗАТЕМНЯЮЩЕГО СЛОЯ ОКИАНА С МЯГКОЙ БЕРЕГОВОЙ ЛИНИЕЙ
+   */
+  public createDarkeningOverlay(opacity: number = 0.6, blurRadius: number = 18): PIXI.Sprite {
+    if (this.darkeningSprite) return this.darkeningSprite;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = this.worldWidth;
+    canvas.height = this.worldHeight;
+    const ctx = canvas.getContext('2d');
+
+    if (ctx) {
+      if (this.maskCanvas) {
+        // 1. Применяем размытие для убирания пиксельных ступенек на берегу
+        ctx.filter = `blur(${blurRadius}px)`;
+
+        // 2. Растягиваем силуэт воды на весь размер мира
+        ctx.drawImage(this.maskCanvas, 0, 0, this.worldWidth, this.worldHeight);
+
+        // 3. Закрашиваем силуэт воды темным благородным сине-черным тоном
+        ctx.globalCompositeOperation = 'source-in';
+        ctx.fillStyle = `rgba(5, 12, 28, ${opacity})`;
+        ctx.fillRect(0, 0, this.worldWidth, this.worldHeight);
+      } else {
+        // Фолбэк прямоугольник если маска не загрузилась
+        ctx.fillStyle = `rgba(5, 12, 28, ${opacity})`;
+        ctx.fillRect(0, 0, this.worldWidth, this.worldHeight);
+      }
+    }
+
+    const texture = PIXI.Texture.from(canvas);
+    this.darkeningSprite = new PIXI.Sprite(texture);
+    this.darkeningSprite.alpha = 0;
+    this.darkeningSprite.visible = false;
+
+    return this.darkeningSprite;
+  }
+
+  /**
+   * Анимация плавного появления/исчезновения затемнения
+   */
+  public updateDarkening(deltaSeconds: number, showCurrents: boolean, fadeSpeed: number = 2.5): void {
+    if (!this.darkeningSprite) return;
+
+    const targetAlpha = showCurrents ? 1.0 : 0.0;
+
+    if (showCurrents) {
+      this.darkeningSprite.visible = true;
+    }
+
+    if (Math.abs(this.darkeningSprite.alpha - targetAlpha) > 0.01) {
+      this.darkeningSprite.alpha += (targetAlpha - this.darkeningSprite.alpha) * deltaSeconds * fadeSpeed;
+    } else {
+      this.darkeningSprite.alpha = targetAlpha;
+      if (targetAlpha === 0) {
+        this.darkeningSprite.visible = false;
+      }
     }
   }
 
