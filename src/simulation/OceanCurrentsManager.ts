@@ -6,11 +6,11 @@ export interface ShorePoint {
 }
 
 export enum CurrentZoneType {
-  WARM = 'WARM',             // 🟠 Теплое течение
-  COLD = 'COLD',             // 🔵 Холодное течение
-  TRANSIT = 'TRANSIT',       // 🟡 Выносящие течения по бокам
-  CONNECTING = 'CONNECTING', // 🟢 Прямое соединительное течение в центре
-  DRIFT = 'DRIFT'            // 🌊 Локальный выносящий дрейф
+  WARM = 'WARM',             // 🟠 Теплое течение (Даунвеллинг / Воронка)
+  COLD = 'COLD',             // 🔵 Холодное течение (Апвеллинг / Подъём)
+  TRANSIT = 'TRANSIT',       // 🟡 Выносящие транзитные дуги
+  CONNECTING = 'CONNECTING', // 🟢 Центральная скоростная магистраль
+  STAGNATION = 'STAGNATION'  // 🌊 Застойная закольцованная зона (стадион)
 }
 
 export interface CurrentData {
@@ -26,16 +26,16 @@ export const ZONE_COLOR_MAP: Record<CurrentZoneType, string> = {
   [CurrentZoneType.COLD]: '#00BFFF',       // Ледяной синий
   [CurrentZoneType.TRANSIT]: '#FFD700',    // Ярко-жёлтый
   [CurrentZoneType.CONNECTING]: '#00FF66', // Сочно-зелёный
-  [CurrentZoneType.DRIFT]: '#1e3a5f'       // Глубокий тёмно-морской
+  [CurrentZoneType.STAGNATION]: '#3A506B'  // Тёмно-бирюзовый застой
 };
 
 // Мультипликаторы скоростей для разных зон
 export const ZONE_SPEED_MULTIPLIERS: Record<CurrentZoneType, number> = {
-  [CurrentZoneType.CONNECTING]: 1.3,  // 🟢 Узкая центральная магистраль (самая быстрая)
-  [CurrentZoneType.TRANSIT]: 1.1,     // 🟡 Транзитные выносящие дуги
-  [CurrentZoneType.WARM]: 0.9,        // 🟠 Активные тёплые вихри
-  [CurrentZoneType.COLD]: 0.75,       // 🔵 Плотные и более вязкие холодные массы
-  [CurrentZoneType.DRIFT]: 0.35       // 🌊 Медленный подпитывающий дрейф стоячей воды
+  [CurrentZoneType.CONNECTING]: 1.35, // 🟢 Центральный ускоренный канал
+  [CurrentZoneType.TRANSIT]: 1.1,    // 🟡 Транзитные дуги
+  [CurrentZoneType.WARM]: 0.9,       // 🟠 Зона даунвеллинга
+  [CurrentZoneType.COLD]: 0.85,      // 🔵 Зона апвеллинга
+  [CurrentZoneType.STAGNATION]: 0.20 // 🌊 Застойные круговороты (частицы медленно циркулируют и выпадают в осадок)
 };
 
 interface Point2D {
@@ -46,23 +46,12 @@ interface Point2D {
 export class OceanCurrentsManager {
   private worldWidth: number;
   private worldHeight: number;
-  // Снижено в 3 раза (было 200, стало 65)
   public baseSpeed: number = 65;
 
   private readonly MASK_SIZE = 1000;
   private shorelineLimits: Float32Array = new Float32Array(this.MASK_SIZE).fill(0);
   private waterSpawnPoints: Point2D[] = [];
   public isLoaded: boolean = false;
-
-  private readonly MAIN_STREAM_ANCHORS: Point2D[] = [
-    { x: 2200, y: 2800 }, // Центр холодного стадиона
-    { x: 4200, y: 4200 }, // Центр теплого стадиона
-    { x: 2000, y: 1500 }, // Северный треугольник
-    { x: 3150, y: 3450 }, // Центральное зеленое русло
-    { x: 4500, y: 1100 }, // Верхний транзитный полумесяц
-    { x: 2600, y: 6300 }, // Нижний транзитный полумесяц
-    { x: 1400, y: 6800 }  // Тёплый круговорот в левом нижнем углу
-  ];
 
   constructor(worldWidth: number = 8000, worldHeight: number = 8000) {
     this.worldWidth = worldWidth;
@@ -184,34 +173,53 @@ export class OceanCurrentsManager {
     return { x: 500, y: 4000 };
   }
 
-  private getDriftTowardsNearestStream(x: number, y: number): Point2D {
-    let minDistanceSq = Infinity;
-    let targetAnchor = this.MAIN_STREAM_ANCHORS[0];
+  // --- МАТЕМАТИЧЕСКИЕ ПРИМИТИВЫ ПОЛЕЙ ---
 
-    for (const anchor of this.MAIN_STREAM_ANCHORS) {
-      const dx = anchor.x - x;
-      const dy = anchor.y - y;
-      const distSq = dx * dx + dy * dy;
-      if (distSq < minDistanceSq) {
-        minDistanceSq = distSq;
-        targetAnchor = anchor;
-      }
-    }
-
-    const dirX = targetAnchor.x - x;
-    const dirY = targetAnchor.y - y;
-    const len = Math.hypot(dirX, dirY) || 1;
-
-    return {
-      x: dirX / len,
-      y: dirY / len
-    };
-  }
-
-  private getRotatedStadiumVector(
+  /**
+   * 1. Вектор Апвеллинга / Даунвеллинга (Сердце течения)
+   * Upwelling: Радиальный разлёт + вращение
+   * Downwelling: Сход в центр + вращение
+   */
+  private getHeartNodeVector(
     x: number,
     y: number,
-    track: { cx: number; cy: number; halfLength: number; radius: number; angleRad: number }
+    heart: { cx: number; cy: number; radius: number; isUpwelling: boolean; clockwise?: boolean }
+  ): Point2D | null {
+    const dx = x - heart.cx;
+    const dy = y - heart.cy;
+    const dist = Math.hypot(dx, dy);
+
+    if (dist > heart.radius || dist === 0) return null;
+
+    const normX = dx / dist;
+    const normY = dy / dist;
+    const spinDir = heart.clockwise === false ? -1 : 1;
+
+    // Вращательный вектор (касательный к окружности)
+    const tangX = -spinDir * normY;
+    const tangY = spinDir * normX;
+
+    // Радиальный вектор (выталкивание для Upwelling, засасывание для Downwelling)
+    const radFactor = heart.isUpwelling ? 0.7 : -0.7;
+    const radX = normX * radFactor;
+    const radY = normY * radFactor;
+
+    // Смешивание радиального и тангенциального потока
+    const vx = tangX + radX;
+    const vy = tangY + radY;
+    const len = Math.hypot(vx, vy) || 1;
+
+    return { x: vx / len, y: vy / len };
+  }
+
+  /**
+   * 2. Зацикленный стадион / Зона застоя
+   * Образует замкнутые орбиты, на которых скорость угасает
+   */
+  private getStadiumGyreVector(
+    x: number,
+    y: number,
+    track: { cx: number; cy: number; halfLength: number; radius: number; angleRad: number; clockwise?: boolean }
   ): Point2D | null {
     const { cx, cy, halfLength, radius, angleRad } = track;
 
@@ -226,30 +234,35 @@ export class OceanCurrentsManager {
     let lvx = 0;
     let lvy = 0;
     let inside = false;
+    const dir = track.clockwise === false ? -1 : 1;
 
     if (Math.abs(lx) <= halfLength) {
       if (Math.abs(ly) <= radius) {
-        lvx = ly < 0 ? 1 : -1;
+        lvx = ly < 0 ? dir : -dir;
         lvy = 0;
         inside = true;
       }
     } else if (lx > halfLength) {
       const pdx = lx - halfLength;
       if (Math.hypot(pdx, ly) <= radius) {
-        lvx = -ly;
-        lvy = pdx;
+        lvx = -dir * ly;
+        lvy = dir * pdx;
         inside = true;
       }
     } else if (lx < -halfLength) {
       const pdx = lx + halfLength;
       if (Math.hypot(pdx, ly) <= radius) {
-        lvx = -ly;
-        lvy = pdx;
+        lvx = -dir * ly;
+        lvy = dir * pdx;
         inside = true;
       }
     }
 
     if (!inside) return null;
+
+    const len = Math.hypot(lvx, lvy) || 1;
+    lvx /= len;
+    lvy /= len;
 
     const cosR = Math.cos(angleRad);
     const sinR = Math.sin(angleRad);
@@ -259,95 +272,9 @@ export class OceanCurrentsManager {
     };
   }
 
-  private getCircularGyreVector(
-    x: number,
-    y: number,
-    gyre: { cx: number; cy: number; radius: number; thickness: number; clockwise?: boolean }
-  ): Point2D | null {
-    const dx = x - gyre.cx;
-    const dy = y - gyre.cy;
-    const dist = Math.hypot(dx, dy);
-
-    const innerR = Math.max(0, gyre.radius - gyre.thickness / 2);
-    const outerR = gyre.radius + gyre.thickness / 2;
-
-    if (dist < innerR || dist > outerR) return null;
-
-    const dir = gyre.clockwise === false ? -1 : 1;
-    const tangentX = -dir * (dy / dist);
-    const tangentY = dir * (dx / dist);
-
-    return {
-      x: tangentX,
-      y: tangentY
-    };
-  }
-
-  private getTriangleGyreVector(
-    x: number,
-    y: number,
-    p0: Point2D,
-    p1: Point2D,
-    p2: Point2D,
-    radius: number
-  ): Point2D | null {
-    const vertices = [p0, p1, p2];
-    let minDist = Infinity;
-    let bestDir: Point2D = { x: 0, y: 0 };
-
-    for (let i = 0; i < 3; i++) {
-      const a = vertices[i];
-      const b = vertices[(i + 1) % 3];
-
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const len = Math.hypot(dx, dy);
-      if (len === 0) continue;
-
-      const dirX = dx / len;
-      const dirY = dy / len;
-
-      let t = ((x - a.x) * dx + (y - a.y) * dy) / (len * len);
-      t = Math.max(0, Math.min(1, t));
-
-      const projX = a.x + t * dx;
-      const projY = a.y + t * dy;
-      const dist = Math.hypot(x - projX, y - projY);
-
-      if (dist < minDist) {
-        minDist = dist;
-        bestDir = { x: dirX, y: dirY };
-      }
-    }
-
-    if (minDist > radius) return null;
-
-    const CORNER_SMOOTH_RADIUS = radius * 1.2;
-    for (let i = 0; i < 3; i++) {
-      const v = vertices[i];
-      const dToVertex = Math.hypot(x - v.x, y - v.y);
-
-      if (dToVertex <= CORNER_SMOOTH_RADIUS) {
-        const rx = x - v.x;
-        const ry = y - v.y;
-        const rLen = Math.hypot(rx, ry) || 1;
-
-        const tangentX = -ry / rLen;
-        const tangentY = rx / rLen;
-
-        const blend = 1 - dToVertex / CORNER_SMOOTH_RADIUS;
-        bestDir.x = bestDir.x * (1 - blend) + tangentX * blend;
-        bestDir.y = bestDir.y * (1 - blend) + tangentY * blend;
-
-        const bLen = Math.hypot(bestDir.x, bestDir.y) || 1;
-        bestDir.x /= bLen;
-        bestDir.y /= bLen;
-      }
-    }
-
-    return bestDir;
-  }
-
+  /**
+   * 3. Дугообразное (дуга Безье) транзитное течение
+   */
   private getCrescentStreamVector(
     x: number,
     y: number,
@@ -387,6 +314,9 @@ export class OceanCurrentsManager {
     };
   }
 
+  /**
+   * 4. Прямое соединительное течение
+   */
   private getLinearStreamVector(
     x: number,
     y: number,
@@ -417,6 +347,8 @@ export class OceanCurrentsManager {
     };
   }
 
+  // --- ГЛАВНЫЙ РАСЧЕТ ВЕКТОРНОГО ПОЛЯ В ТОЧКЕ ---
+
   public getCurrentAt(x: number, y: number): CurrentData {
     const isWater = this.isWater(x, y);
     if (!isWater) {
@@ -431,78 +363,101 @@ export class OceanCurrentsManager {
 
     let totalVx = 0;
     let totalVy = 0;
-    let activeCount = 0;
 
     let warmWeight = 0;
     let coldWeight = 0;
     let transitWeight = 0;
     let connectingWeight = 0;
+    let stagnationWeight = 0;
 
-    // --- 1. ХОЛОДНОЕ ТЕЧЕНИЕ (Основной синий стадион слева) ---
-    const coldTrack = {
-      cx: 2200,
-      cy: 2800,
-      halfLength: 1800,
-      radius: 800,
-      angleRad: (-30 * Math.PI) / 180
+    // 1. ВЕРХНИЙ ЛЕВЫЙ ЗАСТОЙНЫЙ СТАДИОН (Top-Left Stagnation Gyre)
+    const topLeftStagnation = {
+      cx: 1600,
+      cy: 1600,
+      halfLength: 1200,
+      radius: 1100,
+      angleRad: (25 * Math.PI) / 180,
+      clockwise: true
     };
-
-    const coldVec = this.getRotatedStadiumVector(x, y, coldTrack);
-    if (coldVec) {
-      totalVx += coldVec.x;
-      totalVy += coldVec.y;
-      activeCount++;
-      coldWeight += 1.0;
+    const topLeftVec = this.getStadiumGyreVector(x, y, topLeftStagnation);
+    if (topLeftVec) {
+      totalVx += topLeftVec.x * 0.5;
+      totalVy += topLeftVec.y * 0.5;
+      stagnationWeight += 2.5;
     }
 
-    // --- 2. СЕВЕРНЫЙ ТРЕУГОЛЬНЫЙ ГИР ---
-    const northTriangle = {
-      p0: { x: 800, y: 600 },
-      p1: { x: 3200, y: 800 },
-      p2: { x: 2200, y: 3200 },
+    // 2. НИЖНИЙ ПРАВЫЙ ЗАСТОЙНЫЙ СТАДИОН (Bottom-Right Stagnation Gyre)
+    const bottomRightStagnation = {
+      cx: 6400,
+      cy: 6400,
+      halfLength: 1400,
+      radius: 1200,
+      angleRad: (-35 * Math.PI) / 180,
+      clockwise: true
+    };
+    const bottomRightVec = this.getStadiumGyreVector(x, y, bottomRightStagnation);
+    if (bottomRightVec) {
+      totalVx += bottomRightVec.x * 0.5;
+      totalVy += bottomRightVec.y * 0.5;
+      stagnationWeight += 2.5;
+    }
+
+    // 3. СЕРДЦЕ ХОЛОДНОГО ТЕЧЕНИЯ (Центральный Апвеллинг - Источник)
+    const coldHeart = {
+      cx: 2400,
+      cy: 3000,
+      radius: 1100,
+      isUpwelling: true,
+      clockwise: false
+    };
+    const coldHeartVec = this.getHeartNodeVector(x, y, coldHeart);
+    if (coldHeartVec) {
+      totalVx += coldHeartVec.x * 1.2;
+      totalVy += coldHeartVec.y * 1.2;
+      coldWeight += 2.0;
+    }
+
+    // 4. СЕРДЦЕ ТЁПЛОГО ТЕЧЕНИЯ (Центральный Даунвеллинг - Сток/Воронка)
+    const warmHeart = {
+      cx: 4600,
+      cy: 4500,
+      radius: 1200,
+      isUpwelling: false,
+      clockwise: true
+    };
+    const warmHeartVec = this.getHeartNodeVector(x, y, warmHeart);
+    if (warmHeartVec) {
+      totalVx += warmHeartVec.x * 1.2;
+      totalVy += warmHeartVec.y * 1.2;
+      warmWeight += 2.0;
+    }
+
+    // 5. ПРЯМАЯ ЗЕЛЕНАЯ МАГИСТРАЛЬ (Из Апвеллинга в Даунвеллинг)
+    const connectingStream = {
+      p0: { x: 2400, y: 3000 },
+      p1: { x: 4600, y: 4500 },
       radius: 750
     };
-
-    const northVec = this.getTriangleGyreVector(
+    const connectingVec = this.getLinearStreamVector(
       x,
       y,
-      northTriangle.p0,
-      northTriangle.p1,
-      northTriangle.p2,
-      northTriangle.radius
+      connectingStream.p0,
+      connectingStream.p1,
+      connectingStream.radius
     );
-    if (northVec) {
-      totalVx += northVec.x;
-      totalVy += northVec.y;
-      activeCount++;
-      coldWeight += 1.0;
+    if (connectingVec) {
+      totalVx += connectingVec.x * 1.5;
+      totalVy += connectingVec.y * 1.5;
+      connectingWeight += 3.0;
     }
 
-    // --- 3. ТЕПЛОЕ ТЕЧЕНИЕ (Оранжевый стадион справа) ---
-    const warmTrack = {
-      cx: 4200,
-      cy: 4200,
-      halfLength: 2400,
-      radius: 1000,
-      angleRad: (-65 * Math.PI) / 180
-    };
-
-    const warmVec = this.getRotatedStadiumVector(x, y, warmTrack);
-    if (warmVec) {
-      totalVx += warmVec.x;
-      totalVy += warmVec.y;
-      activeCount++;
-      warmWeight += 1.0;
-    }
-
-    // --- 4. ПРАВЫЙ ВЕРХНИЙ ПОЛУМЕСЯЦ (Жёлтое выносящее течение) ---
+    // 6. ПРАВЫЙ ВЕРХНИЙ ТРАНЗИТ (Жёлтая выносящая дуга)
     const topRightCrescent = {
       p0: { x: 6200, y: 2200 },
-      p1: { x: 5200, y: 400 },
+      p1: { x: 5200, y: 600 },
       p2: { x: 2500, y: 700 },
-      radius: 750
+      radius: 800
     };
-
     const topCrescentVec = this.getCrescentStreamVector(
       x,
       y,
@@ -512,20 +467,18 @@ export class OceanCurrentsManager {
       topRightCrescent.radius
     );
     if (topCrescentVec) {
-      totalVx += topCrescentVec.x;
-      totalVy += topCrescentVec.y;
-      activeCount++;
-      transitWeight += 1.5;
+      totalVx += topCrescentVec.x * 1.1;
+      totalVy += topCrescentVec.y * 1.1;
+      transitWeight += 1.8;
     }
 
-    // --- 5. НИЖНИЙ ЛЕВЫЙ ПОЛУМЕСЯЦ (Жёлтое выносящее течение) ---
+    // 7. НИЖНИЙ ЛЕВЫЙ ТРАНЗИТ (Жёлтая выносящая дуга)
     const bottomLeftCrescent = {
       p0: { x: 4800, y: 6800 },
       p1: { x: 2000, y: 7600 },
       p2: { x: 1200, y: 4500 },
-      radius: 800
+      radius: 850
     };
-
     const bottomCrescentVec = this.getCrescentStreamVector(
       x,
       y,
@@ -535,83 +488,48 @@ export class OceanCurrentsManager {
       bottomLeftCrescent.radius
     );
     if (bottomCrescentVec) {
-      totalVx += bottomCrescentVec.x;
-      totalVy += bottomCrescentVec.y;
-      activeCount++;
-      transitWeight += 1.5;
+      totalVx += bottomCrescentVec.x * 1.1;
+      totalVy += bottomCrescentVec.y * 1.1;
+      transitWeight += 1.8;
     }
 
-    // --- 6. ПРЯМОЕ ЗЕЛЕНОЕ ТЕЧЕНИЕ В ЦЕНТРЕ (Из холодного в теплое) ---
-    const centralGreenStream = {
-      p0: { x: 2300, y: 2800 },
-      p1: { x: 4000, y: 4100 },
-      radius: 650
-    };
-
-    const connectingVec = this.getLinearStreamVector(
-      x,
-      y,
-      centralGreenStream.p0,
-      centralGreenStream.p1,
-      centralGreenStream.radius
+    // --- ОБРАБОТКА ТИПА ЗОНЫ И СКОРОСТИ ---
+    const maxWeight = Math.max(
+      warmWeight,
+      coldWeight,
+      transitWeight,
+      connectingWeight,
+      stagnationWeight
     );
-    if (connectingVec) {
-      totalVx += connectingVec.x;
-      totalVy += connectingVec.y;
-      activeCount++;
-      connectingWeight += 2.0;
-    }
 
-    // --- 7. ТЁПЛОЕ ТЕЧЕНИЕ В ЛЕВОМ НИЖНЕМ УГЛУ ---
-    const bottomLeftWarmGyre = {
-      cx: 1400,
-      cy: 6800,
-      radius: 750,
-      thickness: 600,
-      clockwise: true
-    };
-
-    const bottomLeftWarmVec = this.getCircularGyreVector(x, y, bottomLeftWarmGyre);
-    if (bottomLeftWarmVec) {
-      totalVx += bottomLeftWarmVec.x;
-      totalVy += bottomLeftWarmVec.y;
-      activeCount++;
-      warmWeight += 2.0;
-    }
-
-    // --- ОБРАБОТКА СТОЯЧЕЙ ВОДЫ (ЛОКАЛЬНЫЙ ВЫНОСНОЙ ДРЕЙФ) ---
-    if (activeCount === 0) {
-      const driftVec = this.getDriftTowardsNearestStream(x, y);
-      const driftSpeed = this.baseSpeed * ZONE_SPEED_MULTIPLIERS[CurrentZoneType.DRIFT];
-
+    // Если область находится в спокойной воде вне активных течений
+    if (maxWeight === 0) {
       return {
-        vx: driftVec.x * driftSpeed,
-        vy: driftVec.y * driftSpeed,
-        zoneType: CurrentZoneType.DRIFT,
-        targetColor: ZONE_COLOR_MAP[CurrentZoneType.DRIFT],
+        vx: 0,
+        vy: 0,
+        zoneType: CurrentZoneType.STAGNATION,
+        targetColor: ZONE_COLOR_MAP[CurrentZoneType.STAGNATION],
         isWater: true
       };
     }
 
-    // Определение доминирующего типа течения
-    let primaryZone = CurrentZoneType.COLD;
-    const maxWeight = Math.max(warmWeight, coldWeight, transitWeight, connectingWeight);
-
-    if (maxWeight === warmWeight) {
-      primaryZone = CurrentZoneType.WARM;
-    } else if (maxWeight === connectingWeight) {
+    let primaryZone = CurrentZoneType.STAGNATION;
+    if (maxWeight === connectingWeight) {
       primaryZone = CurrentZoneType.CONNECTING;
+    } else if (maxWeight === warmWeight) {
+      primaryZone = CurrentZoneType.WARM;
+    } else if (maxWeight === coldWeight) {
+      primaryZone = CurrentZoneType.COLD;
     } else if (maxWeight === transitWeight) {
       primaryZone = CurrentZoneType.TRANSIT;
     }
 
-    // РАСЧЕТ ИТОГОВОЙ СКОРОСТИ С УЧЕТОМ МУЛЬТИПЛИКАТОРА ЗОНЫ
-    const combinedLen = Math.hypot(totalVx, totalVy);
-    const speedBoost = activeCount > 1 ? 1.15 : 1.0;
-    const zoneSpeed = this.baseSpeed * ZONE_SPEED_MULTIPLIERS[primaryZone] * speedBoost;
+    // Нормализация векторного поля
+    const combinedLen = Math.hypot(totalVx, totalVy) || 1;
+    const zoneSpeed = this.baseSpeed * ZONE_SPEED_MULTIPLIERS[primaryZone];
 
-    const finalVx = (totalVx / (combinedLen || 1)) * zoneSpeed;
-    const finalVy = (totalVy / (combinedLen || 1)) * zoneSpeed;
+    const finalVx = (totalVx / combinedLen) * zoneSpeed;
+    const finalVy = (totalVy / combinedLen) * zoneSpeed;
 
     return {
       vx: finalVx,
