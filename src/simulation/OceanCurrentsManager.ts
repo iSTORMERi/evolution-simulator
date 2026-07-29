@@ -47,6 +47,9 @@ export class OceanCurrentsManager {
   private maskCanvas: HTMLCanvasElement | null = null; // Canvas с чистым силуэтом воды
   private darkeningSprite: PIXI.Sprite | null = null;  // Спрайт затемнения PIXI
 
+  private overlayOpacity: number = 0.6;
+  private overlayBlur: number = 12;
+
   // Точки для однократного спавна частиц по зонам
   private zoneSpawnPoints: Record<CurrentZoneType, Point2D[]> = {
     [CurrentZoneType.DEEP]: [],
@@ -94,6 +97,12 @@ export class OceanCurrentsManager {
 
       this.buildSpawnTables();
       this.isLoaded = true;
+
+      // Если спрайт затемнения успели создать до завершения загрузки маски -- обновляем его!
+      if (this.darkeningSprite) {
+        this.refreshDarkeningTexture();
+      }
+
       console.log('[OceanCurrentsManager] Layer 1 Surface Mask successfully loaded.');
     } catch (e) {
       console.warn('[OceanCurrentsManager] Предупреждение: маска PNG не загружена, включаем процедурный фолбэк.', e);
@@ -141,41 +150,58 @@ export class OceanCurrentsManager {
   }
 
   /**
-   * ГЕНЕРАЦИЯ ЗАТЕМНЯЮЩЕГО СЛОЯ ОКИАНА С МЯГКОЙ БЕРЕГОВОЙ ЛИНИЕЙ
+   * ГЕНЕРАЦИЯ ЗАТЕМНЯЮЩЕГО СЛОЯ ОКЕАНА С МЯГКОЙ БЕРЕГОВОЙ ЛИНИЕЙ
    */
-  public createDarkeningOverlay(opacity: number = 0.6, blurRadius: number = 18): PIXI.Sprite {
+  public createDarkeningOverlay(opacity: number = 0.6, blurRadius: number = 12): PIXI.Sprite {
+    this.overlayOpacity = opacity;
+    this.overlayBlur = blurRadius;
+
     if (this.darkeningSprite) return this.darkeningSprite;
 
-    const canvas = document.createElement('canvas');
-    canvas.width = this.worldWidth;
-    canvas.height = this.worldHeight;
-    const ctx = canvas.getContext('2d');
+    this.darkeningSprite = new PIXI.Sprite();
+    this.refreshDarkeningTexture();
 
-    if (ctx) {
-      if (this.maskCanvas) {
-        // 1. Применяем размытие для убирания пиксельных ступенек на берегу
-        ctx.filter = `blur(${blurRadius}px)`;
+    // Масштабируем спрайт на весь игровой мир (быстро и без перегрузки GPU)
+    this.darkeningSprite.width = this.worldWidth;
+    this.darkeningSprite.height = this.worldHeight;
 
-        // 2. Растягиваем силуэт воды на весь размер мира
-        ctx.drawImage(this.maskCanvas, 0, 0, this.worldWidth, this.worldHeight);
-
-        // 3. Закрашиваем силуэт воды темным благородным сине-черным тоном
-        ctx.globalCompositeOperation = 'source-in';
-        ctx.fillStyle = `rgba(5, 12, 28, ${opacity})`;
-        ctx.fillRect(0, 0, this.worldWidth, this.worldHeight);
-      } else {
-        // Фолбэк прямоугольник если маска не загрузилась
-        ctx.fillStyle = `rgba(5, 12, 28, ${opacity})`;
-        ctx.fillRect(0, 0, this.worldWidth, this.worldHeight);
-      }
-    }
-
-    const texture = PIXI.Texture.from(canvas);
-    this.darkeningSprite = new PIXI.Sprite(texture);
     this.darkeningSprite.alpha = 0;
     this.darkeningSprite.visible = false;
 
     return this.darkeningSprite;
+  }
+
+  /**
+   * Пересоздание текстуры затемнения на лету
+   */
+  private refreshDarkeningTexture(): void {
+    if (!this.darkeningSprite) return;
+
+    const renderCanvas = document.createElement('canvas');
+    renderCanvas.width = this.MASK_SIZE;
+    renderCanvas.height = this.MASK_SIZE;
+    const ctx = renderCanvas.getContext('2d');
+
+    if (ctx) {
+      if (this.maskCanvas) {
+        // 1. Применяем размытие для мягкого градиента у берега
+        ctx.filter = `blur(${this.overlayBlur}px)`;
+
+        // 2. Рисуем маску океана
+        ctx.drawImage(this.maskCanvas, 0, 0, this.MASK_SIZE, this.MASK_SIZE);
+
+        // 3. Закрашиваем силуэт океана темным сине-черным цветом
+        ctx.globalCompositeOperation = 'source-in';
+        ctx.fillStyle = `rgba(5, 12, 28, ${this.overlayOpacity})`;
+        ctx.fillRect(0, 0, this.MASK_SIZE, this.MASK_SIZE);
+      } else {
+        // Временный прямоугольник пока маска загружается
+        ctx.fillStyle = `rgba(5, 12, 28, ${this.overlayOpacity})`;
+        ctx.fillRect(0, 0, this.MASK_SIZE, this.MASK_SIZE);
+      }
+    }
+
+    this.darkeningSprite.texture = PIXI.Texture.from(renderCanvas);
   }
 
   /**
