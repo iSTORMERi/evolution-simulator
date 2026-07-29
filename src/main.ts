@@ -150,3 +150,6 @@ async function initApp() {
     console.error('Initialization failed:', err);
   }
 }
+
+// Запуск приложения
+initApp();
