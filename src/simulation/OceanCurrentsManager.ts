@@ -280,23 +280,62 @@ export class OceanCurrentsManager {
     }
   }
 
+  /**
+   * ПОСТРОЕНИЕ ТАБЛИЦ СПАВНА С ЭРОЗИЕЙ ГРАНИЦ И СТРОГОЙ ПРОВЕРКОЙ
+   */
   private buildSpawnTables(): void {
     if (!this.maskData) return;
 
     const cellW = this.worldWidth / this.MASK_SIZE;
     const cellH = this.worldHeight / this.MASK_SIZE;
 
-    for (let gy = 0; gy < this.MASK_SIZE; gy += 4) {
-      for (let gx = 0; gx < this.MASK_SIZE; gx += 4) {
+    for (let gy = 4; gy < this.MASK_SIZE - 4; gy += 4) {
+      for (let gx = 4; gx < this.MASK_SIZE - 4; gx += 4) {
         const worldX = (gx + 0.5) * cellW;
         const worldY = (gy + 0.5) * cellH;
 
-        const zone = this.getZoneAt(worldX, worldY);
-        if (zone) {
-          this.zoneSpawnPoints[zone].push({ x: worldX, y: worldY });
+        if (!this.isWater(worldX, worldY)) continue;
+
+        const currentZone = this.getZoneAtStrict(gx, gy);
+        if (!currentZone) continue;
+
+        let isPureZone = true;
+        for (let dy = -2; dy <= 2; dy += 2) {
+          for (let dx = -2; dx <= 2; dx += 2) {
+            if (dx === 0 && dy === 0) continue;
+            if (this.getZoneAtStrict(gx + dx, gy + dy) !== currentZone) {
+              isPureZone = false;
+              break;
+            }
+          }
+          if (!isPureZone) break;
+        }
+
+        if (isPureZone) {
+          this.zoneSpawnPoints[currentZone].push({ x: worldX, y: worldY });
         }
       }
     }
+  }
+
+  /**
+   * Вспомогательный метод для точного чтения зоны по пиксельным координатам маски без широтных фолбэков
+   */
+  private getZoneAtStrict(gx: number, gy: number): CurrentZoneType | null {
+    if (gx < 0 || gx >= this.MASK_SIZE || gy < 0 || gy >= this.MASK_SIZE) return null;
+    const index = (gy * this.MASK_SIZE + gx) * 4;
+    const r = this.maskData![index];
+    const g = this.maskData![index + 1];
+    const b = this.maskData![index + 2];
+    const a = this.maskData![index + 3];
+
+    if (a <= 50 || (r <= 30 && g <= 30 && b <= 30)) return null; // Суша / прозрачность
+
+    if (r > 100 && b > 150 && g < 100) return CurrentZoneType.DEEP; // Фиолетовый
+    if (b > 150 && r < 100 && g < 100) return CurrentZoneType.COLD;  // Синий
+    if (r > 180 && g > 40 && b < 100) return CurrentZoneType.WARM;   // Оранжевый
+
+    return null;
   }
 
   /**
