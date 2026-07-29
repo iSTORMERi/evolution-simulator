@@ -61,11 +61,15 @@ export class OceanCurrentsManager {
   public async initScanner(): Promise<void> {
     try {
       const img = new Image();
-      img.src = '/assets/ocean_surface_mask.png';
+      // Поддержка относительных путей для Vite и GitHub Pages
+      const baseUrl = (import.meta as any).env?.BASE_URL || './';
+      const maskPath = `${baseUrl.replace(/\/$/, '')}/assets/ocean_surface_mask.png`;
+
+      img.src = maskPath;
 
       await new Promise<void>((resolve, reject) => {
         img.onload = () => resolve();
-        img.onerror = () => reject(new Error('Failed to load ocean_surface_mask.png'));
+        img.onerror = () => reject(new Error(`Failed to load mask at ${maskPath}`));
       });
 
       const canvas = document.createElement('canvas');
@@ -84,7 +88,24 @@ export class OceanCurrentsManager {
       this.isLoaded = true;
       console.log('[OceanCurrentsManager] Layer 1 Surface Mask successfully loaded.');
     } catch (e) {
-      console.error('[OceanCurrentsManager] Ошибка загрузки маски слоев:', e);
+      console.warn('[OceanCurrentsManager] Предупреждение: маска PNG не загружена, включаем процедурный фолбэк.', e);
+      this.generateFallbackSpawnPoints();
+      this.isLoaded = true; // Гарантируем запуск физики течений
+    }
+  }
+
+  // Процедурная генерация спавн-точек если PNG не доступен
+  private generateFallbackSpawnPoints(): void {
+    const zones = [CurrentZoneType.DEEP, CurrentZoneType.COLD, CurrentZoneType.WARM];
+    const pointsPerZone = 400;
+
+    for (const zone of zones) {
+      for (let i = 0; i < pointsPerZone; i++) {
+        this.zoneSpawnPoints[zone].push({
+          x: Math.random() * this.worldWidth,
+          y: Math.random() * this.worldHeight
+        });
+      }
     }
   }
 
@@ -110,7 +131,12 @@ export class OceanCurrentsManager {
 
   // --- 2. ОПРЕДЕЛЕНИЕ ЗОНЫ ПО КООРДИНАТАМ ---
   public getZoneAt(x: number, y: number): CurrentZoneType | null {
-    if (!this.maskData) return null;
+    if (!this.maskData) {
+      // Фолбэк зон по высоте если маска не была загружена
+      if (y < this.worldHeight * 0.33) return CurrentZoneType.COLD;
+      if (y < this.worldHeight * 0.66) return CurrentZoneType.DEEP;
+      return CurrentZoneType.WARM;
+    }
     if (x < 0 || x >= this.worldWidth || y < 0 || y >= this.worldHeight) return null;
 
     const gx = Math.floor((x / this.worldWidth) * this.MASK_SIZE);
@@ -136,22 +162,22 @@ export class OceanCurrentsManager {
   }
 
   // --- 3. ПОЛУЧЕНИЕ НАЧАЛЬНЫХ ТОЧЕК СПАВНА ДЛЯ ЧАСТИЦ ---
-  // Гарантирует, что частицы создаются 1 раз при старте строго в своей зоне
   public getInitialParticlesForZone(zone: CurrentZoneType, count: number): Point2D[] {
     const points: Point2D[] = [];
     const pool = this.zoneSpawnPoints[zone];
 
     if (!pool || pool.length === 0) {
-      // Фолбэк спавн если маска еще грузится
       for (let i = 0; i < count; i++) {
-        points.push({ x: this.worldWidth * 0.2, y: this.worldHeight * 0.5 });
+        points.push({
+          x: Math.random() * this.worldWidth,
+          y: Math.random() * this.worldHeight
+        });
       }
       return points;
     }
 
     for (let i = 0; i < count; i++) {
       const randomPt = pool[Math.floor(Math.random() * pool.length)];
-      // Добавляем небольшой случайный сдвиг в пределах ячейки
       points.push({
         x: randomPt.x + (Math.random() - 0.5) * 40,
         y: randomPt.y + (Math.random() - 0.5) * 40
@@ -162,10 +188,6 @@ export class OceanCurrentsManager {
   }
 
   // --- 4. РАСЧЕТ ДВИЖЕНИЯ И УДЕРЖАНИЕ ЧАСТИЦ В ЗОНЕ ---
-  /**
-   * Рассчитывает вектор скорости частицы.
-   * Если частица идет к границе своей зоны -- вектор плавно поворачивается, удерживая её внутри.
-   */
   public getCurrentVectorForParticle(
     x: number,
     y: number,
@@ -173,17 +195,6 @@ export class OceanCurrentsManager {
     currentVy: number,
     assignedZone: CurrentZoneType
   ): CurrentData {
-    if (!this.isLoaded) {
-      return {
-        vx: 0,
-        vy: 0,
-        zoneType: assignedZone,
-        targetColor: ZONE_COLOR_MAP[assignedZone],
-        isWater: true
-      };
-    }
-
-    // Базовое направление течения по умолчанию (плывём вдоль коридоров карты на север/северо-восток)
     let vx = currentVx;
     let vy = currentVy;
 
@@ -196,12 +207,10 @@ export class OceanCurrentsManager {
     const currentAngle = Math.atan2(vy, vx);
     const PROBE_DIST = 35; // Дистанция проверки стены впереди
 
-    // Проверяем, останется ли частица в своей зоне при движении вперед
     const nextX = x + Math.cos(currentAngle) * PROBE_DIST;
     const nextY = y + Math.sin(currentAngle) * PROBE_DIST;
 
     if (this.getZoneAt(nextX, nextY) !== assignedZone) {
-      // Впереди граница зоны или суша! Сканируем веер углов в поисках безопасного пути внутри родной зоны
       let bestAngle = currentAngle;
       let foundPath = false;
 
@@ -220,12 +229,10 @@ export class OceanCurrentsManager {
         if (foundPath) break;
       }
 
-      // Плавно разворачиваем вектор в сторону свободного коридора
       vx = Math.cos(bestAngle);
       vy = Math.sin(bestAngle);
     }
 
-    // Нормализуем скорость
     const len = Math.hypot(vx, vy) || 1;
     const finalVx = (vx / len) * speed;
     const finalVy = (vy / len) * speed;
