@@ -6,11 +6,10 @@ export interface ShorePoint {
 }
 
 export enum CurrentZoneType {
-  WARM = 'WARM',             // 🟠 Теплое течение (Даунвеллинг / Воронка)
-  COLD = 'COLD',             // 🔵 Холодное течение (Апвеллинг / Подъём)
-  TRANSIT = 'TRANSIT',       // 🟡 Выносящие транзитные дуги
-  CONNECTING = 'CONNECTING', // 🟢 Центральная скоростная магистраль
-  STAGNATION = 'STAGNATION'  // 🌊 Застойная закольцованная зона (стадион)
+  WARM = 'WARM',             // 🟠 Тёплые прибрежные вихри и струи вдоль берега
+  COLD = 'COLD',             // 🔵 Холодные глубоководные вихри
+  CONNECTING = 'CONNECTING', // 🟢 Зелёные магистрали (Из глубины к берегу)
+  TRANSIT = 'TRANSIT'        // 🟡 Жёлтые транзиты (От берега в глубину)
 }
 
 export interface CurrentData {
@@ -24,23 +23,36 @@ export interface CurrentData {
 export const ZONE_COLOR_MAP: Record<CurrentZoneType, string> = {
   [CurrentZoneType.WARM]: '#FF8C00',       // Оранжевый
   [CurrentZoneType.COLD]: '#00BFFF',       // Ледяной синий
-  [CurrentZoneType.TRANSIT]: '#FFD700',    // Ярко-жёлтый
   [CurrentZoneType.CONNECTING]: '#00FF66', // Сочно-зелёный
-  [CurrentZoneType.STAGNATION]: '#3A506B'  // Тёмно-бирюзовый застой
+  [CurrentZoneType.TRANSIT]: '#FFD700'     // Ярко-жёлтый
 };
 
-// Мультипликаторы скоростей для разных зон
 export const ZONE_SPEED_MULTIPLIERS: Record<CurrentZoneType, number> = {
-  [CurrentZoneType.CONNECTING]: 1.35, // 🟢 Центральный ускоренный канал
-  [CurrentZoneType.TRANSIT]: 1.1,    // 🟡 Транзитные дуги
-  [CurrentZoneType.WARM]: 0.9,       // 🟠 Зона даунвеллинга
-  [CurrentZoneType.COLD]: 0.85,      // 🔵 Зона апвеллинга
-  [CurrentZoneType.STAGNATION]: 0.20 // 🌊 Застойные круговороты (частицы медленно циркулируют и выпадают в осадок)
+  [CurrentZoneType.CONNECTING]: 1.4, // 🟢 Самые быстрые мосты
+  [CurrentZoneType.TRANSIT]: 1.25,   // 🟡 Скоростной возврат
+  [CurrentZoneType.WARM]: 1.0,       // 🟠 Прибрежная циркуляция
+  [CurrentZoneType.COLD]: 0.85       // 🔵 Плотные глубокие массы
 };
 
 interface Point2D {
   x: number;
   y: number;
+}
+
+interface GyreNode {
+  cx: number;
+  cy: number;
+  radius: number;
+  clockwise: boolean;
+  type: CurrentZoneType.WARM | CurrentZoneType.COLD;
+}
+
+interface StreamLine {
+  p0: Point2D;
+  p1: Point2D;
+  p2?: Point2D; // Точка изгиба для дуги Безье
+  radius: number;
+  type: CurrentZoneType.CONNECTING | CurrentZoneType.TRANSIT;
 }
 
 export class OceanCurrentsManager {
@@ -52,6 +64,58 @@ export class OceanCurrentsManager {
   private shorelineLimits: Float32Array = new Float32Array(this.MASK_SIZE).fill(0);
   private waterSpawnPoints: Point2D[] = [];
   public isLoaded: boolean = false;
+
+  // --- 1. КОВЕР ВИХРЕЙ (ГЛУБИННЫЕ СИНИЕ И ПРИБРЕЖНЫЕ ОРАНЖЕВЫЕ) ---
+  private readonly GYRES: GyreNode[] = [
+    // 🔵 ГЛУБОКОВОДНАЯ ЗОНА (Слева)
+    { cx: 1500, cy: 1500, radius: 1400, clockwise: true, type: CurrentZoneType.COLD },
+    { cx: 1200, cy: 3800, radius: 1300, clockwise: false, type: CurrentZoneType.COLD },
+    { cx: 1800, cy: 6200, radius: 1500, clockwise: true, type: CurrentZoneType.COLD },
+    { cx: 3200, cy: 2200, radius: 1200, clockwise: false, type: CurrentZoneType.COLD },
+    { cx: 3000, cy: 5000, radius: 1300, clockwise: true, type: CurrentZoneType.COLD },
+
+    // 🟠 ПРИБРЕЖНАЯ ЗОНА (Справа вдоль берега)
+    { cx: 5800, cy: 1200, radius: 900, clockwise: true, type: CurrentZoneType.WARM },
+    { cx: 6200, cy: 2800, radius: 1000, clockwise: false, type: CurrentZoneType.WARM },
+    { cx: 5200, cy: 4200, radius: 1100, clockwise: true, type: CurrentZoneType.WARM },
+    { cx: 4800, cy: 6000, radius: 1000, clockwise: false, type: CurrentZoneType.WARM },
+    { cx: 4200, cy: 7200, radius: 800, clockwise: true, type: CurrentZoneType.WARM }
+  ];
+
+  // --- 2. МЕЖЗОНАЛЬНЫЕ МОСТЫ (ЗЕЛЕНЫЕ И ЖЕЛТЫЕ СТРУИ) ---
+  private readonly STREAMS: StreamLine[] = [
+    // 🟢 ЗЕЛЕНЫЕ СТРУИ: Из глубины к берегу
+    {
+      p0: { x: 1000, y: 1500 },
+      p1: { x: 3000, y: 3000 },
+      p2: { x: 5500, y: 4000 },
+      radius: 950,
+      type: CurrentZoneType.CONNECTING
+    },
+    {
+      p0: { x: 1500, y: 4500 },
+      p1: { x: 3200, y: 5800 },
+      p2: { x: 4500, y: 6800 },
+      radius: 900,
+      type: CurrentZoneType.CONNECTING
+    },
+
+    // 🟡 ЖЕЛТЫЕ СТРУИ: От берега в глубину (параллельно зеленым!)
+    {
+      p0: { x: 5800, y: 1800 },
+      p1: { x: 3800, y: 1000 },
+      p2: { x: 2200, y: 800 },
+      radius: 900,
+      type: CurrentZoneType.TRANSIT
+    },
+    {
+      p0: { x: 6000, y: 4800 },
+      p1: { x: 3800, y: 3600 },
+      p2: { x: 2000, y: 3000 },
+      radius: 950,
+      type: CurrentZoneType.TRANSIT
+    }
+  ];
 
   constructor(worldWidth: number = 8000, worldHeight: number = 8000) {
     this.worldWidth = worldWidth;
@@ -173,181 +237,79 @@ export class OceanCurrentsManager {
     return { x: 500, y: 4000 };
   }
 
-  // --- МАТЕМАТИЧЕСКИЕ ПРИМИТИВЫ ПОЛЕЙ ---
+  // --- МАТЕМАТИКА ВИХРЕЙ И СТРУЙ ---
 
-  /**
-   * 1. Вектор Апвеллинга / Даунвеллинга (Сердце течения)
-   * Upwelling: Радиальный разлёт + вращение
-   * Downwelling: Сход в центр + вращение
-   */
-  private getHeartNodeVector(
-    x: number,
-    y: number,
-    heart: { cx: number; cy: number; radius: number; isUpwelling: boolean; clockwise?: boolean }
-  ): Point2D | null {
-    const dx = x - heart.cx;
-    const dy = y - heart.cy;
+  private getGyreVector(x: number, y: number, gyre: GyreNode): { vx: number; vy: number; weight: number } | null {
+    const dx = x - gyre.cx;
+    const dy = y - gyre.cy;
     const dist = Math.hypot(dx, dy);
 
-    if (dist > heart.radius || dist === 0) return null;
+    if (dist > gyre.radius || dist === 0) return null;
 
-    const normX = dx / dist;
-    const normY = dy / dist;
-    const spinDir = heart.clockwise === false ? -1 : 1;
+    // Гладкий спад влияния от центра к краям
+    const normDist = dist / gyre.radius;
+    const weight = Math.cos(normDist * Math.PI * 0.5);
 
-    // Вращательный вектор (касательный к окружности)
-    const tangX = -spinDir * normY;
-    const tangY = spinDir * normX;
+    const dir = gyre.clockwise ? 1 : -1;
+    const vx = -dir * (dy / dist);
+    const vy = dir * (dx / dist);
 
-    // Радиальный вектор (выталкивание для Upwelling, засасывание для Downwelling)
-    const radFactor = heart.isUpwelling ? 0.7 : -0.7;
-    const radX = normX * radFactor;
-    const radY = normY * radFactor;
-
-    // Смешивание радиального и тангенциального потока
-    const vx = tangX + radX;
-    const vy = tangY + radY;
-    const len = Math.hypot(vx, vy) || 1;
-
-    return { x: vx / len, y: vy / len };
+    return { vx, vy, weight };
   }
 
-  /**
-   * 2. Зацикленный стадион / Зона застоя
-   * Образует замкнутые орбиты, на которых скорость угасает
-   */
-  private getStadiumGyreVector(
-    x: number,
-    y: number,
-    track: { cx: number; cy: number; halfLength: number; radius: number; angleRad: number; clockwise?: boolean }
-  ): Point2D | null {
-    const { cx, cy, halfLength, radius, angleRad } = track;
+  private getStreamVector(x: number, y: number, stream: StreamLine): { vx: number; vy: number; weight: number } | null {
+    if (stream.p2) {
+      // Дуга Безье
+      const SAMPLES = 30;
+      let minDistSq = Infinity;
+      let bestT = 0;
 
-    const dx = x - cx;
-    const dy = y - cy;
-    const cosA = Math.cos(-angleRad);
-    const sinA = Math.sin(-angleRad);
+      for (let i = 0; i <= SAMPLES; i++) {
+        const t = i / SAMPLES;
+        const invT = 1 - t;
+        const bx = invT * invT * stream.p0.x + 2 * invT * t * stream.p1.x + t * t * stream.p2.x;
+        const by = invT * invT * stream.p0.y + 2 * invT * t * stream.p1.y + t * t * stream.p2.y;
 
-    const lx = dx * cosA - dy * sinA;
-    const ly = dx * sinA + dy * cosA;
-
-    let lvx = 0;
-    let lvy = 0;
-    let inside = false;
-    const dir = track.clockwise === false ? -1 : 1;
-
-    if (Math.abs(lx) <= halfLength) {
-      if (Math.abs(ly) <= radius) {
-        lvx = ly < 0 ? dir : -dir;
-        lvy = 0;
-        inside = true;
+        const dSq = (x - bx) * (x - bx) + (y - by) * (y - by);
+        if (dSq < minDistSq) {
+          minDistSq = dSq;
+          bestT = t;
+        }
       }
-    } else if (lx > halfLength) {
-      const pdx = lx - halfLength;
-      if (Math.hypot(pdx, ly) <= radius) {
-        lvx = -dir * ly;
-        lvy = dir * pdx;
-        inside = true;
-      }
-    } else if (lx < -halfLength) {
-      const pdx = lx + halfLength;
-      if (Math.hypot(pdx, ly) <= radius) {
-        lvx = -dir * ly;
-        lvy = dir * pdx;
-        inside = true;
-      }
+
+      const dist = Math.sqrt(minDistSq);
+      if (dist > stream.radius) return null;
+
+      const invT = 1 - bestT;
+      const tangentX = 2 * invT * (stream.p1.x - stream.p0.x) + 2 * bestT * (stream.p2.x - stream.p1.x);
+      const tangentY = 2 * invT * (stream.p1.y - stream.p0.y) + 2 * bestT * (stream.p2.y - stream.p1.y);
+
+      const len = Math.hypot(tangentX, tangentY) || 1;
+      const weight = Math.cos((dist / stream.radius) * Math.PI * 0.5) * 1.5; // Мосты имееют приоритет
+
+      return { vx: tangentX / len, vy: tangentY / len, weight };
+    } else {
+      // Прямая линия
+      const dx = stream.p1.x - stream.p0.x;
+      const dy = stream.p1.y - stream.p0.y;
+      const len = Math.hypot(dx, dy);
+      if (len === 0) return null;
+
+      let t = ((x - stream.p0.x) * dx + (y - stream.p0.y) * dy) / (len * len);
+      t = Math.max(0, Math.min(1, t));
+
+      const projX = stream.p0.x + t * dx;
+      const projY = stream.p0.y + t * dy;
+      const dist = Math.hypot(x - projX, y - projY);
+
+      if (dist > stream.radius) return null;
+
+      const weight = Math.cos((dist / stream.radius) * Math.PI * 0.5) * 1.5;
+      return { vx: dx / len, vy: dy / len, weight };
     }
-
-    if (!inside) return null;
-
-    const len = Math.hypot(lvx, lvy) || 1;
-    lvx /= len;
-    lvy /= len;
-
-    const cosR = Math.cos(angleRad);
-    const sinR = Math.sin(angleRad);
-    return {
-      x: lvx * cosR - lvy * sinR,
-      y: lvx * sinR + lvy * cosR
-    };
   }
 
-  /**
-   * 3. Дугообразное (дуга Безье) транзитное течение
-   */
-  private getCrescentStreamVector(
-    x: number,
-    y: number,
-    p0: Point2D,
-    p1: Point2D,
-    p2: Point2D,
-    radius: number
-  ): Point2D | null {
-    const SAMPLES = 25;
-    let minDistSq = Infinity;
-    let bestT = 0;
-
-    for (let i = 0; i <= SAMPLES; i++) {
-      const t = i / SAMPLES;
-      const invT = 1 - t;
-
-      const bx = invT * invT * p0.x + 2 * invT * t * p1.x + t * t * p2.x;
-      const by = invT * invT * p0.y + 2 * invT * t * p1.y + t * t * p2.y;
-
-      const dSq = (x - bx) * (x - bx) + (y - by) * (y - by);
-      if (dSq < minDistSq) {
-        minDistSq = dSq;
-        bestT = t;
-      }
-    }
-
-    if (Math.sqrt(minDistSq) > radius) return null;
-
-    const invT = 1 - bestT;
-    const tangentX = 2 * invT * (p1.x - p0.x) + 2 * bestT * (p2.x - p1.x);
-    const tangentY = 2 * invT * (p1.y - p0.y) + 2 * bestT * (p2.y - p1.y);
-
-    const len = Math.hypot(tangentX, tangentY) || 1;
-    return {
-      x: tangentX / len,
-      y: tangentY / len
-    };
-  }
-
-  /**
-   * 4. Прямое соединительное течение
-   */
-  private getLinearStreamVector(
-    x: number,
-    y: number,
-    p0: Point2D,
-    p1: Point2D,
-    radius: number
-  ): Point2D | null {
-    const dx = p1.x - p0.x;
-    const dy = p1.y - p0.y;
-    const len = Math.hypot(dx, dy);
-    if (len === 0) return null;
-
-    const dirX = dx / len;
-    const dirY = dy / len;
-
-    let t = ((x - p0.x) * dx + (y - p0.y) * dy) / (len * len);
-    t = Math.max(0, Math.min(1, t));
-
-    const projX = p0.x + t * dx;
-    const projY = p0.y + t * dy;
-    const dist = Math.hypot(x - projX, y - projY);
-
-    if (dist > radius) return null;
-
-    return {
-      x: dirX,
-      y: dirY
-    };
-  }
-
-  // --- ГЛАВНЫЙ РАСЧЕТ ВЕКТОРНОГО ПОЛЯ В ТОЧКЕ ---
+  // --- ГЛАВНЫЙ РАСЧЕТ ТЕЧЕНИЙ ---
 
   public getCurrentAt(x: number, y: number): CurrentData {
     const isWater = this.isWater(x, y);
@@ -363,179 +325,66 @@ export class OceanCurrentsManager {
 
     let totalVx = 0;
     let totalVy = 0;
+    let totalWeight = 0;
 
-    let warmWeight = 0;
-    let coldWeight = 0;
-    let transitWeight = 0;
-    let connectingWeight = 0;
-    let stagnationWeight = 0;
-
-    // 1. ВЕРХНИЙ ЛЕВЫЙ ЗАСТОЙНЫЙ СТАДИОН (Top-Left Stagnation Gyre)
-    const topLeftStagnation = {
-      cx: 1600,
-      cy: 1600,
-      halfLength: 1200,
-      radius: 1100,
-      angleRad: (25 * Math.PI) / 180,
-      clockwise: true
+    const weights: Record<CurrentZoneType, number> = {
+      [CurrentZoneType.WARM]: 0,
+      [CurrentZoneType.COLD]: 0,
+      [CurrentZoneType.CONNECTING]: 0,
+      [CurrentZoneType.TRANSIT]: 0
     };
-    const topLeftVec = this.getStadiumGyreVector(x, y, topLeftStagnation);
-    if (topLeftVec) {
-      totalVx += topLeftVec.x * 0.5;
-      totalVy += topLeftVec.y * 0.5;
-      stagnationWeight += 2.5;
+
+    // 1. Проверяем все вихри
+    for (const gyre of this.GYRES) {
+      const res = this.getGyreVector(x, y, gyre);
+      if (res) {
+        totalVx += res.vx * res.weight;
+        totalVy += res.vy * res.weight;
+        totalWeight += res.weight;
+        weights[gyre.type] += res.weight;
+      }
     }
 
-    // 2. НИЖНИЙ ПРАВЫЙ ЗАСТОЙНЫЙ СТАДИОН (Bottom-Right Stagnation Gyre)
-    const bottomRightStagnation = {
-      cx: 6400,
-      cy: 6400,
-      halfLength: 1400,
-      radius: 1200,
-      angleRad: (-35 * Math.PI) / 180,
-      clockwise: true
-    };
-    const bottomRightVec = this.getStadiumGyreVector(x, y, bottomRightStagnation);
-    if (bottomRightVec) {
-      totalVx += bottomRightVec.x * 0.5;
-      totalVy += bottomRightVec.y * 0.5;
-      stagnationWeight += 2.5;
+    // 2. Проверяем все линейные и дуговые мосты
+    for (const stream of this.STREAMS) {
+      const res = this.getStreamVector(x, y, stream);
+      if (res) {
+        totalVx += res.vx * res.weight;
+        totalVy += res.vy * res.weight;
+        totalWeight += res.weight;
+        weights[stream.type] += res.weight;
+      }
     }
 
-    // 3. СЕРДЦЕ ХОЛОДНОГО ТЕЧЕНИЯ (Центральный Апвеллинг - Источник)
-    const coldHeart = {
-      cx: 2400,
-      cy: 3000,
-      radius: 1100,
-      isUpwelling: true,
-      clockwise: false
-    };
-    const coldHeartVec = this.getHeartNodeVector(x, y, coldHeart);
-    if (coldHeartVec) {
-      totalVx += coldHeartVec.x * 1.2;
-      totalVy += coldHeartVec.y * 1.2;
-      coldWeight += 2.0;
+    // 3. ФОНОВОЕ ПЛАНЕТАРНОЕ ТЕЧЕНИЕ (Гарантия от нулевых точек!)
+    // Если точка оказалась ровно на стыке двух противодействующих вихрей
+    if (totalWeight === 0 || Math.hypot(totalVx, totalVy) < 0.05) {
+      // Береговой сток на северо-восток вдоль общей линии карты
+      totalVx = 0.5;
+      totalVy = -0.5;
+      weights[CurrentZoneType.COLD] = 0.1;
     }
 
-    // 4. СЕРДЦЕ ТЁПЛОГО ТЕЧЕНИЯ (Центральный Даунвеллинг - Сток/Воронка)
-    const warmHeart = {
-      cx: 4600,
-      cy: 4500,
-      radius: 1200,
-      isUpwelling: false,
-      clockwise: true
-    };
-    const warmHeartVec = this.getHeartNodeVector(x, y, warmHeart);
-    if (warmHeartVec) {
-      totalVx += warmHeartVec.x * 1.2;
-      totalVy += warmHeartVec.y * 1.2;
-      warmWeight += 2.0;
+    // Определение доминирующего типа течения для цвета и скорости
+    let dominantZone = CurrentZoneType.COLD;
+    let maxW = -1;
+    for (const zType in weights) {
+      const type = zType as CurrentZoneType;
+      if (weights[type] > maxW) {
+        maxW = weights[type];
+        dominantZone = type;
+      }
     }
 
-    // 5. ПРЯМАЯ ЗЕЛЕНАЯ МАГИСТРАЛЬ (Из Апвеллинга в Даунвеллинг)
-    const connectingStream = {
-      p0: { x: 2400, y: 3000 },
-      p1: { x: 4600, y: 4500 },
-      radius: 750
-    };
-    const connectingVec = this.getLinearStreamVector(
-      x,
-      y,
-      connectingStream.p0,
-      connectingStream.p1,
-      connectingStream.radius
-    );
-    if (connectingVec) {
-      totalVx += connectingVec.x * 1.5;
-      totalVy += connectingVec.y * 1.5;
-      connectingWeight += 3.0;
-    }
-
-    // 6. ПРАВЫЙ ВЕРХНИЙ ТРАНЗИТ (Жёлтая выносящая дуга)
-    const topRightCrescent = {
-      p0: { x: 6200, y: 2200 },
-      p1: { x: 5200, y: 600 },
-      p2: { x: 2500, y: 700 },
-      radius: 800
-    };
-    const topCrescentVec = this.getCrescentStreamVector(
-      x,
-      y,
-      topRightCrescent.p0,
-      topRightCrescent.p1,
-      topRightCrescent.p2,
-      topRightCrescent.radius
-    );
-    if (topCrescentVec) {
-      totalVx += topCrescentVec.x * 1.1;
-      totalVy += topCrescentVec.y * 1.1;
-      transitWeight += 1.8;
-    }
-
-    // 7. НИЖНИЙ ЛЕВЫЙ ТРАНЗИТ (Жёлтая выносящая дуга)
-    const bottomLeftCrescent = {
-      p0: { x: 4800, y: 6800 },
-      p1: { x: 2000, y: 7600 },
-      p2: { x: 1200, y: 4500 },
-      radius: 850
-    };
-    const bottomCrescentVec = this.getCrescentStreamVector(
-      x,
-      y,
-      bottomLeftCrescent.p0,
-      bottomLeftCrescent.p1,
-      bottomLeftCrescent.p2,
-      bottomLeftCrescent.radius
-    );
-    if (bottomCrescentVec) {
-      totalVx += bottomCrescentVec.x * 1.1;
-      totalVy += bottomCrescentVec.y * 1.1;
-      transitWeight += 1.8;
-    }
-
-    // --- ОБРАБОТКА ТИПА ЗОНЫ И СКОРОСТИ ---
-    const maxWeight = Math.max(
-      warmWeight,
-      coldWeight,
-      transitWeight,
-      connectingWeight,
-      stagnationWeight
-    );
-
-    // Если область находится в спокойной воде вне активных течений
-    if (maxWeight === 0) {
-      return {
-        vx: 0,
-        vy: 0,
-        zoneType: CurrentZoneType.STAGNATION,
-        targetColor: ZONE_COLOR_MAP[CurrentZoneType.STAGNATION],
-        isWater: true
-      };
-    }
-
-    let primaryZone = CurrentZoneType.STAGNATION;
-    if (maxWeight === connectingWeight) {
-      primaryZone = CurrentZoneType.CONNECTING;
-    } else if (maxWeight === warmWeight) {
-      primaryZone = CurrentZoneType.WARM;
-    } else if (maxWeight === coldWeight) {
-      primaryZone = CurrentZoneType.COLD;
-    } else if (maxWeight === transitWeight) {
-      primaryZone = CurrentZoneType.TRANSIT;
-    }
-
-    // Нормализация векторного поля
-    const combinedLen = Math.hypot(totalVx, totalVy) || 1;
-    const zoneSpeed = this.baseSpeed * ZONE_SPEED_MULTIPLIERS[primaryZone];
-
-    const finalVx = (totalVx / combinedLen) * zoneSpeed;
-    const finalVy = (totalVy / combinedLen) * zoneSpeed;
+    // Нормализация скорости (никакого застоя, всегда baseSpeed!)
+    const len = Math.hypot(totalVx, totalVy) || 1;
+    const speed = this.baseSpeed * ZONE_SPEED_MULTIPLIERS[dominantZone];
 
     return {
-      vx: finalVx,
-      vy: finalVy,
-      zoneType: primaryZone,
-      targetColor: ZONE_COLOR_MAP[primaryZone],
+      vx: (totalVx / len) * speed,
+      vy: (totalVy / len) * speed,
+      zoneType: dominantZone,
+      targetColor: ZONE_COLOR_MAP[dominantZone],
       isWater: true
     };
   }
