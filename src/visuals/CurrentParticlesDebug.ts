@@ -103,12 +103,15 @@ export class CurrentParticlesDebug {
         const life = Math.random() * maxLife;
         const lengthScale = 0.8 + Math.random() * 1.7;
 
+        // Случайный вектор направления при создании (360 градусов)
+        const angle = Math.random() * Math.PI * 2;
+
         this.container.addChild(sprite);
         this.particles.push({
           x: pt.x,
           y: pt.y,
-          vx: 0.5,
-          vy: -0.5,
+          vx: Math.cos(angle),
+          vy: Math.sin(angle),
           zone,
           life,
           maxLife,
@@ -125,6 +128,12 @@ export class CurrentParticlesDebug {
 
     p.x = pos.x;
     p.y = pos.y;
+
+    // Случайный вектор направления при перерождении (360 градусов)
+    const angle = Math.random() * Math.PI * 2;
+    p.vx = Math.cos(angle);
+    p.vy = Math.sin(angle);
+
     p.life = 0;
     p.maxLife = 4 + Math.random() * 4;
     p.lengthScale = 0.8 + Math.random() * 1.7;
