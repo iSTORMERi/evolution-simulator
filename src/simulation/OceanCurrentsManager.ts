@@ -38,6 +38,13 @@ export const ZONE_SPEED_MULTIPLIERS: Record<CurrentZoneType, number> = {
   [CurrentZoneType.WARM]: 1.15
 };
 
+// 🔥 РАСПРЕДЕЛЕНИЕ 8000 ЧАСТИЦ ПО ЗОНАМ
+export const ZONE_PARTICLE_COUNTS: Record<CurrentZoneType, number> = {
+  [CurrentZoneType.DEEP]: 1000, // 🟣 Оставляем как есть (эталонная плотность)
+  [CurrentZoneType.COLD]: 5250, // 🔵 МАКСИМУМ: Заполняем огромную центральную зону
+  [CurrentZoneType.WARM]: 1750  // 🟠 Усиленный прибрежный поток
+};
+
 export class OceanCurrentsManager {
   private worldWidth: number;
   private worldHeight: number;
@@ -263,7 +270,8 @@ export class OceanCurrentsManager {
   private generateFallbackSpawnPoints(): void {
     const zones = [CurrentZoneType.DEEP, CurrentZoneType.COLD, CurrentZoneType.WARM];
     for (const zone of zones) {
-      for (let i = 0; i < 400; i++) {
+      const count = ZONE_PARTICLE_COUNTS[zone];
+      for (let i = 0; i < count; i++) {
         this.zoneSpawnPoints[zone].push({
           x: Math.random() * this.worldWidth,
           y: Math.random() * this.worldHeight
@@ -384,6 +392,30 @@ export class OceanCurrentsManager {
     }
 
     return points;
+  }
+
+  /**
+   * 🔥 УДОБНЫЙ МЕТОД: Возвращает сразу все 8000 частиц для трех зон
+   */
+  public getAllInitialParticles(): Array<Point2D & { zone: CurrentZoneType; color: string }> {
+    const result: Array<Point2D & { zone: CurrentZoneType; color: string }> = [];
+    const zones = [CurrentZoneType.DEEP, CurrentZoneType.COLD, CurrentZoneType.WARM];
+
+    for (const zone of zones) {
+      const count = ZONE_PARTICLE_COUNTS[zone];
+      const points = this.getInitialParticlesForZone(zone, count);
+      
+      for (const pt of points) {
+        result.push({
+          x: pt.x,
+          y: pt.y,
+          zone: zone,
+          color: ZONE_COLOR_MAP[zone]
+        });
+      }
+    }
+
+    return result;
   }
 
   public getCurrentVectorForParticle(
