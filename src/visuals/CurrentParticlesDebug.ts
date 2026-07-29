@@ -4,6 +4,9 @@ import { OceanCurrentsManager, CurrentZoneType } from '../simulation/OceanCurren
 interface Particle {
   x: number;
   y: number;
+  vx: number;
+  vy: number;
+  zone: CurrentZoneType;
   life: number;
   maxLife: number;
   lengthScale: number; // Индивидуальный множитель длины
@@ -17,16 +20,15 @@ export class CurrentParticlesDebug {
 
   private particleTexture: PIXI.Texture;
 
-  // Цветовая палитра PIXI Hex
-  private readonly colorWarm = 0xff8c00;       // 🟠 Оранжевый
-  private readonly colorCold = 0x00bfff;       // 🔵 Синий
-  private readonly colorTransit = 0xffd700;    // 🟡 Жёлтый
-  private readonly colorConnecting = 0x00ff66; // 🟢 Сочно-зелёный
-  private readonly colorDrift = 0x1e3a5f;      // 🌊 Тёмно-морской
+  // Цветовая палитра Layer 1 (HEX для PIXI)
+  private readonly colorDeep = 0x8a00ff; // 🟣 Фиолетовый (Глубоководное)
+  private readonly colorCold = 0x0000ff; // 🔵 Синий (Холодное)
+  private readonly colorWarm = 0xff5500; // 🟠 Оранжевый (Теплое)
 
   private readonly worldSize = 8000;
+  private isInitializedWithMask: boolean = false;
 
-  constructor(currentsManager: OceanCurrentsManager, count: number = 2200) {
+  constructor(currentsManager: OceanCurrentsManager, count: number = 2400) {
     this.currentsManager = currentsManager;
     this.container = new PIXI.Container();
 
@@ -66,37 +68,44 @@ export class CurrentParticlesDebug {
     return PIXI.Texture.from(canvas);
   }
 
-  private initParticles(count: number): void {
-    for (let i = 0; i < count; i++) {
-      const sprite = new PIXI.Sprite(this.particleTexture);
-      
-      // Устанавливаем анкор в голову кометы (правый край: x=1.0, y=0.5), 
-      // чтобы частица вращалась и двигалась точно своим «носом» вперед.
-      sprite.anchor.set(1.0, 0.5);
+  private initParticles(totalCount: number): void {
+    const zones = [CurrentZoneType.DEEP, CurrentZoneType.COLD, CurrentZoneType.WARM];
+    const countPerZone = Math.floor(totalCount / zones.length);
 
-      const pos = this.currentsManager.getRandomWaterPosition();
-      sprite.position.set(pos.x, pos.y);
+    for (const zone of zones) {
+      const spawnPoints = this.currentsManager.getInitialParticlesForZone(zone, countPerZone);
 
-      const maxLife = 4 + Math.random() * 4;
-      const life = Math.random() * maxLife;
-      
-      // Разнородная длина: от 0.8x до 2.5x
-      const lengthScale = 0.8 + Math.random() * 1.7;
+      for (let i = 0; i < countPerZone; i++) {
+        const pt = spawnPoints[i] || { x: this.worldSize * 0.5, y: this.worldSize * 0.5 };
+        const sprite = new PIXI.Sprite(this.particleTexture);
 
-      this.container.addChild(sprite);
-      this.particles.push({ 
-        x: pos.x, 
-        y: pos.y, 
-        life, 
-        maxLife, 
-        lengthScale, 
-        sprite 
-      });
+        // Устанавливаем анкор в голову кометы (правый край: x=1.0, y=0.5)
+        sprite.anchor.set(1.0, 0.5);
+
+        const maxLife = 4 + Math.random() * 4;
+        const life = Math.random() * maxLife;
+        const lengthScale = 0.8 + Math.random() * 1.7;
+
+        this.container.addChild(sprite);
+        this.particles.push({
+          x: pt.x,
+          y: pt.y,
+          vx: 0.5,
+          vy: -0.5,
+          zone,
+          life,
+          maxLife,
+          lengthScale,
+          sprite
+        });
+      }
     }
   }
 
   private respawnParticle(p: Particle): void {
-    const pos = this.currentsManager.getRandomWaterPosition();
+    const pts = this.currentsManager.getInitialParticlesForZone(p.zone, 1);
+    const pos = pts[0] || { x: p.x, y: p.y };
+
     p.x = pos.x;
     p.y = pos.y;
     p.life = 0;
@@ -106,51 +115,57 @@ export class CurrentParticlesDebug {
   }
 
   public update(deltaSeconds: number): void {
+    // Единоразовое распределение частиц по маске, как только изображение загрузится
+    if (this.currentsManager.isLoaded && !this.isInitializedWithMask) {
+      for (const p of this.particles) {
+        this.respawnParticle(p);
+      }
+      this.isInitializedWithMask = true;
+    }
+
     const total = this.particles.length;
 
     for (let i = 0; i < total; i++) {
       const p = this.particles[i];
       p.life += deltaSeconds;
 
-      // Респавн по истечении времени жизни
+      // Респавн по истечении времени жизни (внутри своей же зоны)
       if (p.life >= p.maxLife) {
         this.respawnParticle(p);
         continue;
       }
 
-      const current = this.currentsManager.getCurrentAt(p.x, p.y);
+      // Получаем физику движения с авто-удержанием в родной зоне
+      const current = this.currentsManager.getCurrentVectorForParticle(
+        p.x,
+        p.y,
+        p.vx,
+        p.vy,
+        p.zone
+      );
 
-      const dx = current.vx * deltaSeconds;
-      const dy = current.vy * deltaSeconds;
+      p.vx = current.vx;
+      p.vy = current.vy;
 
-      const nextX = p.x + dx;
-      const nextY = p.y + dy;
+      p.x += p.vx * deltaSeconds;
+      p.y += p.vy * deltaSeconds;
 
-      // Проверка на столкновение с сушей
-      if (this.currentsManager.isWater(nextX, nextY)) {
-        p.x = nextX;
-        p.y = nextY;
-      } else {
-        this.respawnParticle(p);
-        continue;
-      }
-
-      // Зацикливание по краям карты
+      // Проверка на вылет за границы мира
       if (p.x > this.worldSize || p.x < 0 || p.y > this.worldSize || p.y < 0) {
         this.respawnParticle(p);
         continue;
       }
 
-      // Поворот кометы вдоль направления скорости
-      const speed = Math.hypot(current.vx, current.vy);
+      // Поворот кометы вдоль направления движения
+      const speed = Math.hypot(p.vx, p.vy);
       if (speed > 0.01) {
-        p.sprite.rotation = Math.atan2(current.vy, current.vx);
+        p.sprite.rotation = Math.atan2(p.vy, p.vx);
       }
 
-      // Динамический размер: длина зависит от индивидуального коэффициента и скорости течения
-      const currentSpeedFactor = Math.min(2.0, Math.max(0.5, speed / 200));
+      // Динамический размер: длина зависит от скорости течения
+      const currentSpeedFactor = Math.min(2.0, Math.max(0.5, speed / 100));
       p.sprite.scale.x = p.lengthScale * currentSpeedFactor;
-      p.sprite.scale.y = 1.0; // Аккуратная толщина кометы
+      p.sprite.scale.y = 1.0;
 
       // Прозрачность с мягким проявлением и затуханием (Fade In / Fade Out)
       const progress = p.life / p.maxLife;
@@ -159,25 +174,16 @@ export class CurrentParticlesDebug {
       if (progress > 0.8) alpha = ((1 - progress) / 0.2) * 0.85;
       p.sprite.alpha = alpha;
 
-      // Окрашивание в соответствии со всеми зонами течений
-      switch (current.zoneType) {
-        case CurrentZoneType.WARM:
-          p.sprite.tint = this.colorWarm;
+      // Окрашивание в цвет своей зоны
+      switch (p.zone) {
+        case CurrentZoneType.DEEP:
+          p.sprite.tint = this.colorDeep;
           break;
         case CurrentZoneType.COLD:
           p.sprite.tint = this.colorCold;
           break;
-        case CurrentZoneType.TRANSIT:
-          p.sprite.tint = this.colorTransit;
-          break;
-        case CurrentZoneType.CONNECTING:
-          p.sprite.tint = this.colorConnecting;
-          break;
-        case CurrentZoneType.DRIFT:
-          p.sprite.tint = this.colorDrift;
-          break;
-        default:
-          p.sprite.tint = this.colorCold;
+        case CurrentZoneType.WARM:
+          p.sprite.tint = this.colorWarm;
           break;
       }
 
