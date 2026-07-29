@@ -44,7 +44,7 @@ export class OceanCurrentsManager {
 
   private readonly MASK_SIZE = 1000;
   private maskData: Uint8ClampedArray | null = null;
-  private maskCanvas: HTMLCanvasElement | null = null; // Canvas с чистым силуэтом воды
+  private maskCanvas: HTMLCanvasElement | null = null; // Canvas с белым силуэтом океана
   private darkeningSprite: PIXI.Sprite | null = null;  // Спрайт затемнения PIXI
 
   private overlayOpacity: number = 0.6;
@@ -112,7 +112,7 @@ export class OceanCurrentsManager {
   }
 
   /**
-   * Генерация монохромной маски воды с прозрачной сушей для точного затемнения
+   * Генерация белой маски воды (Вода = Белая 255,255,255, Суша = Прозрачная 0)
    */
   private generateWaterAlphaCanvas(): void {
     if (!this.maskData) return;
@@ -136,10 +136,10 @@ export class OceanCurrentsManager {
                       (r > 200 && g > 40 && b < 50);
 
       if (isWater) {
-        imgData.data[i] = 255;     // R
+        imgData.data[i]     = 255; // R
         imgData.data[i + 1] = 255; // G
         imgData.data[i + 2] = 255; // B
-        imgData.data[i + 3] = 255; // Альфа-канал (видимая вода)
+        imgData.data[i + 3] = 255; // Альфа-канал
       } else {
         imgData.data[i + 3] = 0;   // Полная прозрачность для суши
       }
@@ -150,29 +150,35 @@ export class OceanCurrentsManager {
   }
 
   /**
-   * ГЕНЕРАЦИЯ ЗАТЕМНЯЮЩЕГО СЛОЯ ОКЕАНА С МЯГКОЙ БЕРЕГОВОЙ ЛИНИЕЙ
+   * ГЕНЕРАЦИЯ ЗАТЕМНЯЮЩЕГО СЛОЯ ОКЕАНА С МЯГКОЙ БЕРЕГОВОЙ ЛИНИЕЙ (GPU TINTING)
    */
   public createDarkeningOverlay(opacity: number = 0.6, blurRadius: number = 12): PIXI.Sprite {
     this.overlayOpacity = opacity;
     this.overlayBlur = blurRadius;
 
-    if (this.darkeningSprite) return this.darkeningSprite;
+    if (this.darkeningSprite) {
+      this.refreshDarkeningTexture();
+      return this.darkeningSprite;
+    }
 
     this.darkeningSprite = new PIXI.Sprite();
-    this.refreshDarkeningTexture();
-
-    // Масштабируем спрайт на весь игровой мир (быстро и без перегрузки GPU)
+    
+    // Масштабируем спрайт на весь игровой мир
     this.darkeningSprite.width = this.worldWidth;
     this.darkeningSprite.height = this.worldHeight;
 
+    // Назначаем сине-черный цвет поверх белого силуэта океана средствами GPU
+    this.darkeningSprite.tint = 0x050C1C;
     this.darkeningSprite.alpha = 0;
     this.darkeningSprite.visible = false;
+
+    this.refreshDarkeningTexture();
 
     return this.darkeningSprite;
   }
 
   /**
-   * Пересоздание текстуры затемнения на лету
+   * Пересоздание и принудительное обновление текстуры в памяти WebGL
    */
   private refreshDarkeningTexture(): void {
     if (!this.darkeningSprite) return;
@@ -185,23 +191,24 @@ export class OceanCurrentsManager {
     if (ctx) {
       if (this.maskCanvas) {
         // 1. Применяем размытие для мягкого градиента у берега
-        ctx.filter = `blur(${this.overlayBlur}px)`;
+        if (this.overlayBlur > 0) {
+          ctx.filter = `blur(${this.overlayBlur}px)`;
+        }
 
-        // 2. Рисуем маску океана
+        // 2. Рисуем белый силуэт маски океана
         ctx.drawImage(this.maskCanvas, 0, 0, this.MASK_SIZE, this.MASK_SIZE);
-
-        // 3. Закрашиваем силуэт океана темным сине-черным цветом
-        ctx.globalCompositeOperation = 'source-in';
-        ctx.fillStyle = `rgba(5, 12, 28, ${this.overlayOpacity})`;
-        ctx.fillRect(0, 0, this.MASK_SIZE, this.MASK_SIZE);
       } else {
         // Временный прямоугольник пока маска загружается
-        ctx.fillStyle = `rgba(5, 12, 28, ${this.overlayOpacity})`;
+        ctx.fillStyle = '#FFFFFF';
         ctx.fillRect(0, 0, this.MASK_SIZE, this.MASK_SIZE);
       }
     }
 
-    this.darkeningSprite.texture = PIXI.Texture.from(renderCanvas);
+    const texture = PIXI.Texture.from(renderCanvas);
+    texture.update(); // Отправляем обновленные пиксели прямиком на видеокарту
+
+    this.darkeningSprite.texture = texture;
+    this.darkeningSprite.tint = 0x050C1C;
   }
 
   /**
@@ -210,7 +217,7 @@ export class OceanCurrentsManager {
   public updateDarkening(deltaSeconds: number, showCurrents: boolean, fadeSpeed: number = 2.5): void {
     if (!this.darkeningSprite) return;
 
-    const targetAlpha = showCurrents ? 1.0 : 0.0;
+    const targetAlpha = showCurrents ? this.overlayOpacity : 0.0;
 
     if (showCurrents) {
       this.darkeningSprite.visible = true;
