@@ -1,3 +1,5 @@
+// src/simulation/OceanCurrentsManager.ts
+
 import * as PIXI from 'pixi.js';
 
 export interface ShorePoint {
@@ -289,13 +291,39 @@ export class OceanCurrentsManager {
     }
   }
 
+  /**
+   * ПРОВЕРКА: Является ли точка водой
+   */
+  public isWater(x: number, y: number): boolean {
+    if (!this.maskData) {
+      return true; // Пока маска не загружена -- считаем весь мир доступным
+    }
+    if (x < 0 || x >= this.worldWidth || y < 0 || y >= this.worldHeight) return false;
+
+    const gx = Math.floor((x / this.worldWidth) * this.MASK_SIZE);
+    const gy = Math.floor((y / this.worldHeight) * this.MASK_SIZE);
+    const index = (gy * this.MASK_SIZE + gx) * 4;
+
+    const r = this.maskData[index];
+    const g = this.maskData[index + 1];
+    const b = this.maskData[index + 2];
+    const a = this.maskData[index + 3];
+
+    // Любой видимый и не-чёрный пиксель = вода
+    return a > 50 && (r > 30 || g > 30 || b > 30);
+  }
+
+  /**
+   * ПОЛУЧЕНИЕ ТИПА ЗОНЫ В КООРДИНАТЕ
+   */
   public getZoneAt(x: number, y: number): CurrentZoneType | null {
     if (!this.maskData) {
       if (y < this.worldHeight * 0.33) return CurrentZoneType.COLD;
       if (y < this.worldHeight * 0.66) return CurrentZoneType.DEEP;
       return CurrentZoneType.WARM;
     }
-    if (x < 0 || x >= this.worldWidth || y < 0 || y >= this.worldHeight) return null;
+
+    if (!this.isWater(x, y)) return null;
 
     const gx = Math.floor((x / this.worldWidth) * this.MASK_SIZE);
     const gy = Math.floor((y / this.worldHeight) * this.MASK_SIZE);
@@ -305,18 +333,32 @@ export class OceanCurrentsManager {
     const g = this.maskData[index + 1];
     const b = this.maskData[index + 2];
 
-    if (r > 100 && b > 150 && g < 50) return CurrentZoneType.DEEP;
-    if (b > 180 && r < 50 && g < 50) return CurrentZoneType.COLD;
-    if (r > 200 && g > 40 && b < 50) return CurrentZoneType.WARM;
+    // 1. Попытка определить по цветам поверхностной маски
+    if (r > 100 && b > 150 && g < 100) return CurrentZoneType.DEEP; // Фиолетовый
+    if (b > 150 && r < 100 && g < 100) return CurrentZoneType.COLD;  // Синий
+    if (r > 180 && g > 40 && b < 100) return CurrentZoneType.WARM;   // Оранжевый
 
-    // Если маска бинарная (чисто белая 255,255,255)
-    if (r > 200 && g > 200 && b > 200) return CurrentZoneType.DEEP;
-
-    return null;
+    // 2. Фолбэк (для бинарной/белой маски или нетипичных градаций цвета): делим по широте Y
+    if (y < this.worldHeight * 0.33) return CurrentZoneType.COLD;
+    if (y < this.worldHeight * 0.66) return CurrentZoneType.DEEP;
+    return CurrentZoneType.WARM;
   }
 
-  public isWater(x: number, y: number): boolean {
-    return this.getZoneAt(x, y) !== null;
+  /**
+   * ПОЛУЧЕНИЕ ПОЛНЫХ ДАННЫХ О ТЕЧЕНИИ ДЛЯ ОВЕРЛЕЕВ И ЧАСТИЦ
+   */
+  public getCurrentAt(x: number, y: number): CurrentData {
+    const isWater = this.isWater(x, y);
+    const zone = isWater ? this.getZoneAt(x, y) : null;
+    const fallbackZone = zone || CurrentZoneType.DEEP;
+
+    return {
+      vx: 0,
+      vy: 0,
+      zoneType: zone,
+      targetColor: ZONE_COLOR_MAP[fallbackZone],
+      isWater: isWater
+    };
   }
 
   public getInitialParticlesForZone(zone: CurrentZoneType, count: number): Point2D[] {
