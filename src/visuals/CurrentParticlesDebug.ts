@@ -16,6 +16,13 @@ interface Particle {
   immunityTimer: number; // Защита от мгновенного повторного угасания после спавна
 }
 
+interface Vortex {
+  x: number;
+  y: number;
+  radius: number;
+  strength: number; // Положительное -- по часовой, отрицательное -- против часовой
+}
+
 export class CurrentParticlesDebug {
   public container: PIXI.Container;
   private particles: Particle[] = [];
@@ -34,16 +41,22 @@ export class CurrentParticlesDebug {
   // --- Параметры Spatial Grid & Flocking ---
   private readonly CELL_SIZE = 200;
   private readonly ALIGNMENT_RADIUS_SQ = 180 * 180;
-  private readonly FLOCKING_STRENGTH = 0.12; // Сила подстройки направления
+  private readonly SEPARATION_RADIUS_SQ = 60 * 60; // Радиус расталкивания для устранения тонких линий
+
+  private readonly FLOCKING_STRENGTH = 0.10;  // Сила выравнивания
+  private readonly SEPARATION_STRENGTH = 0.25; // Сила отталкивания параллельно идущих частиц
 
   // --- Параметры контроля плотности и угасания ---
-  private readonly DENSITY_THRESHOLD = 12;   // Порог соседей, при превышении которого частица начинает растворяться
+  private readonly DENSITY_THRESHOLD = 14;   // Порог соседей, при превышении которого частица растворяется
   private readonly FADE_SPEED = 1.5;          // Скорость анимации Fade In / Fade Out (альфа в сек)
   private readonly IMMUNITY_DURATION = 3.0;   // Время иммунитета (сек) после респавна
 
   private gridCols: number;
   private gridRows: number;
   private spatialGrid: Particle[][];
+
+  // --- Сетка искусственных водоворотов ---
+  private vortices: Vortex[] = [];
 
   constructor(currentsManager: OceanCurrentsManager, count: number = 2400) {
     this.currentsManager = currentsManager;
@@ -57,9 +70,27 @@ export class CurrentParticlesDebug {
       this.spatialGrid[i] = [];
     }
 
+    // Создаем сетку из 45 разбросанных водоворотов
+    this.generateVortices(45);
+
     // Генерируем текстуру кометы (64px x 8px) с градиентным хвостом
     this.particleTexture = this.generateCometTexture(64, 8);
     this.initParticles(count);
+  }
+
+  /**
+   * Генерация случайных разнонаправленных водоворотов по карте
+   */
+  private generateVortices(count: number): void {
+    this.vortices = [];
+    for (let i = 0; i < count; i++) {
+      this.vortices.push({
+        x: Math.random() * this.worldSize,
+        y: Math.random() * this.worldSize,
+        radius: 300 + Math.random() * 500, // Радиус зоны закручивания (300-800px)
+        strength: (Math.random() > 0.5 ? 1 : -1) * (40 + Math.random() * 80) // Сила и направление вращения
+      });
+    }
   }
 
   /**
@@ -107,8 +138,6 @@ export class CurrentParticlesDebug {
         sprite.anchor.set(1.0, 0.5);
 
         const lengthScale = 0.8 + Math.random() * 1.7;
-
-        // Случайный вектор направления при создании (360 градусов)
         const angle = Math.random() * Math.PI * 2;
 
         this.container.addChild(sprite);
@@ -170,14 +199,16 @@ export class CurrentParticlesDebug {
   }
 
   /**
-   * Расчет коллективного влияния (Alignment) и детекция перенаселения (туч)
+   * Расчет Flocking (Alignment) + Separation (Разбиение линий отталкиванием)
    */
-  private applyFlocking(p: Particle): { vx: number; vy: number } {
+  private applyFlockingAndSeparation(p: Particle): { vx: number; vy: number } {
     const cx = Math.floor(p.x / this.CELL_SIZE);
     const cy = Math.floor(p.y / this.CELL_SIZE);
 
     let sumVx = 0;
     let sumVy = 0;
+    let separateX = 0;
+    let separateY = 0;
     let neighborCount = 0;
 
     const minX = Math.max(0, cx - 1);
@@ -195,36 +226,79 @@ export class CurrentParticlesDebug {
 
           // Считаем только соседей ТОГО ЖЕ ТИПА зоны
           if (other !== p && other.zone === p.zone) {
-            const dx = other.x - p.x;
-            const dy = other.y - p.y;
+            const dx = p.x - other.x;
+            const dy = p.y - other.y;
             const distSq = dx * dx + dy * dy;
 
             if (distSq < this.ALIGNMENT_RADIUS_SQ && distSq > 0.0001) {
               sumVx += other.vx;
               sumVy += other.vy;
               neighborCount++;
+
+              // Separation: расталкивание близких соседей для расширения однорядных потоков
+              if (distSq < this.SEPARATION_RADIUS_SQ) {
+                const dist = Math.sqrt(distSq);
+                separateX += (dx / dist) * (this.SEPARATION_RADIUS_SQ - distSq);
+                separateY += (dy / dist) * (this.SEPARATION_RADIUS_SQ - distSq);
+              }
             }
           }
         }
       }
     }
 
-    // ТРИГГЕР ТУЧИ: если вокруг слишком много соседей и нет иммунитета -- запускаем угасание
+    // ТРИГГЕР ТУЧИ: растворяем частицу при перенаселении
     if (neighborCount >= this.DENSITY_THRESHOLD && p.immunityTimer <= 0 && !p.isDying) {
       p.isDying = true;
     }
 
+    let resultVx = p.vx;
+    let resultVy = p.vy;
+
     if (neighborCount > 0) {
       const avgVx = sumVx / neighborCount;
       const avgVy = sumVy / neighborCount;
-
-      const blendedVx = p.vx + (avgVx - p.vx) * this.FLOCKING_STRENGTH;
-      const blendedVy = p.vy + (avgVy - p.vy) * this.FLOCKING_STRENGTH;
-
-      return { vx: blendedVx, vy: blendedVy };
+      resultVx += (avgVx - p.vx) * this.FLOCKING_STRENGTH;
+      resultVy += (avgVy - p.vy) * this.FLOCKING_STRENGTH;
     }
 
-    return { vx: p.vx, vy: p.vy };
+    // Применяем отталкивание
+    resultVx += separateX * this.SEPARATION_STRENGTH * 0.001;
+    resultVy += separateY * this.SEPARATION_STRENGTH * 0.001;
+
+    return { vx: resultVx, vy: resultVy };
+  }
+
+  /**
+   * Наложение касательного вектора вращения водоворотов
+   */
+  private applyVortices(x: number, y: number, vx: number, vy: number): { vx: number; vy: number } {
+    let vortexVx = 0;
+    let vortexVy = 0;
+
+    for (let i = 0; i < this.vortices.length; i++) {
+      const v = this.vortices[i];
+      const dx = x - v.x;
+      const dy = y - v.y;
+      const distSq = dx * dx + dy * dy;
+
+      if (distSq < v.radius * v.radius && distSq > 1.0) {
+        const dist = Math.sqrt(distSq);
+        const factor = 1.0 - dist / v.radius; // Усиление к центру водоворота
+
+        // Тангенциальный (касательный) вектор
+        const tangentX = -dy / dist;
+        const tangentY = dx / dist;
+
+        vortexVx += tangentX * v.strength * factor;
+        vortexVy += tangentY * v.strength * factor;
+      }
+    }
+
+    return {
+      vx: vx + vortexVx,
+      vy: vy + vortexVy
+    };
   }
 
   public update(deltaSeconds: number): void {
@@ -249,10 +323,13 @@ export class CurrentParticlesDebug {
         p.immunityTimer -= deltaSeconds;
       }
 
-      // 1. Применяем Flocking и проверяем плотность
-      const flockedDir = this.applyFlocking(p);
+      // 1. Выравнивание (Alignment) + Расталкивание (Separation)
+      const flockingDir = this.applyFlockingAndSeparation(p);
 
-      // 2. Управление прозрачностью (Fade In / Fade Out) и респавн
+      // 2. Влияние поля водоворотов
+      const swirlingDir = this.applyVortices(p.x, p.y, flockingDir.vx, flockingDir.vy);
+
+      // 3. Управление прозрачностью (Fade In / Fade Out) и респавн
       if (p.isDying) {
         p.alpha -= this.FADE_SPEED * deltaSeconds;
         if (p.alpha <= 0) {
@@ -266,12 +343,12 @@ export class CurrentParticlesDebug {
         }
       }
 
-      // 3. Физика движения и выталкивание из чужих зон обратно в свою
+      // 4. Физика основного менеджера течений
       const current = this.currentsManager.getCurrentVectorForParticle(
         p.x,
         p.y,
-        flockedDir.vx,
-        flockedDir.vy,
+        swirlingDir.vx,
+        swirlingDir.vy,
         p.zone
       );
 
@@ -281,7 +358,7 @@ export class CurrentParticlesDebug {
       p.x += p.vx * deltaSeconds;
       p.y += p.vy * deltaSeconds;
 
-      // 4. Отскок от крайних границ карты
+      // 5. Отскок от крайних границ карты
       if (p.x <= 0) { p.x = 0; p.vx = Math.abs(p.vx); }
       if (p.x >= this.worldSize) { p.x = this.worldSize; p.vx = -Math.abs(p.vx); }
       if (p.y <= 0) { p.y = 0; p.vy = Math.abs(p.vy); }
