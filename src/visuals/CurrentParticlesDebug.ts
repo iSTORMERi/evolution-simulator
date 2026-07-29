@@ -9,6 +9,11 @@ interface Particle {
   zone: CurrentZoneType;
   lengthScale: number; // Индивидуальный множитель длины
   sprite: PIXI.Sprite;
+
+  // Параметры для плавного угасания и спавна
+  alpha: number;
+  isDying: boolean;
+  immunityTimer: number; // Защита от мгновенного повторного угасания после спавна
 }
 
 export class CurrentParticlesDebug {
@@ -28,18 +33,13 @@ export class CurrentParticlesDebug {
 
   // --- Параметры Spatial Grid & Flocking ---
   private readonly CELL_SIZE = 200;
-  
-  // Выравнивание (Alignment)
   private readonly ALIGNMENT_RADIUS_SQ = 180 * 180;
   private readonly FLOCKING_STRENGTH = 0.12; // Сила подстройки направления
 
-  // Отталкивание (Separation)
-  private readonly SEPARATION_RADIUS = 45; // Минимальный комфортный радиус между частицами
-  private readonly SEPARATION_RADIUS_SQ = 45 * 45;
-  private readonly SEPARATION_STRENGTH = 0.45; // Сила выталкивания при сближении
-
-  // Лимит плотности (Density Limit)
-  private readonly MAX_NEIGHBORS = 8; // Максимальное число соседей для влияния
+  // --- Параметры контроля плотности и угасания ---
+  private readonly DENSITY_THRESHOLD = 12;   // Порог соседей, при превышении которого частица начинает растворяться
+  private readonly FADE_SPEED = 1.5;          // Скорость анимации Fade In / Fade Out (альфа в сек)
+  private readonly IMMUNITY_DURATION = 3.0;   // Время иммунитета (сек) после респавна
 
   private gridCols: number;
   private gridRows: number;
@@ -119,18 +119,21 @@ export class CurrentParticlesDebug {
           vy: Math.sin(angle),
           zone,
           lengthScale,
-          sprite
+          sprite,
+          alpha: Math.random() * 0.85,
+          isDying: false,
+          immunityTimer: Math.random() * this.IMMUNITY_DURATION
         });
       }
     }
   }
 
   /**
-   * Единоразовое позиционирование при полной загрузке маски
+   * Сброс/респавн частицы в случайной точке её зоны с новым вектором
    */
   private relocateToZone(p: Particle): void {
     const pts = this.currentsManager.getInitialParticlesForZone(p.zone, 1);
-    const pos = pts[0] || { x: p.x, y: p.y };
+    const pos = pts[0] || { x: this.worldSize * 0.5, y: this.worldSize * 0.5 };
 
     p.x = pos.x;
     p.y = pos.y;
@@ -139,6 +142,9 @@ export class CurrentParticlesDebug {
     p.vx = Math.cos(angle);
     p.vy = Math.sin(angle);
     p.sprite.position.set(p.x, p.y);
+
+    p.isDying = false;
+    p.immunityTimer = this.IMMUNITY_DURATION;
   }
 
   // --- Методы Spatial Grid ---
@@ -164,9 +170,7 @@ export class CurrentParticlesDebug {
   }
 
   /**
-   * Расчет коллективного влияния:
-   * 1. Alignment (выравнивание векторов) с лимитом MAX_NEIGHBORS
-   * 2. Separation (отталкивание при критическом сближении)
+   * Расчет коллективного влияния (Alignment) и детекция перенаселения (туч)
    */
   private applyFlocking(p: Particle): { vx: number; vy: number } {
     const cx = Math.floor(p.x / this.CELL_SIZE);
@@ -174,8 +178,6 @@ export class CurrentParticlesDebug {
 
     let sumVx = 0;
     let sumVy = 0;
-    let separationVx = 0;
-    let separationVy = 0;
     let neighborCount = 0;
 
     const minX = Math.max(0, cx - 1);
@@ -197,17 +199,7 @@ export class CurrentParticlesDebug {
             const dy = other.y - p.y;
             const distSq = dx * dx + dy * dy;
 
-            // --- 1. Separation (Сила отталкивания при слишком плотном сближении) ---
-            if (distSq < this.SEPARATION_RADIUS_SQ && distSq > 0.0001) {
-              const dist = Math.sqrt(distSq);
-              // Чем ближе сосед, тем сильнее импульс отталкивания
-              const force = (this.SEPARATION_RADIUS - dist) / this.SEPARATION_RADIUS;
-              separationVx -= (dx / dist) * force;
-              separationVy -= (dy / dist) * force;
-            }
-
-            // --- 2. Alignment (Выравнивание направления с лимитом соседей) ---
-            if (distSq < this.ALIGNMENT_RADIUS_SQ && distSq > 0.0001 && neighborCount < this.MAX_NEIGHBORS) {
+            if (distSq < this.ALIGNMENT_RADIUS_SQ && distSq > 0.0001) {
               sumVx += other.vx;
               sumVy += other.vy;
               neighborCount++;
@@ -217,22 +209,22 @@ export class CurrentParticlesDebug {
       }
     }
 
-    let targetVx = p.vx;
-    let targetVy = p.vy;
+    // ТРИГГЕР ТУЧИ: если вокруг слишком много соседей и нет иммунитета -- запускаем угасание
+    if (neighborCount >= this.DENSITY_THRESHOLD && p.immunityTimer <= 0 && !p.isDying) {
+      p.isDying = true;
+    }
 
-    // Смешивание вектора выравнивания
     if (neighborCount > 0) {
       const avgVx = sumVx / neighborCount;
       const avgVy = sumVy / neighborCount;
-      targetVx += (avgVx - targetVx) * this.FLOCKING_STRENGTH;
-      targetVy += (avgVy - targetVy) * this.FLOCKING_STRENGTH;
+
+      const blendedVx = p.vx + (avgVx - p.vx) * this.FLOCKING_STRENGTH;
+      const blendedVy = p.vy + (avgVy - p.vy) * this.FLOCKING_STRENGTH;
+
+      return { vx: blendedVx, vy: blendedVy };
     }
 
-    // Применение силы отталкивания
-    targetVx += separationVx * this.SEPARATION_STRENGTH;
-    targetVy += separationVy * this.SEPARATION_STRENGTH;
-
-    return { vx: targetVx, vy: targetVy };
+    return { vx: p.vx, vy: p.vy };
   }
 
   public update(deltaSeconds: number): void {
@@ -252,10 +244,29 @@ export class CurrentParticlesDebug {
     for (let i = 0; i < total; i++) {
       const p = this.particles[i];
 
-      // 1. Применяем Flocking (Alignment + Separation)
+      // Уменьшаем таймер иммунитета
+      if (p.immunityTimer > 0) {
+        p.immunityTimer -= deltaSeconds;
+      }
+
+      // 1. Применяем Flocking и проверяем плотность
       const flockedDir = this.applyFlocking(p);
 
-      // 2. Физика движения и выталкивание из чужих зон обратно в свою
+      // 2. Управление прозрачностью (Fade In / Fade Out) и респавн
+      if (p.isDying) {
+        p.alpha -= this.FADE_SPEED * deltaSeconds;
+        if (p.alpha <= 0) {
+          p.alpha = 0;
+          this.relocateToZone(p); // Переспавн в случайной точке океана
+        }
+      } else {
+        if (p.alpha < 0.85) {
+          p.alpha += this.FADE_SPEED * deltaSeconds;
+          if (p.alpha > 0.85) p.alpha = 0.85;
+        }
+      }
+
+      // 3. Физика движения и выталкивание из чужих зон обратно в свою
       const current = this.currentsManager.getCurrentVectorForParticle(
         p.x,
         p.y,
@@ -270,7 +281,7 @@ export class CurrentParticlesDebug {
       p.x += p.vx * deltaSeconds;
       p.y += p.vy * deltaSeconds;
 
-      // 3. Отскок от крайних границ карты (без уничтожения/спавна)
+      // 4. Отскок от крайних границ карты
       if (p.x <= 0) { p.x = 0; p.vx = Math.abs(p.vx); }
       if (p.x >= this.worldSize) { p.x = this.worldSize; p.vx = -Math.abs(p.vx); }
       if (p.y <= 0) { p.y = 0; p.vy = Math.abs(p.vy); }
@@ -287,8 +298,8 @@ export class CurrentParticlesDebug {
       p.sprite.scale.x = p.lengthScale * currentSpeedFactor;
       p.sprite.scale.y = 1.0;
 
-      // Постоянная видимость частицы
-      p.sprite.alpha = 0.85;
+      // Применение текущей прозрачности спрайта
+      p.sprite.alpha = p.alpha;
 
       // Окрашивание в цвет своей зоны
       switch (p.zone) {
