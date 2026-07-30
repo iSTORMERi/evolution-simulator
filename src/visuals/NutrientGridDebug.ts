@@ -6,26 +6,27 @@ import { NutrientGrid } from '../simulation/NutrientGrid';
 export class NutrientGridDebug {
   public container: PIXI.Container;
   private backgroundOverlay: PIXI.Graphics;
-  private tilingSprite: PIXI.TilingSprite | null = null;
+  private gridGraphics: PIXI.Graphics;
   private nutrientGrid: NutrientGrid;
-  private app: PIXI.Application;
 
-  constructor(nutrientGrid: NutrientGrid, app: PIXI.Application) {
+  constructor(nutrientGrid: NutrientGrid) {
     this.nutrientGrid = nutrientGrid;
-    this.app = app;
-
     this.container = new PIXI.Container();
     this.container.visible = false;
 
-    // Затемнение подложки
     this.backgroundOverlay = new PIXI.Graphics();
-    this.renderOverlay();
-    this.container.addChild(this.backgroundOverlay);
+    this.gridGraphics = new PIXI.Graphics();
 
-    // Создаем стабильную сетку через TilingSprite
-    this.createTilingGrid();
+    this.container.addChild(this.backgroundOverlay);
+    this.container.addChild(this.gridGraphics);
+
+    this.renderOverlay();
+    this.renderGrid();
   }
 
+  /**
+   * Затемнение подложки океана (8000x8000)
+   */
   private renderOverlay(): void {
     this.backgroundOverlay.clear();
     const g = this.backgroundOverlay as any;
@@ -41,43 +42,52 @@ export class NutrientGridDebug {
   }
 
   /**
-   * Генерация идеальной бесконечной сетки без применения векторных линий
+   * Отрисовка 81x81 сплошных сквозных линий игрового мира
    */
-  private createTilingGrid(): void {
-    const cellSize = this.nutrientGrid.CELL_SIZE; // 100px
+  public renderGrid(): void {
+    this.gridGraphics.clear();
 
-    // 1. Рисуем ОДНУ ячейку 100x100 во временную графику
-    const cellGraphic = new PIXI.Graphics();
-    const g = cellGraphic as any;
+    const worldSize = this.nutrientGrid.WORLD_SIZE; // 8000
+    const cellSize = this.nutrientGrid.CELL_SIZE;   // 100
+    const numCells = Math.round(worldSize / cellSize); // 80
 
-    if (typeof g.rect === 'function') {
-      g.rect(0, 0, cellSize, cellSize);
-      g.stroke({ width: 1, color: 0x00e5ff, alpha: 0.35 });
-    } else {
-      g.lineStyle(1, 0x00e5ff, 0.35);
-      g.drawRect(0, 0, cellSize, cellSize);
+    const g = this.gridGraphics as any;
+    const isV8 = typeof g.moveTo === 'function';
+
+    // 1. Сплошные горизонтальные линии (y: 0, 100, 200 ... 8000)
+    for (let i = 0; i <= numCells; i++) {
+      const y = i * cellSize;
+      if (isV8) {
+        g.moveTo(0, y);
+        g.lineTo(worldSize, y);
+      } else {
+        g.lineStyle(1, 0x00e5ff, 0.3);
+        g.moveTo(0, y);
+        g.lineTo(worldSize, y);
+      }
     }
 
-    // 2. Генерируем из неё растровую текстуру
-    const texture = this.app.renderer.generateTexture(cellGraphic);
-    cellGraphic.destroy();
+    // 2. Сплошные вертикальные линии (x: 0, 100, 200 ... 8000)
+    for (let i = 0; i <= numCells; i++) {
+      const x = i * cellSize;
+      if (isV8) {
+        g.moveTo(x, 0);
+        g.lineTo(x, worldSize);
+      } else {
+        g.lineStyle(1, 0x00e5ff, 0.3);
+        g.moveTo(x, 0);
+        g.lineTo(x, worldSize);
+      }
+    }
 
-    // 3. Создаем TilingSprite на всю карту (8000x8000)
-    if (typeof (PIXI as any).TilingSprite === 'function') {
-      this.tilingSprite = new (PIXI as any).TilingSprite({
-        texture: texture,
-        width: this.nutrientGrid.WORLD_SIZE,
-        height: this.nutrientGrid.WORLD_SIZE,
+    // Запекаем линии в единый stroke для PixiJS v8
+    if (typeof g.stroke === 'function') {
+      g.stroke({
+        width: 1,
+        color: 0x00e5ff,
+        alpha: 0.3,
       });
-    } else {
-      this.tilingSprite = new PIXI.TilingSprite(
-        texture,
-        this.nutrientGrid.WORLD_SIZE,
-        this.nutrientGrid.WORLD_SIZE
-      );
     }
-
-    this.container.addChild(this.tilingSprite);
   }
 
   public setVisible(visible: boolean): void {

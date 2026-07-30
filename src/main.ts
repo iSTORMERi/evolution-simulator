@@ -108,9 +108,9 @@ async function initApp() {
       debugParticles.container.visible = visible;
     });
 
-    // 1.3. Инициализация сетки нутриентов и её UI (передаём app в конструктор)
+    // 1.3. Инициализация сетки нутриентов и её UI
     const nutrientGrid = new NutrientGrid(oceanCurrents);
-    const nutrientGridDebug = new NutrientGridDebug(nutrientGrid, app);
+    const nutrientGridDebug = new NutrientGridDebug(nutrientGrid);
     
     // Сетка располагается под частицами течений (zIndex 98)
     nutrientGridDebug.container.zIndex = 98;
