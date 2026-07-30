@@ -108,13 +108,11 @@ async function initApp() {
       debugParticles.container.visible = visible;
     });
 
-    // 1.3. Инициализация сетки нутриентов и её UI
+    // 1.3. Инициализация сетки нутриентов в Screen-Space (добавляем напрямую в app.stage)
     const nutrientGrid = new NutrientGrid(oceanCurrents);
-    const nutrientGridDebug = new NutrientGridDebug(nutrientGrid);
+    const nutrientGridDebug = new NutrientGridDebug(nutrientGrid, app, worldMap.container);
     
-    // Сетка располагается под частицами течений (zIndex 98)
-    nutrientGridDebug.container.zIndex = 98;
-    worldMap.container.addChild(nutrientGridDebug.container);
+    app.stage.addChild(nutrientGridDebug.container);
 
     // Монтируем кнопку управления сеткой в UI
     new NutrientGridToggleUI(nutrientGridDebug);
@@ -144,6 +142,9 @@ async function initApp() {
       if (debugParticles.container.visible) {
         debugParticles.update(deltaSeconds);
       }
+
+      // Перерисовываем отсеченную сетку строго в экранных пикселях без дробных WebGL-искажений
+      nutrientGridDebug.update();
 
       // Синхронизируем состояние дня/ночи на карте
       if (typeof (lightingController as any).getCurrentHours === 'function') {
