@@ -39,6 +39,7 @@ interface Vortex {
   x: number;
   y: number;
   radius: number;
+  radiusSq: number; // Предрассчитанный квадрат радиуса для быстрого сравнения
   strength: number; // Положительное -- по часовой, отрицательное -- против часовой
 }
 
@@ -86,6 +87,10 @@ export class CurrentParticlesDebug {
   // --- Сетка искусственных водоворотов ---
   private vortices: Vortex[] = [];
 
+  // Переиспользуемые векторы для исключения аллокаций памяти в цикле
+  private flockingVector = { vx: 0, vy: 0 };
+  private swirlingVector = { vx: 0, vy: 0 };
+
   constructor(currentsManager: OceanCurrentsManager, totalCount: number = 10000) {
     this.currentsManager = currentsManager;
     this.container = new PIXI.Container();
@@ -105,10 +110,12 @@ export class CurrentParticlesDebug {
   private generateVortices(count: number): void {
     this.vortices = [];
     for (let i = 0; i < count; i++) {
+      const radius = 300 + Math.random() * 500;
       this.vortices.push({
         x: Math.random() * this.worldSize,
         y: Math.random() * this.worldSize,
-        radius: 300 + Math.random() * 500,
+        radius,
+        radiusSq: radius * radius,
         strength: (Math.random() > 0.5 ? 1 : -1) * (40 + Math.random() * 80)
       });
     }
@@ -222,7 +229,7 @@ export class CurrentParticlesDebug {
     }
   }
 
-  private applyFlockingAndSeparation(p: Particle): { vx: number; vy: number } {
+  private applyFlockingAndSeparation(p: Particle, out: { vx: number; vy: number }): void {
     const cx = Math.floor(p.x / this.CELL_SIZE);
     const cy = Math.floor(p.y / this.CELL_SIZE);
 
@@ -232,17 +239,18 @@ export class CurrentParticlesDebug {
     let separateY = 0;
     let neighborCount = 0;
 
-    const minX = Math.max(0, cx - 1);
-    const maxX = Math.min(this.gridCols - 1, cx + 1);
-    const minY = Math.max(0, cy - 1);
-    const maxY = Math.min(this.gridRows - 1, cy + 1);
+    const minX = cx > 0 ? cx - 1 : 0;
+    const maxX = cx < this.gridCols - 1 ? cx + 1 : this.gridCols - 1;
+    const minY = cy > 0 ? cy - 1 : 0;
+    const maxY = cy < this.gridRows - 1 ? cy + 1 : this.gridRows - 1;
 
     for (let y = minY; y <= maxY; y++) {
+      const rowOffset = y * this.gridCols;
       for (let x = minX; x <= maxX; x++) {
-        const cellIndex = y * this.gridCols + x;
-        const cell = this.spatialGrid[cellIndex];
+        const cell = this.spatialGrid[rowOffset + x];
+        const len = cell.length;
 
-        for (let i = 0; i < cell.length; i++) {
+        for (let i = 0; i < len; i++) {
           const other = cell[i];
 
           if (other !== p && other.zone === p.zone) {
@@ -257,8 +265,9 @@ export class CurrentParticlesDebug {
 
               if (distSq < this.SEPARATION_RADIUS_SQ) {
                 const dist = Math.sqrt(distSq);
-                separateX += (dx / dist) * (this.SEPARATION_RADIUS_SQ - distSq);
-                separateY += (dy / dist) * (this.SEPARATION_RADIUS_SQ - distSq);
+                const factor = (this.SEPARATION_RADIUS_SQ - distSq) / dist;
+                separateX += dx * factor;
+                separateY += dy * factor;
               }
             }
           }
@@ -280,38 +289,35 @@ export class CurrentParticlesDebug {
       resultVy += (avgVy - p.vy) * this.FLOCKING_STRENGTH;
     }
 
-    resultVx += separateX * this.SEPARATION_STRENGTH * 0.001;
-    resultVy += separateY * this.SEPARATION_STRENGTH * 0.001;
-
-    return { vx: resultVx, vy: resultVy };
+    out.vx = resultVx + separateX * this.SEPARATION_STRENGTH * 0.001;
+    out.vy = resultVy + separateY * this.SEPARATION_STRENGTH * 0.001;
   }
 
-  private applyVortices(x: number, y: number, vx: number, vy: number): { vx: number; vy: number } {
+  private applyVortices(x: number, y: number, inVx: number, inVy: number, out: { vx: number; vy: number }): void {
     let vortexVx = 0;
     let vortexVy = 0;
+    const count = this.vortices.length;
 
-    for (let i = 0; i < this.vortices.length; i++) {
+    for (let i = 0; i < count; i++) {
       const v = this.vortices[i];
       const dx = x - v.x;
       const dy = y - v.y;
+
+      // Быстрая проверка границ (Bounding Box)
+      if (Math.abs(dx) >= v.radius || Math.abs(dy) >= v.radius) continue;
+
       const distSq = dx * dx + dy * dy;
-
-      if (distSq < v.radius * v.radius && distSq > 1.0) {
+      if (distSq < v.radiusSq && distSq > 1.0) {
         const dist = Math.sqrt(distSq);
-        const factor = 1.0 - dist / v.radius;
+        const factor = (1.0 - dist / v.radius) * v.strength / dist;
 
-        const tangentX = -dy / dist;
-        const tangentY = dx / dist;
-
-        vortexVx += tangentX * v.strength * factor;
-        vortexVy += tangentY * v.strength * factor;
+        vortexVx += -dy * factor;
+        vortexVy += dx * factor;
       }
     }
 
-    return {
-      vx: vx + vortexVx,
-      vy: vy + vortexVy
-    };
+    out.vx = inVx + vortexVx;
+    out.vy = inVy + vortexVy;
   }
 
   public update(deltaSeconds: number): void {
@@ -339,15 +345,19 @@ export class CurrentParticlesDebug {
       
       if (upwellingZone === 'ENTRY' && !p.isUpwelling && !p.isDownwelling) {
         if (p.zone === CurrentZoneType.DEEP || p.zone === CurrentZoneType.COLD) {
-          // 📉 Снижено с 0.10 до 0.02 (2% шанс в секунду)
           if (Math.random() < 0.02 * deltaSeconds) {
             p.isUpwelling = true;
             p.upwellingOrigin = p.zone;
 
             if (p.zone === CurrentZoneType.COLD) {
-              const distToTopRight = Math.hypot(this.worldSize - p.x, 0 - p.y);
-              const distToBottomLeft = Math.hypot(0 - p.x, this.worldSize - p.y);
-              
+              const dxTop = this.worldSize - p.x;
+              const dyTop = -p.y;
+              const distToTopRight = Math.sqrt(dxTop * dxTop + dyTop * dyTop);
+
+              const dxBot = -p.x;
+              const dyBot = this.worldSize - p.y;
+              const distToBottomLeft = Math.sqrt(dxBot * dxBot + dyBot * dyBot);
+
               p.upwellingTarget = distToTopRight < distToBottomLeft 
                 ? { x: this.worldSize, y: this.worldSize * 0.1 } 
                 : { x: this.worldSize * 0.32, y: this.worldSize };
@@ -363,12 +373,10 @@ export class CurrentParticlesDebug {
 
       if (downwellingZone === 'ENTRY' && !p.isDownwelling && !p.isUpwelling) {
         if (p.zone === CurrentZoneType.WARM || p.zone === CurrentZoneType.COLD) {
-          // 📉 Снижено с 0.10 до 0.02 (2% шанс в секунду)
           if (Math.random() < 0.02 * deltaSeconds) {
             p.isDownwelling = true;
             p.downwellingOrigin = p.zone;
 
-            // Направление траектории погружения (влево-вверх)
             if (p.zone === CurrentZoneType.WARM) {
               p.downwellingTarget = { x: 0, y: this.worldSize * 0.4 };
             } else {
@@ -400,10 +408,8 @@ export class CurrentParticlesDebug {
         const mainZone = this.currentsManager.getZoneAt(p.x, p.y);
 
         if (p.downwellingOrigin === CurrentZoneType.WARM) {
-          // 🟠 WARM погружается в 🟣 DEEP с эффектом проникновения
           if (mainZone === CurrentZoneType.DEEP) {
             if (p.downwellingPenetrationTimer === undefined) {
-              // Инициализация случайной задержки (1.5 - 3.5 сек)
               p.downwellingPenetrationTimer = 1.5 + Math.random() * 2.0;
             } else {
               p.downwellingPenetrationTimer -= deltaSeconds;
@@ -415,7 +421,6 @@ export class CurrentParticlesDebug {
             }
           }
         } else if (p.downwellingOrigin === CurrentZoneType.COLD) {
-          // 🔵 COLD циркулирует и остается 🔵 COLD
           if (downwellingZone === 'EXIT' && mainZone === CurrentZoneType.COLD) {
             p.isDownwelling = false;
             p.zone = CurrentZoneType.COLD;
@@ -424,10 +429,10 @@ export class CurrentParticlesDebug {
       }
 
       // 1. Выравнивание + Расталкивание
-      const flockingDir = this.applyFlockingAndSeparation(p);
+      this.applyFlockingAndSeparation(p, this.flockingVector);
 
       // 2. Водовороты
-      const swirlingDir = this.applyVortices(p.x, p.y, flockingDir.vx, flockingDir.vy);
+      this.applyVortices(p.x, p.y, this.flockingVector.vx, this.flockingVector.vy, this.swirlingVector);
 
       // 3. Прозрачность и респавн
       if (p.isDying) {
@@ -452,7 +457,7 @@ export class CurrentParticlesDebug {
         if (p.upwellingTarget) {
           const dx = p.upwellingTarget.x - p.x;
           const dy = p.upwellingTarget.y - p.y;
-          const dist = Math.hypot(dx, dy);
+          const dist = Math.sqrt(dx * dx + dy * dy);
 
           if (dist > 1.0) {
             const dirX = (dx / dist) * 120;
@@ -474,7 +479,7 @@ export class CurrentParticlesDebug {
         if (p.downwellingTarget) {
           const dx = p.downwellingTarget.x - p.x;
           const dy = p.downwellingTarget.y - p.y;
-          const dist = Math.hypot(dx, dy);
+          const dist = Math.sqrt(dx * dx + dy * dy);
 
           if (dist > 1.0) {
             const dirX = (dx / dist) * 120;
@@ -492,8 +497,8 @@ export class CurrentParticlesDebug {
         const current = this.currentsManager.getCurrentVectorForParticle(
           p.x,
           p.y,
-          swirlingDir.vx,
-          swirlingDir.vy,
+          this.swirlingVector.vx,
+          this.swirlingVector.vy,
           p.zone
         );
 
@@ -512,7 +517,7 @@ export class CurrentParticlesDebug {
       if (p.y >= this.worldSize) { p.y = this.worldSize; p.vy = -Math.abs(p.vy); }
 
       // Поворот кометы
-      const speed = Math.hypot(p.vx, p.vy);
+      const speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
       if (speed > 0.01) {
         p.sprite.rotation = Math.atan2(p.vy, p.vx);
       }
