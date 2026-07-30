@@ -181,15 +181,18 @@ export class OceanCurrentsManager {
     const b = this.upwellingMaskData[index + 2];
     const a = this.upwellingMaskData[index + 3];
 
-    if (a <= 50) return null;
+    // Пропускаем прозрачные пиксели и сушу (черный цвет)
+    if (a <= 50 || (r < 20 && g < 20 && b < 20)) return null;
 
-    // Светло-зелёный / Ярко-зелёный пиксель = Зона выхода (EXIT)
-    if (g > 180 && r < 150 && b < 150) {
-      return 'EXIT';
-    }
+    // 🟢 Доминанта зелёного канала (зелёного явно больше, чем R и B)
+    const isGreenDominant = g > r + 15 && g > b + 15;
 
-    // Тёмно-зелёный пиксель = Зона входа/трансформации (ENTRY)
-    if (g > 70 && g <= 180 && r < 100 && b < 100) {
+    if (isGreenDominant) {
+      // Ярко-зелёный / Неоновый = Зона выхода (EXIT)
+      if (g > 160) {
+        return 'EXIT';
+      }
+      // Любой тёмный/средний зелёный = Зона входа/трансформации (ENTRY)
       return 'ENTRY';
     }
 

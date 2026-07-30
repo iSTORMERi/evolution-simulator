@@ -1,5 +1,12 @@
+// src/debug/CurrentParticlesDebug.ts
+
 import * as PIXI from 'pixi.js';
-import { OceanCurrentsManager, CurrentZoneType } from '../simulation/OceanCurrentsManager';
+import { 
+  OceanCurrentsManager, 
+  CurrentZoneType, 
+  ZONE_PARTICLE_COUNTS,
+  UPWELLING_COLOR 
+} from '../simulation/OceanCurrentsManager';
 
 interface Particle {
   x: number;
@@ -14,6 +21,9 @@ interface Particle {
   alpha: number;
   isDying: boolean;
   immunityTimer: number; // Защита от мгновенного повторного угасания после спавна
+
+  // 🟢 Состояние Апвеллинга
+  isUpwelling?: boolean;
 }
 
 interface Vortex {
@@ -31,9 +41,11 @@ export class CurrentParticlesDebug {
   private particleTexture: PIXI.Texture;
 
   // Цветовая палитра Layer 1 (HEX для PIXI)
-  private readonly colorDeep = 0x8a00ff; // 🟣 Фиолетовый (Глубоководное)
-  private readonly colorCold = 0x0000ff; // 🔵 Синий (Холодное)
-  private readonly colorWarm = 0xff5500; // 🟠 Оранжевый (Теплое)
+  private readonly colorDeep = 0x8a00ff;     // 🟣 Фиолетовый (Глубоководное)
+  private readonly colorCold = 0x0000ff;     // 🔵 Синий (Холодное)
+  private readonly colorWarm = 0xff5500;     // 🟠 Оранжевый (Теплое)
+  // Берём цвет из общего конфига апвеллинга (#00FF00 -> 0x00FF00)
+  private readonly colorUpwelling = parseInt(UPWELLING_COLOR.replace('#', '0x'), 16); 
 
   // --- Множители скорости для разных зон ---
   private readonly zoneSpeedMultipliers: Record<CurrentZoneType, number> = {
@@ -131,19 +143,14 @@ export class CurrentParticlesDebug {
   }
 
   /**
-   * Инициализация частиц с распределением по зонам (5% DEEP, 70% COLD, 25% WARM)
+   * Инициализация частиц с точным распределением по ZONE_PARTICLE_COUNTS из менеджер-файла
    */
   private initParticles(totalCount: number): void {
-    const zoneCounts: Record<CurrentZoneType, number> = {
-      [CurrentZoneType.DEEP]: Math.floor(totalCount * 0.05), // 500 для 10 000
-      [CurrentZoneType.COLD]: Math.floor(totalCount * 0.70), // 7000 для 10 000
-      [CurrentZoneType.WARM]: totalCount - Math.floor(totalCount * 0.05) - Math.floor(totalCount * 0.70) // 2500 для 10 000
-    };
-
+    const scaleFactor = totalCount / 10000;
     const zones = [CurrentZoneType.DEEP, CurrentZoneType.COLD, CurrentZoneType.WARM];
 
     for (const zone of zones) {
-      const countForZone = zoneCounts[zone];
+      const countForZone = Math.round(ZONE_PARTICLE_COUNTS[zone] * scaleFactor);
       const spawnPoints = this.currentsManager.getInitialParticlesForZone(zone, countForZone);
 
       for (let i = 0; i < countForZone; i++) {
@@ -167,7 +174,8 @@ export class CurrentParticlesDebug {
           sprite,
           alpha: Math.random() * 0.85,
           isDying: false,
-          immunityTimer: Math.random() * this.IMMUNITY_DURATION
+          immunityTimer: Math.random() * this.IMMUNITY_DURATION,
+          isUpwelling: false
         });
       }
     }
@@ -190,6 +198,7 @@ export class CurrentParticlesDebug {
 
     p.isDying = false;
     p.immunityTimer = this.IMMUNITY_DURATION;
+    p.isUpwelling = false;
   }
 
   // --- Методы Spatial Grid ---
@@ -339,6 +348,14 @@ export class CurrentParticlesDebug {
         p.immunityTimer -= deltaSeconds;
       }
 
+      // 🟢 0. Проверка апвеллинга
+      const upwellingZone = this.currentsManager.getUpwellingZoneAt(p.x, p.y);
+      if (upwellingZone === 'ENTRY') {
+        p.isUpwelling = true;
+      } else if (upwellingZone === 'EXIT') {
+        p.isUpwelling = false;
+      }
+
       // 1. Выравнивание (Alignment) + Расталкивание (Separation)
       const flockingDir = this.applyFlockingAndSeparation(p);
 
@@ -359,20 +376,26 @@ export class CurrentParticlesDebug {
         }
       }
 
-      // 4. Физика основного менеджера течений
-      const current = this.currentsManager.getCurrentVectorForParticle(
-        p.x,
-        p.y,
-        swirlingDir.vx,
-        swirlingDir.vy,
-        p.zone
-      );
+      // 4. Физика течений и апвеллинга
+      if (p.isUpwelling) {
+        // 🟢 Движение по вектору апвеллинга (диагональный лифт 45° со скоростью 0.75x)
+        const upVector = this.currentsManager.getUpwellingVector();
+        p.vx = upVector.vx;
+        p.vy = upVector.vy;
+      } else {
+        // Стандартная физика течений зоны
+        const current = this.currentsManager.getCurrentVectorForParticle(
+          p.x,
+          p.y,
+          swirlingDir.vx,
+          swirlingDir.vy,
+          p.zone
+        );
 
-      // Применяем коэффициент скорости в зависимости от типа зоны
-      const speedMultiplier = this.zoneSpeedMultipliers[p.zone] ?? 1.0;
-
-      p.vx = current.vx * speedMultiplier;
-      p.vy = current.vy * speedMultiplier;
+        const speedMultiplier = this.zoneSpeedMultipliers[p.zone] ?? 1.0;
+        p.vx = current.vx * speedMultiplier;
+        p.vy = current.vy * speedMultiplier;
+      }
 
       p.x += p.vx * deltaSeconds;
       p.y += p.vy * deltaSeconds;
@@ -397,17 +420,21 @@ export class CurrentParticlesDebug {
       // Применение текущей прозрачности спрайта
       p.sprite.alpha = p.alpha;
 
-      // Окрашивание в цвет своей зоны
-      switch (p.zone) {
-        case CurrentZoneType.DEEP:
-          p.sprite.tint = this.colorDeep;
-          break;
-        case CurrentZoneType.COLD:
-          p.sprite.tint = this.colorCold;
-          break;
-        case CurrentZoneType.WARM:
-          p.sprite.tint = this.colorWarm;
-          break;
+      // Окрашивание в цвет своей зоны или в ярко-зелёный при апвеллинге
+      if (p.isUpwelling) {
+        p.sprite.tint = this.colorUpwelling;
+      } else {
+        switch (p.zone) {
+          case CurrentZoneType.DEEP:
+            p.sprite.tint = this.colorDeep;
+            break;
+          case CurrentZoneType.COLD:
+            p.sprite.tint = this.colorCold;
+            break;
+          case CurrentZoneType.WARM:
+            p.sprite.tint = this.colorWarm;
+            break;
+        }
       }
 
       p.sprite.x = p.x;
