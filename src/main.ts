@@ -13,6 +13,11 @@ import { CurrentsBackgroundOverlay } from './visuals/CurrentsBackgroundOverlay';
 import { CurrentParticlesDebug } from './visuals/CurrentParticlesDebug';
 import { CurrentsToggleUI } from './ui/CurrentsToggleUI';
 
+// 2. Импортируем подсистему сетки нутриентов
+import { NutrientGrid } from './simulation/NutrientGrid';
+import { NutrientGridDebug } from './visuals/NutrientGridDebug';
+import { NutrientGridToggleUI } from './ui/NutrientGridToggleUI';
+
 let currentApp: PIXI.Application | null = null;
 let resizeHandler: (() => void) | null = null;
 
@@ -102,6 +107,17 @@ async function initApp() {
       currentsOverlay.container.visible = visible;
       debugParticles.container.visible = visible;
     });
+
+    // 1.3. Инициализация сетки нутриентов и её UI
+    const nutrientGrid = new NutrientGrid(oceanCurrents);
+    const nutrientGridDebug = new NutrientGridDebug(nutrientGrid);
+    
+    // Сетка располагается под частицами течений (zIndex 98)
+    nutrientGridDebug.container.zIndex = 98;
+    worldMap.container.addChild(nutrientGridDebug.container);
+
+    // Монтируем кнопку управления сеткой в UI
+    new NutrientGridToggleUI(nutrientGridDebug);
 
     // 2. Инициализация камеры
     const camera = new CameraController(worldMap.container, canvas, WORLD_WIDTH, WORLD_HEIGHT);
