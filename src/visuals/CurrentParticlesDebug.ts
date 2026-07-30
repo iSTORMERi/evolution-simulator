@@ -16,6 +16,7 @@ interface Particle {
   vy: number;
   zone: CurrentZoneType;
   lengthScale: number;
+  speedMultiplier: number; // 🟢 / 🟡 Индивидуальная скорость для размытия волн
   sprite: PIXI.Sprite;
 
   alpha: number;
@@ -59,6 +60,13 @@ export class CurrentParticlesDebug {
   private readonly worldSize = 8000;
   private isInitializedWithMask: boolean = false;
 
+  // Настройки поочередного спавна вертикальных течений (3 волны по 50 частиц)
+  private pendingUpwelling = 150;
+  private pendingDownwelling = 150;
+  private spawnTimer = 0;
+  private readonly BATCH_SIZE = 50;
+  private readonly SPAWN_INTERVAL = 5.0; // Интервал 5 секунд
+
   // Spatial Grid & Flocking
   private readonly CELL_SIZE = 200;
   private readonly ALIGNMENT_RADIUS_SQ = 180 * 180;
@@ -94,8 +102,8 @@ export class CurrentParticlesDebug {
     this.generateVortices(45);
     this.particleTexture = this.generateCometTexture(64, 8);
 
-    // 10 000 основных частиц + 500 апвеллинга + 500 даунвеллинга
-    this.initParticles(totalCount, 500, 500);
+    // Инициализация основных частиц и 1-й волны вертикальных течений
+    this.initParticles(totalCount);
   }
 
   private generateVortices(count: number): void {
@@ -139,7 +147,7 @@ export class CurrentParticlesDebug {
     return PIXI.Texture.from(canvas);
   }
 
-  private initParticles(mainCount: number, upwellingCount: number, downwellingCount: number): void {
+  private initParticles(mainCount: number): void {
     const scaleFactor = mainCount / 10000;
     const zones = [CurrentZoneType.DEEP, CurrentZoneType.COLD, CurrentZoneType.WARM];
 
@@ -154,15 +162,24 @@ export class CurrentParticlesDebug {
       }
     }
 
-    // 2. Независимые частицы Апвеллинга (🟢)
-    for (let i = 0; i < upwellingCount; i++) {
+    // 2. Спавним первую волну из 50 частиц апвеллинга и даунвеллинга на старте
+    this.spawnSpecialBatch();
+  }
+
+  private spawnSpecialBatch(): void {
+    // 🟢 Апвеллинг
+    const upToSpawn = Math.min(this.BATCH_SIZE, this.pendingUpwelling);
+    for (let i = 0; i < upToSpawn; i++) {
       this.createParticle(this.worldSize * 0.5, this.worldSize * 0.5, CurrentZoneType.COLD, true, false);
     }
+    this.pendingUpwelling -= upToSpawn;
 
-    // 3. Независимые частицы Даунвеллинга (🟡)
-    for (let i = 0; i < downwellingCount; i++) {
+    // 🟡 Даунвеллинг
+    const downToSpawn = Math.min(this.BATCH_SIZE, this.pendingDownwelling);
+    for (let i = 0; i < downToSpawn; i++) {
       this.createParticle(this.worldSize * 0.5, this.worldSize * 0.5, CurrentZoneType.WARM, false, true);
     }
+    this.pendingDownwelling -= downToSpawn;
   }
 
   private createParticle(x: number, y: number, zone: CurrentZoneType, isUpwelling: boolean, isDownwelling: boolean): void {
@@ -171,6 +188,12 @@ export class CurrentParticlesDebug {
 
     const lengthScale = 0.8 + Math.random() * 1.7;
     const angle = Math.random() * Math.PI * 2;
+
+    // Разброс скорости для вертикальных течений (0.4x - 0.9x)
+    let speedMultiplier = 1.0;
+    if (isUpwelling || isDownwelling) {
+      speedMultiplier = 0.4 + Math.random() * 0.5;
+    }
 
     this.container.addChild(sprite);
 
@@ -181,6 +204,7 @@ export class CurrentParticlesDebug {
       vy: Math.sin(angle),
       zone,
       lengthScale,
+      speedMultiplier,
       sprite,
       alpha: Math.random() * 0.85,
       isDying: false,
@@ -357,6 +381,15 @@ export class CurrentParticlesDebug {
       this.isInitializedWithMask = true;
     }
 
+    // --- Спавн следующих волн через таймер ---
+    if (this.pendingUpwelling > 0 || this.pendingDownwelling > 0) {
+      this.spawnTimer += deltaSeconds;
+      if (this.spawnTimer >= this.SPAWN_INTERVAL) {
+        this.spawnTimer = 0;
+        this.spawnSpecialBatch();
+      }
+    }
+
     this.clearGrid();
     this.populateGrid();
 
@@ -385,19 +418,19 @@ export class CurrentParticlesDebug {
 
       // --- 2. Логика Движения ---
       if (p.isUpwelling) {
-        // 🟢 Движение Апвеллинга
+        // 🟢 Движение Апвеллинга с учётом индивидуальной скорости
         const upVector = this.currentsManager.getUpwellingVector();
-        p.vx = upVector.vx;
-        p.vy = upVector.vy;
+        p.vx = upVector.vx * p.speedMultiplier;
+        p.vy = upVector.vy * p.speedMultiplier;
 
         if (this.currentsManager.getUpwellingZoneAt(p.x, p.y) === 'EXIT' && p.immunityTimer <= 0) {
           p.isDying = true;
         }
       } else if (p.isDownwelling) {
-        // 🟡 Движение Даунвеллинга
+        // 🟡 Движение Даунвеллинга с учётом индивидуальной скорости
         const downVector = this.currentsManager.getDownwellingVector();
-        p.vx = downVector.vx;
-        p.vy = downVector.vy;
+        p.vx = downVector.vx * p.speedMultiplier;
+        p.vy = downVector.vy * p.speedMultiplier;
 
         if (this.currentsManager.getDownwellingZoneAt(p.x, p.y) === 'EXIT' && p.immunityTimer <= 0) {
           p.isDying = true;
