@@ -35,6 +35,13 @@ export class CurrentParticlesDebug {
   private readonly colorCold = 0x0000ff; // 🔵 Синий (Холодное)
   private readonly colorWarm = 0xff5500; // 🟠 Оранжевый (Теплое)
 
+  // --- Множители скорости для разных зон ---
+  private readonly zoneSpeedMultipliers: Record<CurrentZoneType, number> = {
+    [CurrentZoneType.WARM]: 1.0,  // 🟠 Прибрежные быстрые потоки (эталон)
+    [CurrentZoneType.COLD]: 0.5,  // 🔵 Основная акватория (в 2 раза медленнее)
+    [CurrentZoneType.DEEP]: 0.17  // 🟣 Медленный донный дрейф (в ~6 раз медленнее)
+  };
+
   private readonly worldSize = 8000;
   private isInitializedWithMask: boolean = false;
 
@@ -58,7 +65,7 @@ export class CurrentParticlesDebug {
   // --- Сетка искусственных водоворотов ---
   private vortices: Vortex[] = [];
 
-  constructor(currentsManager: OceanCurrentsManager, count: number = 2400) {
+  constructor(currentsManager: OceanCurrentsManager, totalCount: number = 10000) {
     this.currentsManager = currentsManager;
     this.container = new PIXI.Container();
 
@@ -75,7 +82,7 @@ export class CurrentParticlesDebug {
 
     // Генерируем текстуру кометы (64px x 8px) с градиентным хвостом
     this.particleTexture = this.generateCometTexture(64, 8);
-    this.initParticles(count);
+    this.initParticles(totalCount);
   }
 
   /**
@@ -123,14 +130,23 @@ export class CurrentParticlesDebug {
     return PIXI.Texture.from(canvas);
   }
 
+  /**
+   * Инициализация частиц с распределением по зонам (5% DEEP, 70% COLD, 25% WARM)
+   */
   private initParticles(totalCount: number): void {
+    const zoneCounts: Record<CurrentZoneType, number> = {
+      [CurrentZoneType.DEEP]: Math.floor(totalCount * 0.05), // 500 для 10 000
+      [CurrentZoneType.COLD]: Math.floor(totalCount * 0.70), // 7000 для 10 000
+      [CurrentZoneType.WARM]: totalCount - Math.floor(totalCount * 0.05) - Math.floor(totalCount * 0.70) // 2500 для 10 000
+    };
+
     const zones = [CurrentZoneType.DEEP, CurrentZoneType.COLD, CurrentZoneType.WARM];
-    const countPerZone = Math.floor(totalCount / zones.length);
 
     for (const zone of zones) {
-      const spawnPoints = this.currentsManager.getInitialParticlesForZone(zone, countPerZone);
+      const countForZone = zoneCounts[zone];
+      const spawnPoints = this.currentsManager.getInitialParticlesForZone(zone, countForZone);
 
-      for (let i = 0; i < countPerZone; i++) {
+      for (let i = 0; i < countForZone; i++) {
         const pt = spawnPoints[i] || { x: this.worldSize * 0.5, y: this.worldSize * 0.5 };
         const sprite = new PIXI.Sprite(this.particleTexture);
 
@@ -352,8 +368,11 @@ export class CurrentParticlesDebug {
         p.zone
       );
 
-      p.vx = current.vx;
-      p.vy = current.vy;
+      // Применяем коэффициент скорости в зависимости от типа зоны
+      const speedMultiplier = this.zoneSpeedMultipliers[p.zone] ?? 1.0;
+
+      p.vx = current.vx * speedMultiplier;
+      p.vy = current.vy * speedMultiplier;
 
       p.x += p.vx * deltaSeconds;
       p.y += p.vy * deltaSeconds;
