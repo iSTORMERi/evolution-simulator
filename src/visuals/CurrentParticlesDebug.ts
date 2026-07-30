@@ -348,12 +348,21 @@ export class CurrentParticlesDebug {
         p.immunityTimer -= deltaSeconds;
       }
 
-      // 🟢 0. Проверка апвеллинга
+      // 🟢 0. Проверка апвеллинга с вероятностным входом и фильтрацией зоны выхода
       const upwellingZone = this.currentsManager.getUpwellingZoneAt(p.x, p.y);
-      if (upwellingZone === 'ENTRY') {
-        p.isUpwelling = true;
-      } else if (upwellingZone === 'EXIT') {
-        p.isUpwelling = false;
+      if (upwellingZone === 'ENTRY' && !p.isUpwelling) {
+        // Сниженный шанс превращения (5%), чтобы избежать опустошения зоны
+        if (Math.random() < 0.05) {
+          p.isUpwelling = true;
+        }
+      } else if (upwellingZone === 'EXIT' && p.isUpwelling) {
+        // Сбрасываем статус апвеллинга ТОЛЬКО при выходе в синюю (COLD) или оранжевую (WARM) зону
+        const currentZone = this.currentsManager.getZoneAt(p.x, p.y);
+        if (currentZone === CurrentZoneType.COLD || currentZone === CurrentZoneType.WARM) {
+          p.isUpwelling = false;
+          p.zone = currentZone; // Переназначаем частицу в новую поверхностную зону
+        }
+        // Если попали в фиолетовую/непонятную зону -- статус остаётся true, и частица продолжит лететь далее
       }
 
       // 1. Выравнивание (Alignment) + Расталкивание (Separation)
