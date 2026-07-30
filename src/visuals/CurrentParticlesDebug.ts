@@ -339,7 +339,8 @@ export class CurrentParticlesDebug {
       
       if (upwellingZone === 'ENTRY' && !p.isUpwelling && !p.isDownwelling) {
         if (p.zone === CurrentZoneType.DEEP || p.zone === CurrentZoneType.COLD) {
-          if (Math.random() < 0.10 * deltaSeconds) {
+          // 📉 Снижено с 0.10 до 0.02 (2% шанс в секунду)
+          if (Math.random() < 0.02 * deltaSeconds) {
             p.isUpwelling = true;
             p.upwellingOrigin = p.zone;
 
@@ -362,7 +363,8 @@ export class CurrentParticlesDebug {
 
       if (downwellingZone === 'ENTRY' && !p.isDownwelling && !p.isUpwelling) {
         if (p.zone === CurrentZoneType.WARM || p.zone === CurrentZoneType.COLD) {
-          if (Math.random() < 0.10 * deltaSeconds) {
+          // 📉 Снижено с 0.10 до 0.02 (2% шанс в секунду)
+          if (Math.random() < 0.02 * deltaSeconds) {
             p.isDownwelling = true;
             p.downwellingOrigin = p.zone;
 
