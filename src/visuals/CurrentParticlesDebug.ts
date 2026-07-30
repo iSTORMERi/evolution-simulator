@@ -32,6 +32,7 @@ interface Particle {
   isDownwelling?: boolean;
   downwellingOrigin?: CurrentZoneType;       // Исходная зона (WARM или COLD)
   downwellingTarget?: { x: number; y: number };
+  downwellingPenetrationTimer?: number;       // Таймер задержки смены типа при погружении в DEEP
 }
 
 interface Vortex {
@@ -197,6 +198,7 @@ export class CurrentParticlesDebug {
     p.isDownwelling = false;
     p.downwellingOrigin = undefined;
     p.downwellingTarget = undefined;
+    p.downwellingPenetrationTimer = undefined;
   }
 
   private clearGrid(): void {
@@ -391,15 +393,24 @@ export class CurrentParticlesDebug {
         }
       }
 
-      // 🟡 ДВОЙНАЯ ПРОВЕРКА ВЫХОДА ДАУНВЕЛЛИНГА: EXIT + Родная целевая зона
+      // 🟡 ДВОЙНАЯ ПРОВЕРКА ВЫХОДА ДАУНВЕЛЛИНГА: EXIT + Проникновение вглубь DEEP
       if (p.isDownwelling) {
         const mainZone = this.currentsManager.getZoneAt(p.x, p.y);
 
         if (p.downwellingOrigin === CurrentZoneType.WARM) {
-          // 🟠 WARM погружается напрямую в 🟣 DEEP
-          if (downwellingZone === 'EXIT' && mainZone === CurrentZoneType.DEEP) {
-            p.isDownwelling = false;
-            p.zone = CurrentZoneType.DEEP;
+          // 🟠 WARM погружается в 🟣 DEEP с эффектом проникновения
+          if (mainZone === CurrentZoneType.DEEP) {
+            if (p.downwellingPenetrationTimer === undefined) {
+              // Инициализация случайной задержки (1.5 - 3.5 сек)
+              p.downwellingPenetrationTimer = 1.5 + Math.random() * 2.0;
+            } else {
+              p.downwellingPenetrationTimer -= deltaSeconds;
+              if (p.downwellingPenetrationTimer <= 0) {
+                p.isDownwelling = false;
+                p.zone = CurrentZoneType.DEEP;
+                p.downwellingPenetrationTimer = undefined;
+              }
+            }
           }
         } else if (p.downwellingOrigin === CurrentZoneType.COLD) {
           // 🔵 COLD циркулирует и остается 🔵 COLD
