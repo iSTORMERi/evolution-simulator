@@ -13,6 +13,8 @@ export enum CurrentZoneType {
   WARM = 'WARM'    // 🟠 Оранжевая
 }
 
+export type UpwellingZoneType = 'ENTRY' | 'EXIT';
+
 export interface CurrentData {
   vx: number;
   vy: number;
@@ -32,11 +34,17 @@ export const ZONE_COLOR_MAP: Record<CurrentZoneType, string> = {
   [CurrentZoneType.WARM]: '#FF5500'
 };
 
+// 🟢 Цвет частиц Апвеллинга
+export const UPWELLING_COLOR = '#00FF00';
+
 export const ZONE_SPEED_MULTIPLIERS: Record<CurrentZoneType, number> = {
   [CurrentZoneType.DEEP]: 0.85,
   [CurrentZoneType.COLD]: 1.0,
   [CurrentZoneType.WARM]: 1.15
 };
+
+// 🟢 Множитель скорости Апвеллинга (плотная глубинная вода)
+export const UPWELLING_SPEED_MULTIPLIER = 0.75;
 
 // 🔥 РАСПРЕДЕЛЕНИЕ 10 000 ЧАСТИЦ ПО ЗОНАМ
 export const ZONE_PARTICLE_COUNTS: Record<CurrentZoneType, number> = {
@@ -52,6 +60,7 @@ export class OceanCurrentsManager {
 
   private readonly MASK_SIZE = 1000;
   private maskData: Uint8ClampedArray | null = null;
+  private upwellingMaskData: Uint8ClampedArray | null = null;
   private maskCanvas: HTMLCanvasElement | null = null;
   private darkeningSprite: PIXI.Sprite | null = null;
 
@@ -71,12 +80,12 @@ export class OceanCurrentsManager {
     this.worldHeight = worldHeight;
   }
 
-  // --- 1. ЗАГРУЗКА МАСКИ И ИНИЦИАЛИЗАЦИЯ ---
+  // --- 1. ЗАГРУЗКА МАСОК И ИНИЦИАЛИЗАЦИЯ ---
   public async initScanner(): Promise<void> {
     const baseUrl = (import.meta as any).env?.BASE_URL || './';
     const cleanBase = baseUrl.replace(/\/$/, '');
     
-    // Пробуем сначала поверхностную маску, затем бинарную фолбэк-маску
+    // 1. Пробуем сначала поверхностную маску, затем бинарную фолбэк-маску
     const candidatePaths = [
       `${cleanBase}/assets/ocean_surface_mask.png`,
       `${cleanBase}/assets/ocean_binary_mask.png`
@@ -87,11 +96,21 @@ export class OceanCurrentsManager {
     for (const path of candidatePaths) {
       try {
         loadedImg = await this.loadImage(path);
-        console.log(`[OceanCurrentsManager] Успешно загружена маска: ${path}`);
+        console.log(`[OceanCurrentsManager] Успешно загружена маска поверхностей: ${path}`);
         break;
       } catch {
         // Пробуем следующий путь
       }
+    }
+
+    // 2. Загружаем маску апвеллинга
+    const upwellingPath = `${cleanBase}/assets/ocean_upwelling_mask.png`;
+    try {
+      const loadedUpwellingImg = await this.loadImage(upwellingPath);
+      console.log(`[OceanCurrentsManager] Успешно загружена маска апвеллинга: ${upwellingPath}`);
+      this.upwellingMaskData = this.extractImageData(loadedUpwellingImg);
+    } catch {
+      console.warn('[OceanCurrentsManager] Маска апвеллинга не найдена. Апвеллинг будет отключен.');
     }
 
     if (!loadedImg) {
@@ -132,6 +151,62 @@ export class OceanCurrentsManager {
       img.onerror = () => reject(new Error(`Failed to load ${src}`));
       img.src = src;
     });
+  }
+
+  private extractImageData(img: HTMLImageElement): Uint8ClampedArray | null {
+    const canvas = document.createElement('canvas');
+    canvas.width = this.MASK_SIZE;
+    canvas.height = this.MASK_SIZE;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return null;
+
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(img, 0, 0, this.MASK_SIZE, this.MASK_SIZE);
+    return ctx.getImageData(0, 0, this.MASK_SIZE, this.MASK_SIZE).data;
+  }
+
+  /**
+   * 🟢 ПРОВЕРКА ЗОНЫ АПВЕЛЛИНГА В КООРДИНАТЕ (ENTRY / EXIT)
+   */
+  public getUpwellingZoneAt(x: number, y: number): UpwellingZoneType | null {
+    if (!this.upwellingMaskData) return null;
+    if (x < 0 || x >= this.worldWidth || y < 0 || y >= this.worldHeight) return null;
+
+    const gx = Math.floor((x / this.worldWidth) * this.MASK_SIZE);
+    const gy = Math.floor((y / this.worldHeight) * this.MASK_SIZE);
+    const index = (gy * this.MASK_SIZE + gx) * 4;
+
+    const r = this.upwellingMaskData[index];
+    const g = this.upwellingMaskData[index + 1];
+    const b = this.upwellingMaskData[index + 2];
+    const a = this.upwellingMaskData[index + 3];
+
+    if (a <= 50) return null;
+
+    // Светло-зелёный / Ярко-зелёный пиксель = Зона выхода (EXIT)
+    if (g > 180 && r < 150 && b < 150) {
+      return 'EXIT';
+    }
+
+    // Тёмно-зелёный пиксель = Зона входа/трансформации (ENTRY)
+    if (g > 70 && g <= 180 && r < 100 && b < 100) {
+      return 'ENTRY';
+    }
+
+    return null;
+  }
+
+  /**
+   * 🟢 ВЕКТОР ДВИЖЕНИЯ ЧАСТИЦЫ АПВЕЛЛИНГА
+   * Диагональный экспресс-лифт под углом 45 градусов (вправо-вниз) со скоростью 0.75x
+   */
+  public getUpwellingVector(): { vx: number; vy: number } {
+    const speed = this.baseSpeed * UPWELLING_SPEED_MULTIPLIER;
+    const invSqrt2 = 0.70710678; // cos(45deg) = sin(45deg)
+    return {
+      vx: invSqrt2 * speed,
+      vy: invSqrt2 * speed
+    };
   }
 
   /**
