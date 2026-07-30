@@ -4,9 +4,7 @@ import * as PIXI from 'pixi.js';
 import { 
   OceanCurrentsManager, 
   CurrentZoneType, 
-  ZONE_PARTICLE_COUNTS,
-  UPWELLING_COLOR,
-  DOWNWELLING_COLOR
+  ZONE_PARTICLE_COUNTS
 } from '../simulation/OceanCurrentsManager';
 
 interface Particle {
@@ -44,11 +42,11 @@ export class CurrentParticlesDebug {
   private particleTexture: PIXI.Texture;
 
   // Цветовая палитра Layer 1 (HEX для PIXI)
-  private readonly colorDeep = 0x8a00ff;     // 🟣 Фиолетовый (Глубоководное)
-  private readonly colorCold = 0x0000ff;     // 🔵 Синий (Холодное)
-  private readonly colorWarm = 0xff5500;     // 🟠 Оранжевый (Теплое)
-  private readonly colorUpwelling = parseInt(UPWELLING_COLOR.replace('#', '0x'), 16);   // 🟢 Неоново-зелёный
-  private readonly colorDownwelling = parseInt(DOWNWELLING_COLOR.replace('#', '0x'), 16); // 🟡 Жёлтый
+  private readonly colorDeep = 0x8a00ff;        // 🟣 Фиолетовый (Глубоководное)
+  private readonly colorCold = 0x0000ff;        // 🔵 Синий (Холодное)
+  private readonly colorWarm = 0xff5500;        // 🟠 Оранжевый (Теплое)
+  private readonly colorUpwelling = 0x006622;   // 🟢 Тёмно-зелёный (Приглушенный)
+  private readonly colorDownwelling = 0x887700; // 🟡 Тёмно-жёлтый (Приглушенный)
 
   // Множители скорости для разных зон
   private readonly zoneSpeedMultipliers: Record<CurrentZoneType, number> = {
@@ -162,7 +160,15 @@ export class CurrentParticlesDebug {
       }
     }
 
-    // 2. Спавним первую волну из 50 частиц апвеллинга и даунвеллинга на старте
+    // 2. Дополнительные 500 частиц для теплого течения
+    const warmExtraCount = 500;
+    const warmSpawnPoints = this.currentsManager.getInitialParticlesForZone(CurrentZoneType.WARM, warmExtraCount);
+    for (let i = 0; i < warmExtraCount; i++) {
+      const pt = warmSpawnPoints[i] || { x: this.worldSize * 0.5, y: this.worldSize * 0.5 };
+      this.createParticle(pt.x, pt.y, CurrentZoneType.WARM, false, false);
+    }
+
+    // 3. Спавним первую волну из 50 частиц апвеллинга и даунвеллинга на старте
     this.spawnSpecialBatch();
   }
 
