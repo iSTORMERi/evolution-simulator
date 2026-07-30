@@ -396,14 +396,16 @@ export class CurrentParticlesDebug {
         const mainZone = this.currentsManager.getZoneAt(p.x, p.y);
 
         if (p.downwellingOrigin === CurrentZoneType.WARM) {
-          if (downwellingZone === 'EXIT' && mainZone === CurrentZoneType.COLD) {
-            p.isDownwelling = false;
-            p.zone = CurrentZoneType.COLD;
-          }
-        } else if (p.downwellingOrigin === CurrentZoneType.COLD) {
+          // 🟠 WARM погружается напрямую в 🟣 DEEP
           if (downwellingZone === 'EXIT' && mainZone === CurrentZoneType.DEEP) {
             p.isDownwelling = false;
             p.zone = CurrentZoneType.DEEP;
+          }
+        } else if (p.downwellingOrigin === CurrentZoneType.COLD) {
+          // 🔵 COLD циркулирует и остается 🔵 COLD
+          if (downwellingZone === 'EXIT' && mainZone === CurrentZoneType.COLD) {
+            p.isDownwelling = false;
+            p.zone = CurrentZoneType.COLD;
           }
         }
       }
