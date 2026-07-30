@@ -1,57 +1,68 @@
 // src/ui/NutrientGridToggleUI.ts
 
-import { NutrientGridDebug } from '../visuals/NutrientGridDebug'; // Или '../debug/NutrientGridDebug' в зависимости от того, куда положил визуализатор
+import { NutrientGridDebug } from '../visuals/NutrientGridDebug';
 
 export class NutrientGridToggleUI {
   private button: HTMLButtonElement;
   private gridDebug: NutrientGridDebug;
 
-  /**
-   * @param gridDebug - Экземпляр визуализатора сетки
-   * @param containerSelectorOrEl - Селектор или сам DOM-элемент UI-панели (по умолчанию вставляет в нужный блок)
-   */
-  constructor(gridDebug: NutrientGridDebug, containerSelectorOrEl: string | HTMLElement = '.ui-panel') {
+  constructor(gridDebug: NutrientGridDebug) {
     this.gridDebug = gridDebug;
     this.button = document.createElement('button');
-    
-    this.initUI(containerSelectorOrEl);
+    this.initUI();
   }
 
-  private initUI(containerTarget: string | HTMLElement): void {
-    // Настройка идентификаторов и классов
+  private initUI(): void {
     this.button.id = 'btn-toggle-nutrient-grid';
-    this.button.className = 'ui-button toggle-btn'; // Используем существующие стили проекта
-    this.button.innerHTML = '🌐 Сетка нутриентов';
+    // Иконка сетки / глобуса
+    this.button.innerHTML = '🌐';
+    this.button.title = 'Сетка нутриентов';
 
-    // Обработка нажатия
-    this.button.addEventListener('click', () => {
-      const isVisible = this.gridDebug.toggle();
-      this.button.classList.toggle('active', isVisible);
+    // Стилизуем под круглые плавающие кнопки в правом нижнем углу
+    Object.assign(this.button.style, {
+      position: 'fixed',
+      bottom: '140px', // Располагаем НАД кнопкой течений (80px + отступ)
+      right: '20px',
+      width: '50px',
+      height: '50px',
+      borderRadius: '50%',
+      backgroundColor: 'rgba(30, 35, 45, 0.75)',
+      backdropFilter: 'blur(8px)',
+      webkitBackdropFilter: 'blur(8px)',
+      border: '1px solid rgba(255, 255, 255, 0.15)',
+      color: '#ffffff',
+      fontSize: '22px',
+      cursor: 'pointer',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: '1000', // Поверх PixiJS холста
+      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+      transition: 'all 0.2s ease',
+      outline: 'none',
+      userSelect: 'none',
+      webkitUserSelect: 'none',
     });
 
-    // Находим родительский контейнер
-    let container: HTMLElement | null = null;
-    if (typeof containerTarget === 'string') {
-      container = document.querySelector(containerTarget);
-    } else {
-      container = containerTarget;
-    }
+    // Эффект при клике (подсветка синим при включении)
+    this.button.addEventListener('click', () => {
+      const isVisible = this.gridDebug.toggle();
 
-    // Если контейнер не найден, fallback на document.body
-    const parent = container || document.body;
+      if (isVisible) {
+        this.button.style.backgroundColor = 'rgba(74, 160, 237, 0.4)';
+        this.button.style.borderColor = '#4aa0ed';
+        this.button.style.boxShadow = '0 0 12px rgba(74, 160, 237, 0.5)';
+      } else {
+        this.button.style.backgroundColor = 'rgba(30, 35, 45, 0.75)';
+        this.button.style.borderColor = 'rgba(255, 255, 255, 0.15)';
+        this.button.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.3)';
+      }
+    });
 
-    // 🎯 Вставляем кнопку В САМОЕ НАЧАЛО панельки, чтобы она оказалась НАД кнопками течений и биомов
-    if (parent.firstChild) {
-      parent.insertBefore(this.button, parent.firstChild);
-    } else {
-      parent.appendChild(this.button);
-    }
+    document.body.appendChild(this.button);
   }
 
-  /**
-   * Переключить доступность самой кнопки на экране
-   */
   public setVisible(visible: boolean): void {
-    this.button.style.display = visible ? 'block' : 'none';
+    this.button.style.display = visible ? 'flex' : 'none';
   }
 }
