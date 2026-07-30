@@ -15,32 +15,24 @@ interface Particle {
   vx: number;
   vy: number;
   zone: CurrentZoneType;
-  lengthScale: number; // Индивидуальный множитель длины
+  lengthScale: number;
   sprite: PIXI.Sprite;
 
-  // Параметры для плавного угасания и спавна
   alpha: number;
   isDying: boolean;
-  immunityTimer: number; // Защита от мгновенного повторного угасания после спавна
+  immunityTimer: number;
 
-  // 🟢 Состояние Апвеллинга и нелинейной траектории
+  // 🟢 / 🟡 Независимый визуальный слой
   isUpwelling?: boolean;
-  upwellingOrigin?: CurrentZoneType;         // Исходная зона (COLD или DEEP)
-  upwellingTarget?: { x: number; y: number }; // Целевой вектор/точка дуги
-
-  // 🟡 Состояние Даунвеллинга
   isDownwelling?: boolean;
-  downwellingOrigin?: CurrentZoneType;       // Исходная зона (WARM или COLD)
-  downwellingTarget?: { x: number; y: number };
-  downwellingPenetrationTimer?: number;       // Таймер задержки смены типа при погружении в DEEP
 }
 
 interface Vortex {
   x: number;
   y: number;
   radius: number;
-  radiusSq: number; // Предрассчитанный квадрат радиуса для быстрого сравнения
-  strength: number; // Положительное -- по часовой, отрицательное -- против часовой
+  radiusSq: number;
+  strength: number;
 }
 
 export class CurrentParticlesDebug {
@@ -57,17 +49,17 @@ export class CurrentParticlesDebug {
   private readonly colorUpwelling = parseInt(UPWELLING_COLOR.replace('#', '0x'), 16);   // 🟢 Неоново-зелёный
   private readonly colorDownwelling = parseInt(DOWNWELLING_COLOR.replace('#', '0x'), 16); // 🟡 Жёлтый
 
-  // --- Множители скорости для разных зон ---
+  // Множители скорости для разных зон
   private readonly zoneSpeedMultipliers: Record<CurrentZoneType, number> = {
-    [CurrentZoneType.WARM]: 1.0,  // 🟠 Прибрежные быстрые потоки
-    [CurrentZoneType.COLD]: 0.5,  // 🔵 Основная акватория
-    [CurrentZoneType.DEEP]: 0.17  // 🟣 Медленный донный дрейф
+    [CurrentZoneType.WARM]: 1.0,
+    [CurrentZoneType.COLD]: 0.5,
+    [CurrentZoneType.DEEP]: 0.17
   };
 
   private readonly worldSize = 8000;
   private isInitializedWithMask: boolean = false;
 
-  // --- Параметры Spatial Grid & Flocking ---
+  // Spatial Grid & Flocking
   private readonly CELL_SIZE = 200;
   private readonly ALIGNMENT_RADIUS_SQ = 180 * 180;
   private readonly SEPARATION_RADIUS_SQ = 60 * 60;
@@ -75,7 +67,6 @@ export class CurrentParticlesDebug {
   private readonly FLOCKING_STRENGTH = 0.10;
   private readonly SEPARATION_STRENGTH = 0.25;
 
-  // --- Параметры контроля плотности и угасания ---
   private readonly DENSITY_THRESHOLD = 14;
   private readonly FADE_SPEED = 1.5;
   private readonly IMMUNITY_DURATION = 3.0;
@@ -84,10 +75,8 @@ export class CurrentParticlesDebug {
   private gridRows: number;
   private spatialGrid: Particle[][];
 
-  // --- Сетка искусственных водоворотов ---
   private vortices: Vortex[] = [];
 
-  // Переиспользуемые векторы для исключения аллокаций памяти в цикле
   private flockingVector = { vx: 0, vy: 0 };
   private swirlingVector = { vx: 0, vy: 0 };
 
@@ -104,7 +93,9 @@ export class CurrentParticlesDebug {
 
     this.generateVortices(45);
     this.particleTexture = this.generateCometTexture(64, 8);
-    this.initParticles(totalCount);
+
+    // 10 000 основных частиц + 500 апвеллинга + 500 даунвеллинга
+    this.initParticles(totalCount, 500, 500);
   }
 
   private generateVortices(count: number): void {
@@ -148,43 +139,87 @@ export class CurrentParticlesDebug {
     return PIXI.Texture.from(canvas);
   }
 
-  private initParticles(totalCount: number): void {
-    const scaleFactor = totalCount / 10000;
+  private initParticles(mainCount: number, upwellingCount: number, downwellingCount: number): void {
+    const scaleFactor = mainCount / 10000;
     const zones = [CurrentZoneType.DEEP, CurrentZoneType.COLD, CurrentZoneType.WARM];
 
+    // 1. Основные частицы горизонтальных течений
     for (const zone of zones) {
       const countForZone = Math.round(ZONE_PARTICLE_COUNTS[zone] * scaleFactor);
       const spawnPoints = this.currentsManager.getInitialParticlesForZone(zone, countForZone);
 
       for (let i = 0; i < countForZone; i++) {
         const pt = spawnPoints[i] || { x: this.worldSize * 0.5, y: this.worldSize * 0.5 };
-        const sprite = new PIXI.Sprite(this.particleTexture);
-
-        sprite.anchor.set(1.0, 0.5);
-
-        const lengthScale = 0.8 + Math.random() * 1.7;
-        const angle = Math.random() * Math.PI * 2;
-
-        this.container.addChild(sprite);
-        this.particles.push({
-          x: pt.x,
-          y: pt.y,
-          vx: Math.cos(angle),
-          vy: Math.sin(angle),
-          zone,
-          lengthScale,
-          sprite,
-          alpha: Math.random() * 0.85,
-          isDying: false,
-          immunityTimer: Math.random() * this.IMMUNITY_DURATION,
-          isUpwelling: false,
-          isDownwelling: false
-        });
+        this.createParticle(pt.x, pt.y, zone, false, false);
       }
+    }
+
+    // 2. Независимые частицы Апвеллинга (🟢)
+    for (let i = 0; i < upwellingCount; i++) {
+      this.createParticle(this.worldSize * 0.5, this.worldSize * 0.5, CurrentZoneType.COLD, true, false);
+    }
+
+    // 3. Независимые частицы Даунвеллинга (🟡)
+    for (let i = 0; i < downwellingCount; i++) {
+      this.createParticle(this.worldSize * 0.5, this.worldSize * 0.5, CurrentZoneType.WARM, false, true);
     }
   }
 
+  private createParticle(x: number, y: number, zone: CurrentZoneType, isUpwelling: boolean, isDownwelling: boolean): void {
+    const sprite = new PIXI.Sprite(this.particleTexture);
+    sprite.anchor.set(1.0, 0.5);
+
+    const lengthScale = 0.8 + Math.random() * 1.7;
+    const angle = Math.random() * Math.PI * 2;
+
+    this.container.addChild(sprite);
+
+    const p: Particle = {
+      x,
+      y,
+      vx: Math.cos(angle),
+      vy: Math.sin(angle),
+      zone,
+      lengthScale,
+      sprite,
+      alpha: Math.random() * 0.85,
+      isDying: false,
+      immunityTimer: Math.random() * this.IMMUNITY_DURATION,
+      isUpwelling,
+      isDownwelling
+    };
+
+    if (isUpwelling || isDownwelling) {
+      this.relocateSpecialParticle(p);
+    }
+
+    this.particles.push(p);
+  }
+
+  private relocateSpecialParticle(p: Particle): void {
+    if (p.isUpwelling) {
+      const pts = this.currentsManager.getInitialParticlesForZone(CurrentZoneType.DEEP, 1);
+      const pos = pts[0] || { x: Math.random() * this.worldSize, y: Math.random() * this.worldSize };
+      p.x = pos.x;
+      p.y = pos.y;
+    } else if (p.isDownwelling) {
+      const pts = this.currentsManager.getInitialParticlesForZone(CurrentZoneType.WARM, 1);
+      const pos = pts[0] || { x: Math.random() * this.worldSize, y: Math.random() * this.worldSize };
+      p.x = pos.x;
+      p.y = pos.y;
+    }
+
+    p.isDying = false;
+    p.alpha = 0.1;
+    p.immunityTimer = this.IMMUNITY_DURATION;
+  }
+
   private relocateToZone(p: Particle): void {
+    if (p.isUpwelling || p.isDownwelling) {
+      this.relocateSpecialParticle(p);
+      return;
+    }
+
     const pts = this.currentsManager.getInitialParticlesForZone(p.zone, 1);
     const pos = pts[0] || { x: this.worldSize * 0.5, y: this.worldSize * 0.5 };
 
@@ -198,14 +233,6 @@ export class CurrentParticlesDebug {
 
     p.isDying = false;
     p.immunityTimer = this.IMMUNITY_DURATION;
-    p.isUpwelling = false;
-    p.upwellingOrigin = undefined;
-    p.upwellingTarget = undefined;
-
-    p.isDownwelling = false;
-    p.downwellingOrigin = undefined;
-    p.downwellingTarget = undefined;
-    p.downwellingPenetrationTimer = undefined;
   }
 
   private clearGrid(): void {
@@ -219,6 +246,9 @@ export class CurrentParticlesDebug {
     const total = this.particles.length;
     for (let i = 0; i < total; i++) {
       const p = this.particles[i];
+      // Игнорируем спец-частицы, чтобы они не участвовали в флоккинге
+      if (p.isUpwelling || p.isDownwelling) continue;
+
       const cx = Math.floor(p.x / this.CELL_SIZE);
       const cy = Math.floor(p.y / this.CELL_SIZE);
 
@@ -303,7 +333,6 @@ export class CurrentParticlesDebug {
       const dx = x - v.x;
       const dy = y - v.y;
 
-      // Быстрая проверка границ (Bounding Box)
       if (Math.abs(dx) >= v.radius || Math.abs(dy) >= v.radius) continue;
 
       const distSq = dx * dx + dy * dy;
@@ -340,101 +369,7 @@ export class CurrentParticlesDebug {
         p.immunityTimer -= deltaSeconds;
       }
 
-      // 🟢 0. Проверка входа в апвеллинг
-      const upwellingZone = this.currentsManager.getUpwellingZoneAt(p.x, p.y);
-      
-      if (upwellingZone === 'ENTRY' && !p.isUpwelling && !p.isDownwelling) {
-        if (p.zone === CurrentZoneType.DEEP || p.zone === CurrentZoneType.COLD) {
-          if (Math.random() < 0.02 * deltaSeconds) {
-            p.isUpwelling = true;
-            p.upwellingOrigin = p.zone;
-
-            if (p.zone === CurrentZoneType.COLD) {
-              const dxTop = this.worldSize - p.x;
-              const dyTop = -p.y;
-              const distToTopRight = Math.sqrt(dxTop * dxTop + dyTop * dyTop);
-
-              const dxBot = -p.x;
-              const dyBot = this.worldSize - p.y;
-              const distToBottomLeft = Math.sqrt(dxBot * dxBot + dyBot * dyBot);
-
-              p.upwellingTarget = distToTopRight < distToBottomLeft 
-                ? { x: this.worldSize, y: this.worldSize * 0.1 } 
-                : { x: this.worldSize * 0.32, y: this.worldSize };
-            } else {
-              p.upwellingTarget = { x: this.worldSize * 0.5, y: this.worldSize * 0.5 };
-            }
-          }
-        }
-      } 
-
-      // 🟡 0b. Проверка входа в даунвеллинг
-      const downwellingZone = this.currentsManager.getDownwellingZoneAt(p.x, p.y);
-
-      if (downwellingZone === 'ENTRY' && !p.isDownwelling && !p.isUpwelling) {
-        if (p.zone === CurrentZoneType.WARM || p.zone === CurrentZoneType.COLD) {
-          if (Math.random() < 0.02 * deltaSeconds) {
-            p.isDownwelling = true;
-            p.downwellingOrigin = p.zone;
-
-            if (p.zone === CurrentZoneType.WARM) {
-              p.downwellingTarget = { x: 0, y: this.worldSize * 0.4 };
-            } else {
-              p.downwellingTarget = { x: 0, y: 0 };
-            }
-          }
-        }
-      }
-      
-      // 🟢 ДВОЙНАЯ ПРОВЕРКА ВЫХОДА АПВЕЛЛИНГА: EXIT + Родная зона
-      if (p.isUpwelling) {
-        const mainZone = this.currentsManager.getZoneAt(p.x, p.y);
-
-        if (p.upwellingOrigin === CurrentZoneType.COLD) {
-          if (upwellingZone === 'EXIT' && mainZone === CurrentZoneType.COLD) {
-            p.isUpwelling = false;
-            p.zone = CurrentZoneType.COLD;
-          }
-        } else if (p.upwellingOrigin === CurrentZoneType.DEEP) {
-          if (upwellingZone === 'EXIT' && mainZone === CurrentZoneType.WARM) {
-            p.isUpwelling = false;
-            p.zone = CurrentZoneType.WARM;
-          }
-        }
-      }
-
-      // 🟡 ДВОЙНАЯ ПРОВЕРКА ВЫХОДА ДАУНВЕЛЛИНГА: EXIT + Проникновение вглубь DEEP
-      if (p.isDownwelling) {
-        const mainZone = this.currentsManager.getZoneAt(p.x, p.y);
-
-        if (p.downwellingOrigin === CurrentZoneType.WARM) {
-          if (mainZone === CurrentZoneType.DEEP) {
-            if (p.downwellingPenetrationTimer === undefined) {
-              p.downwellingPenetrationTimer = 1.5 + Math.random() * 2.0;
-            } else {
-              p.downwellingPenetrationTimer -= deltaSeconds;
-              if (p.downwellingPenetrationTimer <= 0) {
-                p.isDownwelling = false;
-                p.zone = CurrentZoneType.DEEP;
-                p.downwellingPenetrationTimer = undefined;
-              }
-            }
-          }
-        } else if (p.downwellingOrigin === CurrentZoneType.COLD) {
-          if (downwellingZone === 'EXIT' && mainZone === CurrentZoneType.COLD) {
-            p.isDownwelling = false;
-            p.zone = CurrentZoneType.COLD;
-          }
-        }
-      }
-
-      // 1. Выравнивание + Расталкивание
-      this.applyFlockingAndSeparation(p, this.flockingVector);
-
-      // 2. Водовороты
-      this.applyVortices(p.x, p.y, this.flockingVector.vx, this.flockingVector.vy, this.swirlingVector);
-
-      // 3. Прозрачность и респавн
+      // --- 1. Прозрачность и Респавн ---
       if (p.isDying) {
         p.alpha -= this.FADE_SPEED * deltaSeconds;
         if (p.alpha <= 0) {
@@ -448,52 +383,30 @@ export class CurrentParticlesDebug {
         }
       }
 
-      // 4. Движение с учетом дугового подкручивания (Steering Vector)
+      // --- 2. Логика Движения ---
       if (p.isUpwelling) {
+        // 🟢 Движение Апвеллинга
         const upVector = this.currentsManager.getUpwellingVector();
-        let targetVx = upVector.vx;
-        let targetVy = upVector.vy;
+        p.vx = upVector.vx;
+        p.vy = upVector.vy;
 
-        if (p.upwellingTarget) {
-          const dx = p.upwellingTarget.x - p.x;
-          const dy = p.upwellingTarget.y - p.y;
-          const dist = Math.sqrt(dx * dx + dy * dy);
-
-          if (dist > 1.0) {
-            const dirX = (dx / dist) * 120;
-            const dirY = (dy / dist) * 120;
-
-            const curveFactor = 0.45;
-            targetVx = targetVx * (1 - curveFactor) + dirX * curveFactor;
-            targetVy = targetVy * (1 - curveFactor) + dirY * curveFactor;
-          }
+        if (this.currentsManager.getUpwellingZoneAt(p.x, p.y) === 'EXIT' && p.immunityTimer <= 0) {
+          p.isDying = true;
         }
-
-        p.vx = targetVx;
-        p.vy = targetVy;
       } else if (p.isDownwelling) {
+        // 🟡 Движение Даунвеллинга
         const downVector = this.currentsManager.getDownwellingVector();
-        let targetVx = downVector.vx;
-        let targetVy = downVector.vy;
+        p.vx = downVector.vx;
+        p.vy = downVector.vy;
 
-        if (p.downwellingTarget) {
-          const dx = p.downwellingTarget.x - p.x;
-          const dy = p.downwellingTarget.y - p.y;
-          const dist = Math.sqrt(dx * dx + dy * dy);
-
-          if (dist > 1.0) {
-            const dirX = (dx / dist) * 120;
-            const dirY = (dy / dist) * 120;
-
-            const curveFactor = 0.45;
-            targetVx = targetVx * (1 - curveFactor) + dirX * curveFactor;
-            targetVy = targetVy * (1 - curveFactor) + dirY * curveFactor;
-          }
+        if (this.currentsManager.getDownwellingZoneAt(p.x, p.y) === 'EXIT' && p.immunityTimer <= 0) {
+          p.isDying = true;
         }
-
-        p.vx = targetVx;
-        p.vy = targetVy;
       } else {
+        // 🟣🔵🟠 Обычные частицы горизонтальных течений
+        this.applyFlockingAndSeparation(p, this.flockingVector);
+        this.applyVortices(p.x, p.y, this.flockingVector.vx, this.flockingVector.vy, this.swirlingVector);
+
         const current = this.currentsManager.getCurrentVectorForParticle(
           p.x,
           p.y,
@@ -510,26 +423,24 @@ export class CurrentParticlesDebug {
       p.x += p.vx * deltaSeconds;
       p.y += p.vy * deltaSeconds;
 
-      // 5. Границы карты
+      // Границы мира
       if (p.x <= 0) { p.x = 0; p.vx = Math.abs(p.vx); }
       if (p.x >= this.worldSize) { p.x = this.worldSize; p.vx = -Math.abs(p.vx); }
       if (p.y <= 0) { p.y = 0; p.vy = Math.abs(p.vy); }
       if (p.y >= this.worldSize) { p.y = this.worldSize; p.vy = -Math.abs(p.vy); }
 
-      // Поворот кометы
+      // Вращение и масштаб
       const speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
       if (speed > 0.01) {
         p.sprite.rotation = Math.atan2(p.vy, p.vx);
       }
 
-      // Масштабирование
       const currentSpeedFactor = Math.min(2.0, Math.max(0.5, speed / 100));
       p.sprite.scale.x = p.lengthScale * currentSpeedFactor;
       p.sprite.scale.y = 1.0;
-
       p.sprite.alpha = p.alpha;
 
-      // Цвет частицы
+      // Цвет
       if (p.isUpwelling) {
         p.sprite.tint = this.colorUpwelling;
       } else if (p.isDownwelling) {
