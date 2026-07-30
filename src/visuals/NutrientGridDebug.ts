@@ -15,6 +15,9 @@ export class NutrientGridDebug {
     this.container = new PIXI.Container();
     this.container.visible = false;
 
+    // Включаем округление пикселей: убирает микро-дрожание сетки при зуме и панорамировании
+    this.container.roundPixels = true;
+
     this.backgroundOverlay = new PIXI.Graphics();
     this.gridGraphics = new PIXI.Graphics();
 
@@ -41,35 +44,79 @@ export class NutrientGridDebug {
   }
 
   /**
-   * Фиксированная однократная отрисовка мировой сетки 100x100 px
+   * Отрисовка УНИКАЛЬНЫХ отрезков сетки (без двойных граней и муара)
    */
   public renderGrid(): void {
-    if (this.isRendered) return; // Гарантирует, что сетка строится ровно 1 раз
+    if (this.isRendered) return;
 
     this.gridGraphics.clear();
     const cellSize = this.nutrientGrid.CELL_SIZE;
-    const isV8 = typeof (this.gridGraphics as any).rect === 'function';
+    const g = this.gridGraphics as any;
 
-    // Отрисовываем квадраты строго по координатам клеток океана
+    // Множества для хранения УНИКАЛЬНЫХ граней
+    const hEdges = new Set<string>(); // Горизонтальные отрезки "cx,cy"
+    const vEdges = new Set<string>(); // Вертикальные отрезки "cx,cy"
+
+    // Собираем границы только для водных ячеек
     for (const cell of this.nutrientGrid.cells) {
       if (!cell.isLand) {
-        if (isV8) {
-          this.gridGraphics.rect(cell.worldX, cell.worldY, cellSize, cellSize);
-        } else {
-          (this.gridGraphics as any).drawRect(cell.worldX, cell.worldY, cellSize, cellSize);
-        }
+        const cx = cell.gridX;
+        const cy = cell.gridY;
+
+        hEdges.add(`${cx},${cy}`);       // Верхняя грань
+        hEdges.add(`${cx},${cy + 1}`);   // Нижняя грань
+        vEdges.add(`${cx},${cy}`);       // Левая грань
+        vEdges.add(`${cx + 1},${cy}`);   // Правая грань
       }
     }
 
-    // Тонкая стабильная обводка сетки
-    if (isV8) {
-      this.gridGraphics.stroke({
+    const isV8 = typeof g.moveTo === 'function';
+
+    // Отрисовываем каждую горизонтальную линию строго 1 раз
+    for (const edge of hEdges) {
+      const [cxStr, cyStr] = edge.split(',');
+      const cx = parseInt(cxStr, 10);
+      const cy = parseInt(cyStr, 10);
+      const x1 = cx * cellSize;
+      const y = cy * cellSize;
+      const x2 = (cx + 1) * cellSize;
+
+      if (isV8) {
+        g.moveTo(x1, y);
+        g.lineTo(x2, y);
+      } else {
+        g.lineStyle(1, 0x00e5ff, 0.35);
+        g.moveTo(x1, y);
+        g.lineTo(x2, y);
+      }
+    }
+
+    // Отрисовываем каждую вертикальную линию строго 1 раз
+    for (const edge of vEdges) {
+      const [cxStr, cyStr] = edge.split(',');
+      const cx = parseInt(cxStr, 10);
+      const cy = parseInt(cyStr, 10);
+      const x = cx * cellSize;
+      const y1 = cy * cellSize;
+      const y2 = (cy + 1) * cellSize;
+
+      if (isV8) {
+        g.moveTo(x, y1);
+        g.lineTo(x, y2);
+      } else {
+        g.lineStyle(1, 0x00e5ff, 0.35);
+        g.moveTo(x, y1);
+        g.lineTo(x, y2);
+      }
+    }
+
+    // Запекаем векторы в единый чистый stroke
+    if (typeof g.stroke === 'function') {
+      g.stroke({
         width: 1,
         color: 0x00e5ff,
-        alpha: 0.3,
+        alpha: 0.35,
       });
-    } else {
-      (this.gridGraphics as any).lineStyle(1, 0x00e5ff, 0.3);
     }
 
     this.isRendered = true;
@@ -78,7 +125,6 @@ export class NutrientGridDebug {
   public setVisible(visible: boolean): void {
     this.container.visible = visible;
 
-    // Первичный рендер при первом включении
     if (visible && !this.isRendered) {
       this.renderGrid();
     }
