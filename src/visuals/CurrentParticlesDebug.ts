@@ -22,8 +22,10 @@ interface Particle {
   isDying: boolean;
   immunityTimer: number; // Защита от мгновенного повторного угасания после спавна
 
-  // 🟢 Состояние Апвеллинга
+  // 🟢 Состояние Апвеллинга и нелинейной траектории
   isUpwelling?: boolean;
+  upwellingOrigin?: CurrentZoneType;         // Исходная зона (COLD или DEEP)
+  upwellingTarget?: { x: number; y: number }; // Целевой вектор/точка дуги
 }
 
 interface Vortex {
@@ -44,14 +46,13 @@ export class CurrentParticlesDebug {
   private readonly colorDeep = 0x8a00ff;     // 🟣 Фиолетовый (Глубоководное)
   private readonly colorCold = 0x0000ff;     // 🔵 Синий (Холодное)
   private readonly colorWarm = 0xff5500;     // 🟠 Оранжевый (Теплое)
-  // Берём цвет из общего конфига апвеллинга (#00FF00 -> 0x00FF00)
   private readonly colorUpwelling = parseInt(UPWELLING_COLOR.replace('#', '0x'), 16); 
 
   // --- Множители скорости для разных зон ---
   private readonly zoneSpeedMultipliers: Record<CurrentZoneType, number> = {
-    [CurrentZoneType.WARM]: 1.0,  // 🟠 Прибрежные быстрые потоки (эталон)
-    [CurrentZoneType.COLD]: 0.5,  // 🔵 Основная акватория (в 2 раза медленнее)
-    [CurrentZoneType.DEEP]: 0.17  // 🟣 Медленный донный дрейф (в ~6 раз медленнее)
+    [CurrentZoneType.WARM]: 1.0,  // 🟠 Прибрежные быстрые потоки
+    [CurrentZoneType.COLD]: 0.5,  // 🔵 Основная акватория
+    [CurrentZoneType.DEEP]: 0.17  // 🟣 Медленный донный дрейф
   };
 
   private readonly worldSize = 8000;
@@ -60,15 +61,15 @@ export class CurrentParticlesDebug {
   // --- Параметры Spatial Grid & Flocking ---
   private readonly CELL_SIZE = 200;
   private readonly ALIGNMENT_RADIUS_SQ = 180 * 180;
-  private readonly SEPARATION_RADIUS_SQ = 60 * 60; // Радиус расталкивания для устранения тонких линий
+  private readonly SEPARATION_RADIUS_SQ = 60 * 60;
 
-  private readonly FLOCKING_STRENGTH = 0.10;  // Сила выравнивания
-  private readonly SEPARATION_STRENGTH = 0.25; // Сила отталкивания параллельно идущих частиц
+  private readonly FLOCKING_STRENGTH = 0.10;
+  private readonly SEPARATION_STRENGTH = 0.25;
 
   // --- Параметры контроля плотности и угасания ---
-  private readonly DENSITY_THRESHOLD = 14;   // Порог соседей, при превышении которого частица растворяется
-  private readonly FADE_SPEED = 1.5;          // Скорость анимации Fade In / Fade Out (альфа в сек)
-  private readonly IMMUNITY_DURATION = 3.0;   // Время иммунитета (сек) после респавна
+  private readonly DENSITY_THRESHOLD = 14;
+  private readonly FADE_SPEED = 1.5;
+  private readonly IMMUNITY_DURATION = 3.0;
 
   private gridCols: number;
   private gridRows: number;
@@ -81,7 +82,6 @@ export class CurrentParticlesDebug {
     this.currentsManager = currentsManager;
     this.container = new PIXI.Container();
 
-    // Инициализация пространственной сетки для оптимизации O(N)
     this.gridCols = Math.ceil(this.worldSize / this.CELL_SIZE);
     this.gridRows = Math.ceil(this.worldSize / this.CELL_SIZE);
     this.spatialGrid = new Array(this.gridCols * this.gridRows);
@@ -89,32 +89,23 @@ export class CurrentParticlesDebug {
       this.spatialGrid[i] = [];
     }
 
-    // Создаем сетку из 45 разбросанных водоворотов
     this.generateVortices(45);
-
-    // Генерируем текстуру кометы (64px x 8px) с градиентным хвостом
     this.particleTexture = this.generateCometTexture(64, 8);
     this.initParticles(totalCount);
   }
 
-  /**
-   * Генерация случайных разнонаправленных водоворотов по карте
-   */
   private generateVortices(count: number): void {
     this.vortices = [];
     for (let i = 0; i < count; i++) {
       this.vortices.push({
         x: Math.random() * this.worldSize,
         y: Math.random() * this.worldSize,
-        radius: 300 + Math.random() * 500, // Радиус зоны закручивания (300-800px)
-        strength: (Math.random() > 0.5 ? 1 : -1) * (40 + Math.random() * 80) // Сила и направление вращения
+        radius: 300 + Math.random() * 500,
+        strength: (Math.random() > 0.5 ? 1 : -1) * (40 + Math.random() * 80)
       });
     }
   }
 
-  /**
-   * Генерация текстуры кометы: плавный прозрачный хвост слева, яркая голова справа
-   */
   private generateCometTexture(width: number, height: number): PIXI.Texture {
     const canvas = document.createElement('canvas');
     canvas.width = width;
@@ -123,18 +114,18 @@ export class CurrentParticlesDebug {
     const ctx = canvas.getContext('2d');
     if (ctx) {
       const gradient = ctx.createLinearGradient(0, 0, width, 0);
-      gradient.addColorStop(0, 'rgba(255, 255, 255, 0)');     // Хвост (полная прозрачность)
-      gradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.4)'); // Тело
-      gradient.addColorStop(1, 'rgba(255, 255, 255, 1.0)');   // Голова (яркая)
+      gradient.addColorStop(0, 'rgba(255, 255, 255, 0)');
+      gradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.4)');
+      gradient.addColorStop(1, 'rgba(255, 255, 255, 1.0)');
 
       ctx.fillStyle = gradient;
       ctx.beginPath();
 
       const centerY = height / 2;
-      ctx.moveTo(0, centerY);                                        // Острый хвост
-      ctx.lineTo(width - height, 0);                                 // Верхнее ребро
-      ctx.arcTo(width, centerY, width - height, height, height / 2); // Скругленная голова
-      ctx.lineTo(width - height, height);                            // Нижнее ребро
+      ctx.moveTo(0, centerY);
+      ctx.lineTo(width - height, 0);
+      ctx.arcTo(width, centerY, width - height, height, height / 2);
+      ctx.lineTo(width - height, height);
       ctx.closePath();
       ctx.fill();
     }
@@ -142,9 +133,6 @@ export class CurrentParticlesDebug {
     return PIXI.Texture.from(canvas);
   }
 
-  /**
-   * Инициализация частиц с точным распределением по ZONE_PARTICLE_COUNTS из менеджер-файла
-   */
   private initParticles(totalCount: number): void {
     const scaleFactor = totalCount / 10000;
     const zones = [CurrentZoneType.DEEP, CurrentZoneType.COLD, CurrentZoneType.WARM];
@@ -157,7 +145,6 @@ export class CurrentParticlesDebug {
         const pt = spawnPoints[i] || { x: this.worldSize * 0.5, y: this.worldSize * 0.5 };
         const sprite = new PIXI.Sprite(this.particleTexture);
 
-        // Устанавливаем анкор в голову кометы (правый край: x=1.0, y=0.5)
         sprite.anchor.set(1.0, 0.5);
 
         const lengthScale = 0.8 + Math.random() * 1.7;
@@ -181,9 +168,6 @@ export class CurrentParticlesDebug {
     }
   }
 
-  /**
-   * Сброс/респавн частицы в случайной точке её зоны с новым вектором
-   */
   private relocateToZone(p: Particle): void {
     const pts = this.currentsManager.getInitialParticlesForZone(p.zone, 1);
     const pos = pts[0] || { x: this.worldSize * 0.5, y: this.worldSize * 0.5 };
@@ -199,9 +183,10 @@ export class CurrentParticlesDebug {
     p.isDying = false;
     p.immunityTimer = this.IMMUNITY_DURATION;
     p.isUpwelling = false;
+    p.upwellingOrigin = undefined;
+    p.upwellingTarget = undefined;
   }
 
-  // --- Методы Spatial Grid ---
   private clearGrid(): void {
     const totalCells = this.spatialGrid.length;
     for (let i = 0; i < totalCells; i++) {
@@ -223,9 +208,6 @@ export class CurrentParticlesDebug {
     }
   }
 
-  /**
-   * Расчет Flocking (Alignment) + Separation (Разбиение линий отталкиванием)
-   */
   private applyFlockingAndSeparation(p: Particle): { vx: number; vy: number } {
     const cx = Math.floor(p.x / this.CELL_SIZE);
     const cy = Math.floor(p.y / this.CELL_SIZE);
@@ -249,7 +231,6 @@ export class CurrentParticlesDebug {
         for (let i = 0; i < cell.length; i++) {
           const other = cell[i];
 
-          // Считаем только соседей ТОГО ЖЕ ТИПА зоны
           if (other !== p && other.zone === p.zone) {
             const dx = p.x - other.x;
             const dy = p.y - other.y;
@@ -260,7 +241,6 @@ export class CurrentParticlesDebug {
               sumVy += other.vy;
               neighborCount++;
 
-              // Separation: расталкивание близких соседей для расширения однорядных потоков
               if (distSq < this.SEPARATION_RADIUS_SQ) {
                 const dist = Math.sqrt(distSq);
                 separateX += (dx / dist) * (this.SEPARATION_RADIUS_SQ - distSq);
@@ -272,7 +252,6 @@ export class CurrentParticlesDebug {
       }
     }
 
-    // ТРИГГЕР ТУЧИ: растворяем частицу при перенаселении
     if (neighborCount >= this.DENSITY_THRESHOLD && p.immunityTimer <= 0 && !p.isDying) {
       p.isDying = true;
     }
@@ -287,16 +266,12 @@ export class CurrentParticlesDebug {
       resultVy += (avgVy - p.vy) * this.FLOCKING_STRENGTH;
     }
 
-    // Применяем отталкивание
     resultVx += separateX * this.SEPARATION_STRENGTH * 0.001;
     resultVy += separateY * this.SEPARATION_STRENGTH * 0.001;
 
     return { vx: resultVx, vy: resultVy };
   }
 
-  /**
-   * Наложение касательного вектора вращения водоворотов
-   */
   private applyVortices(x: number, y: number, vx: number, vy: number): { vx: number; vy: number } {
     let vortexVx = 0;
     let vortexVy = 0;
@@ -309,9 +284,8 @@ export class CurrentParticlesDebug {
 
       if (distSq < v.radius * v.radius && distSq > 1.0) {
         const dist = Math.sqrt(distSq);
-        const factor = 1.0 - dist / v.radius; // Усиление к центру водоворота
+        const factor = 1.0 - dist / v.radius;
 
-        // Тангенциальный (касательный) вектор
         const tangentX = -dy / dist;
         const tangentY = dx / dist;
 
@@ -327,7 +301,6 @@ export class CurrentParticlesDebug {
   }
 
   public update(deltaSeconds: number): void {
-    // Единоразовое распределение по маске при старте загрузки
     if (this.currentsManager.isLoaded && !this.isInitializedWithMask) {
       for (const p of this.particles) {
         this.relocateToZone(p);
@@ -343,43 +316,66 @@ export class CurrentParticlesDebug {
     for (let i = 0; i < total; i++) {
       const p = this.particles[i];
 
-      // Уменьшаем таймер иммунитета
       if (p.immunityTimer > 0) {
         p.immunityTimer -= deltaSeconds;
       }
 
-      // 🟢 0. Проверка апвеллинга с вероятностным входом и фильтрацией зоны выхода
+      // 🟢 0. Проверка входа в апвеллинг
       const upwellingZone = this.currentsManager.getUpwellingZoneAt(p.x, p.y);
+      
       if (upwellingZone === 'ENTRY' && !p.isUpwelling) {
-        // Защита: в апвеллинг переходят только фиолетовые (DEEP) и синие (COLD) частицы
         if (p.zone === CurrentZoneType.DEEP || p.zone === CurrentZoneType.COLD) {
-          // Шанс 10% с привязкой к deltaSeconds (не зависит от FPS)
           if (Math.random() < 0.10 * deltaSeconds) {
             p.isUpwelling = true;
+            p.upwellingOrigin = p.zone;
+
+            // Расчет дуговой цели для нелинейной траектории
+            if (p.zone === CurrentZoneType.COLD) {
+              const distToTopRight = Math.hypot(this.worldSize - p.x, 0 - p.y);
+              const distToBottomLeft = Math.hypot(0 - p.x, this.worldSize - p.y);
+              
+              p.upwellingTarget = distToTopRight < distToBottomLeft 
+                ? { x: this.worldSize, y: 0 } 
+                : { x: 0, y: this.worldSize };
+            } else {
+              // DEEP держит курс к оранжевому массиву через центр маски
+              p.upwellingTarget = { x: this.worldSize * 0.5, y: this.worldSize * 0.5 };
+            }
           }
         }
-      } else if (upwellingZone === 'EXIT' && p.isUpwelling) {
-        // Сбрасываем статус апвеллинга ТОЛЬКО при выходе в синюю (COLD) или оранжевую (WARM) зону
-        const currentZone = this.currentsManager.getZoneAt(p.x, p.y);
-        if (currentZone === CurrentZoneType.COLD || currentZone === CurrentZoneType.WARM) {
-          p.isUpwelling = false;
-          p.zone = currentZone; // Переназначаем частицу в новую поверхностную зону
+      } 
+      
+      // 🟢 ДВОЙНАЯ ПРОВЕРКА ВЫХОДА: Пересечение EXIT (светло-зеленого) + Родной зоны
+      if (p.isUpwelling) {
+        const mainZone = this.currentsManager.getZoneAt(p.x, p.y);
+
+        if (p.upwellingOrigin === CurrentZoneType.COLD) {
+          // COLD: Светло-зеленый участок (EXIT) И Синяя зона (COLD)
+          if (upwellingZone === 'EXIT' && mainZone === CurrentZoneType.COLD) {
+            p.isUpwelling = false;
+            p.zone = CurrentZoneType.COLD;
+          }
+        } else if (p.upwellingOrigin === CurrentZoneType.DEEP) {
+          // DEEP: Светло-зеленый участок (EXIT) И Оранжевая зона (WARM)
+          if (upwellingZone === 'EXIT' && mainZone === CurrentZoneType.WARM) {
+            p.isUpwelling = false;
+            p.zone = CurrentZoneType.WARM;
+          }
         }
-        // Если попали в фиолетовую/непонятную зону -- статус остаётся true, и частица продолжит лететь далее
       }
 
-      // 1. Выравнивание (Alignment) + Расталкивание (Separation)
+      // 1. Выравнивание + Расталкивание
       const flockingDir = this.applyFlockingAndSeparation(p);
 
-      // 2. Влияние поля водоворотов
+      // 2. Водовороты
       const swirlingDir = this.applyVortices(p.x, p.y, flockingDir.vx, flockingDir.vy);
 
-      // 3. Управление прозрачностью (Fade In / Fade Out) и респавн
+      // 3. Прозрачность и респавн
       if (p.isDying) {
         p.alpha -= this.FADE_SPEED * deltaSeconds;
         if (p.alpha <= 0) {
           p.alpha = 0;
-          this.relocateToZone(p); // Переспавн в случайной точке океана
+          this.relocateToZone(p);
         }
       } else {
         if (p.alpha < 0.85) {
@@ -388,14 +384,30 @@ export class CurrentParticlesDebug {
         }
       }
 
-      // 4. Физика течений и апвеллинга
+      // 4. Движение с учетом дугового подкручивания (Steering Vector)
       if (p.isUpwelling) {
-        // 🟢 Движение по вектору апвеллинга (диагональный лифт 45° со скоростью 0.75x)
         const upVector = this.currentsManager.getUpwellingVector();
-        p.vx = upVector.vx;
-        p.vy = upVector.vy;
+        let targetVx = upVector.vx;
+        let targetVy = upVector.vy;
+
+        if (p.upwellingTarget) {
+          const dx = p.upwellingTarget.x - p.x;
+          const dy = p.upwellingTarget.y - p.y;
+          const dist = Math.hypot(dx, dy);
+
+          if (dist > 1.0) {
+            const dirX = (dx / dist) * 120;
+            const dirY = (dy / dist) * 120;
+
+            const curveFactor = 0.45;
+            targetVx = targetVx * (1 - curveFactor) + dirX * curveFactor;
+            targetVy = targetVy * (1 - curveFactor) + dirY * curveFactor;
+          }
+        }
+
+        p.vx = targetVx;
+        p.vy = targetVy;
       } else {
-        // Стандартная физика течений зоны
         const current = this.currentsManager.getCurrentVectorForParticle(
           p.x,
           p.y,
@@ -412,27 +424,26 @@ export class CurrentParticlesDebug {
       p.x += p.vx * deltaSeconds;
       p.y += p.vy * deltaSeconds;
 
-      // 5. Отскок от крайних границ карты
+      // 5. Границы карты
       if (p.x <= 0) { p.x = 0; p.vx = Math.abs(p.vx); }
       if (p.x >= this.worldSize) { p.x = this.worldSize; p.vx = -Math.abs(p.vx); }
       if (p.y <= 0) { p.y = 0; p.vy = Math.abs(p.vy); }
       if (p.y >= this.worldSize) { p.y = this.worldSize; p.vy = -Math.abs(p.vy); }
 
-      // Поворот кометы вдоль направления движения
+      // Поворот кометы
       const speed = Math.hypot(p.vx, p.vy);
       if (speed > 0.01) {
         p.sprite.rotation = Math.atan2(p.vy, p.vx);
       }
 
-      // Динамический размер в зависимости от скорости
+      // Масштабирование
       const currentSpeedFactor = Math.min(2.0, Math.max(0.5, speed / 100));
       p.sprite.scale.x = p.lengthScale * currentSpeedFactor;
       p.sprite.scale.y = 1.0;
 
-      // Применение текущей прозрачности спрайта
       p.sprite.alpha = p.alpha;
 
-      // Окрашивание в цвет своей зоны или в ярко-зелёный при апвеллинге
+      // Цвет частицы
       if (p.isUpwelling) {
         p.sprite.tint = this.colorUpwelling;
       } else {
