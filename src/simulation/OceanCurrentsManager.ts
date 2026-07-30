@@ -14,6 +14,7 @@ export enum CurrentZoneType {
 }
 
 export type UpwellingZoneType = 'ENTRY' | 'EXIT';
+export type DownwellingZoneType = 'ENTRY' | 'EXIT';
 
 export interface CurrentData {
   vx: number;
@@ -34,8 +35,11 @@ export const ZONE_COLOR_MAP: Record<CurrentZoneType, string> = {
   [CurrentZoneType.WARM]: '#FF5500'
 };
 
-// 🟢 Цвет частиц Апвеллинга
+// 🟢 Цвет частиц Апвеллинга (Зелёный)
 export const UPWELLING_COLOR = '#00FF00';
+
+// 🟡 Цвет частиц Даунвеллинга (Жёлтый)
+export const DOWNWELLING_COLOR = '#FFFF00';
 
 export const ZONE_SPEED_MULTIPLIERS: Record<CurrentZoneType, number> = {
   [CurrentZoneType.DEEP]: 0.85,
@@ -45,6 +49,9 @@ export const ZONE_SPEED_MULTIPLIERS: Record<CurrentZoneType, number> = {
 
 // 🟢 Множитель скорости Апвеллинга (плотная глубинная вода)
 export const UPWELLING_SPEED_MULTIPLIER = 0.75;
+
+// 🟡 Множитель скорости Даунвеллинга (равен апвеллингу)
+export const DOWNWELLING_SPEED_MULTIPLIER = 0.75;
 
 // 🔥 РАСПРЕДЕЛЕНИЕ 10 000 ЧАСТИЦ ПО ЗОНАМ
 export const ZONE_PARTICLE_COUNTS: Record<CurrentZoneType, number> = {
@@ -61,6 +68,7 @@ export class OceanCurrentsManager {
   private readonly MASK_SIZE = 1000;
   private maskData: Uint8ClampedArray | null = null;
   private upwellingMaskData: Uint8ClampedArray | null = null;
+  private downwellingMaskData: Uint8ClampedArray | null = null;
   private maskCanvas: HTMLCanvasElement | null = null;
   private darkeningSprite: PIXI.Sprite | null = null;
 
@@ -111,6 +119,16 @@ export class OceanCurrentsManager {
       this.upwellingMaskData = this.extractImageData(loadedUpwellingImg);
     } catch {
       console.warn('[OceanCurrentsManager] Маска апвеллинга не найдена. Апвеллинг будет отключен.');
+    }
+
+    // 3. Загружаем маску даунвеллинга
+    const downwellingPath = `${cleanBase}/assets/ocean_downwelling_mask.png`;
+    try {
+      const loadedDownwellingImg = await this.loadImage(downwellingPath);
+      console.log(`[OceanCurrentsManager] Успешно загружена маска даунвеллинга: ${downwellingPath}`);
+      this.downwellingMaskData = this.extractImageData(loadedDownwellingImg);
+    } catch {
+      console.warn('[OceanCurrentsManager] Маска даунвеллинга не найдена. Даунвеллинг будет отключен.');
     }
 
     if (!loadedImg) {
@@ -200,6 +218,38 @@ export class OceanCurrentsManager {
   }
 
   /**
+   * 🟡 ПРОВЕРКА ЗОНЫ ДАУНВЕЛЛИНГА В КООРДИНАТЕ (ENTRY / EXIT)
+   */
+  public getDownwellingZoneAt(x: number, y: number): DownwellingZoneType | null {
+    if (!this.downwellingMaskData) return null;
+    if (x < 0 || x >= this.worldWidth || y < 0 || y >= this.worldHeight) return null;
+
+    const gx = Math.floor((x / this.worldWidth) * this.MASK_SIZE);
+    const gy = Math.floor((y / this.worldHeight) * this.MASK_SIZE);
+    const index = (gy * this.MASK_SIZE + gx) * 4;
+
+    const r = this.downwellingMaskData[index];
+    const g = this.downwellingMaskData[index + 1];
+    const b = this.downwellingMaskData[index + 2];
+    const a = this.downwellingMaskData[index + 3];
+
+    // Пропускаем прозрачные пиксели и сушу/белую инертную зону
+    if (a <= 50 || (r < 20 && g < 20 && b < 20)) return null;
+
+    // 🟡 Светло-жёлтая зона (EXIT)
+    if (r > 200 && g > 140 && b < 80) {
+      return 'EXIT';
+    }
+
+    // 🟤 Тёмно-жёлтая / коричневая зона (ENTRY)
+    if (r > 80 && r < 190 && g > 40 && g < 140 && b < 70) {
+      return 'ENTRY';
+    }
+
+    return null;
+  }
+
+  /**
    * 🟢 ВЕКТОР ДВИЖЕНИЯ ЧАСТИЦЫ АПВЕЛЛИНГА
    * Диагональный экспресс-лифт под углом 45 градусов (вправо-вниз) со скоростью 0.75x
    */
@@ -209,6 +259,19 @@ export class OceanCurrentsManager {
     return {
       vx: invSqrt2 * speed,
       vy: invSqrt2 * speed
+    };
+  }
+
+  /**
+   * 🟡 ВЕКТОР ДВИЖЕНИЯ ЧАСТИЦЫ ДАУНВЕЛЛИНГА
+   * Диагональный экспресс-лифт под углом 225 градусов (влево-вверх) со скоростью 0.75x
+   */
+  public getDownwellingVector(): { vx: number; vy: number } {
+    const speed = this.baseSpeed * DOWNWELLING_SPEED_MULTIPLIER;
+    const invSqrt2 = 0.70710678;
+    return {
+      vx: -invSqrt2 * speed,
+      vy: -invSqrt2 * speed
     };
   }
 

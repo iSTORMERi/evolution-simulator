@@ -5,7 +5,8 @@ import {
   OceanCurrentsManager, 
   CurrentZoneType, 
   ZONE_PARTICLE_COUNTS,
-  UPWELLING_COLOR 
+  UPWELLING_COLOR,
+  DOWNWELLING_COLOR
 } from '../simulation/OceanCurrentsManager';
 
 interface Particle {
@@ -26,6 +27,11 @@ interface Particle {
   isUpwelling?: boolean;
   upwellingOrigin?: CurrentZoneType;         // Исходная зона (COLD или DEEP)
   upwellingTarget?: { x: number; y: number }; // Целевой вектор/точка дуги
+
+  // 🟡 Состояние Даунвеллинга
+  isDownwelling?: boolean;
+  downwellingOrigin?: CurrentZoneType;       // Исходная зона (WARM или COLD)
+  downwellingTarget?: { x: number; y: number };
 }
 
 interface Vortex {
@@ -46,7 +52,8 @@ export class CurrentParticlesDebug {
   private readonly colorDeep = 0x8a00ff;     // 🟣 Фиолетовый (Глубоководное)
   private readonly colorCold = 0x0000ff;     // 🔵 Синий (Холодное)
   private readonly colorWarm = 0xff5500;     // 🟠 Оранжевый (Теплое)
-  private readonly colorUpwelling = parseInt(UPWELLING_COLOR.replace('#', '0x'), 16); 
+  private readonly colorUpwelling = parseInt(UPWELLING_COLOR.replace('#', '0x'), 16);   // 🟢 Неоново-зелёный
+  private readonly colorDownwelling = parseInt(DOWNWELLING_COLOR.replace('#', '0x'), 16); // 🟡 Жёлтый
 
   // --- Множители скорости для разных зон ---
   private readonly zoneSpeedMultipliers: Record<CurrentZoneType, number> = {
@@ -162,7 +169,8 @@ export class CurrentParticlesDebug {
           alpha: Math.random() * 0.85,
           isDying: false,
           immunityTimer: Math.random() * this.IMMUNITY_DURATION,
-          isUpwelling: false
+          isUpwelling: false,
+          isDownwelling: false
         });
       }
     }
@@ -185,6 +193,10 @@ export class CurrentParticlesDebug {
     p.isUpwelling = false;
     p.upwellingOrigin = undefined;
     p.upwellingTarget = undefined;
+
+    p.isDownwelling = false;
+    p.downwellingOrigin = undefined;
+    p.downwellingTarget = undefined;
   }
 
   private clearGrid(): void {
@@ -323,44 +335,75 @@ export class CurrentParticlesDebug {
       // 🟢 0. Проверка входа в апвеллинг
       const upwellingZone = this.currentsManager.getUpwellingZoneAt(p.x, p.y);
       
-      if (upwellingZone === 'ENTRY' && !p.isUpwelling) {
+      if (upwellingZone === 'ENTRY' && !p.isUpwelling && !p.isDownwelling) {
         if (p.zone === CurrentZoneType.DEEP || p.zone === CurrentZoneType.COLD) {
           if (Math.random() < 0.10 * deltaSeconds) {
             p.isUpwelling = true;
             p.upwellingOrigin = p.zone;
 
-            // Расчет дуговой цели для нелинейной траектории
             if (p.zone === CurrentZoneType.COLD) {
               const distToTopRight = Math.hypot(this.worldSize - p.x, 0 - p.y);
               const distToBottomLeft = Math.hypot(0 - p.x, this.worldSize - p.y);
               
-              // 🟢 Направление вниз и вправо (к x = 32% ширины мира) для прохождения через светло-зеленую полосу EXIT
               p.upwellingTarget = distToTopRight < distToBottomLeft 
                 ? { x: this.worldSize, y: this.worldSize * 0.1 } 
                 : { x: this.worldSize * 0.32, y: this.worldSize };
             } else {
-              // DEEP держит курс к оранжевому массиву через центр маски
               p.upwellingTarget = { x: this.worldSize * 0.5, y: this.worldSize * 0.5 };
             }
           }
         }
       } 
+
+      // 🟡 0b. Проверка входа в даунвеллинг
+      const downwellingZone = this.currentsManager.getDownwellingZoneAt(p.x, p.y);
+
+      if (downwellingZone === 'ENTRY' && !p.isDownwelling && !p.isUpwelling) {
+        if (p.zone === CurrentZoneType.WARM || p.zone === CurrentZoneType.COLD) {
+          if (Math.random() < 0.10 * deltaSeconds) {
+            p.isDownwelling = true;
+            p.downwellingOrigin = p.zone;
+
+            // Направление траектории погружения (влево-вверх)
+            if (p.zone === CurrentZoneType.WARM) {
+              p.downwellingTarget = { x: 0, y: this.worldSize * 0.4 };
+            } else {
+              p.downwellingTarget = { x: 0, y: 0 };
+            }
+          }
+        }
+      }
       
-      // 🟢 ДВОЙНАЯ ПРОВЕРКА ВЫХОДА: Пересечение EXIT (светло-зеленого) + Родной зоны
+      // 🟢 ДВОЙНАЯ ПРОВЕРКА ВЫХОДА АПВЕЛЛИНГА: EXIT + Родная зона
       if (p.isUpwelling) {
         const mainZone = this.currentsManager.getZoneAt(p.x, p.y);
 
         if (p.upwellingOrigin === CurrentZoneType.COLD) {
-          // COLD: Светло-зеленый участок (EXIT) И Синяя зона (COLD)
           if (upwellingZone === 'EXIT' && mainZone === CurrentZoneType.COLD) {
             p.isUpwelling = false;
             p.zone = CurrentZoneType.COLD;
           }
         } else if (p.upwellingOrigin === CurrentZoneType.DEEP) {
-          // DEEP: Светло-зеленый участок (EXIT) И Оранжевая зона (WARM)
           if (upwellingZone === 'EXIT' && mainZone === CurrentZoneType.WARM) {
             p.isUpwelling = false;
             p.zone = CurrentZoneType.WARM;
+          }
+        }
+      }
+
+      // 🟡 ДВОЙНАЯ ПРОВЕРКА ВЫХОДА ДАУНВЕЛЛИНГА: EXIT + Родная целевая зона
+      if (p.isDownwelling) {
+        const mainZone = this.currentsManager.getZoneAt(p.x, p.y);
+
+        if (p.downwellingOrigin === CurrentZoneType.WARM) {
+          if (downwellingZone === 'EXIT' && mainZone === CurrentZoneType.COLD) {
+            p.isDownwelling = false;
+            p.zone = CurrentZoneType.COLD;
+          }
+        } else if (p.downwellingOrigin === CurrentZoneType.COLD) {
+          if (downwellingZone === 'EXIT' && mainZone === CurrentZoneType.DEEP) {
+            p.isDownwelling = false;
+            p.zone = CurrentZoneType.DEEP;
           }
         }
       }
@@ -394,6 +437,28 @@ export class CurrentParticlesDebug {
         if (p.upwellingTarget) {
           const dx = p.upwellingTarget.x - p.x;
           const dy = p.upwellingTarget.y - p.y;
+          const dist = Math.hypot(dx, dy);
+
+          if (dist > 1.0) {
+            const dirX = (dx / dist) * 120;
+            const dirY = (dy / dist) * 120;
+
+            const curveFactor = 0.45;
+            targetVx = targetVx * (1 - curveFactor) + dirX * curveFactor;
+            targetVy = targetVy * (1 - curveFactor) + dirY * curveFactor;
+          }
+        }
+
+        p.vx = targetVx;
+        p.vy = targetVy;
+      } else if (p.isDownwelling) {
+        const downVector = this.currentsManager.getDownwellingVector();
+        let targetVx = downVector.vx;
+        let targetVy = downVector.vy;
+
+        if (p.downwellingTarget) {
+          const dx = p.downwellingTarget.x - p.x;
+          const dy = p.downwellingTarget.y - p.y;
           const dist = Math.hypot(dx, dy);
 
           if (dist > 1.0) {
@@ -447,6 +512,8 @@ export class CurrentParticlesDebug {
       // Цвет частицы
       if (p.isUpwelling) {
         p.sprite.tint = this.colorUpwelling;
+      } else if (p.isDownwelling) {
+        p.sprite.tint = this.colorDownwelling;
       } else {
         switch (p.zone) {
           case CurrentZoneType.DEEP:
