@@ -334,9 +334,10 @@ export class CurrentParticlesDebug {
               const distToTopRight = Math.hypot(this.worldSize - p.x, 0 - p.y);
               const distToBottomLeft = Math.hypot(0 - p.x, this.worldSize - p.y);
               
+              // 🟢 Направление вниз и вправо (к x = 32% ширины мира) для прохождения через светло-зеленую полосу EXIT
               p.upwellingTarget = distToTopRight < distToBottomLeft 
-                ? { x: this.worldSize, y: 0 } 
-                : { x: 0, y: this.worldSize };
+                ? { x: this.worldSize, y: this.worldSize * 0.1 } 
+                : { x: this.worldSize * 0.32, y: this.worldSize };
             } else {
               // DEEP держит курс к оранжевому массиву через центр маски
               p.upwellingTarget = { x: this.worldSize * 0.5, y: this.worldSize * 0.5 };
