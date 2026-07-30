@@ -351,9 +351,12 @@ export class CurrentParticlesDebug {
       // 🟢 0. Проверка апвеллинга с вероятностным входом и фильтрацией зоны выхода
       const upwellingZone = this.currentsManager.getUpwellingZoneAt(p.x, p.y);
       if (upwellingZone === 'ENTRY' && !p.isUpwelling) {
-        // Сниженный шанс превращения (5%), чтобы избежать опустошения зоны
-        if (Math.random() < 0.05) {
-          p.isUpwelling = true;
+        // Защита: в апвеллинг переходят только фиолетовые (DEEP) и синие (COLD) частицы
+        if (p.zone === CurrentZoneType.DEEP || p.zone === CurrentZoneType.COLD) {
+          // Шанс 10% с привязкой к deltaSeconds (не зависит от FPS)
+          if (Math.random() < 0.10 * deltaSeconds) {
+            p.isUpwelling = true;
+          }
         }
       } else if (upwellingZone === 'EXIT' && p.isUpwelling) {
         // Сбрасываем статус апвеллинга ТОЛЬКО при выходе в синюю (COLD) или оранжевую (WARM) зону
