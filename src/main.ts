@@ -108,8 +108,8 @@ async function initApp() {
       debugParticles.container.visible = visible;
     });
 
-    // 1.3. Инициализация сетки нутриентов в Screen-Space (добавляем напрямую в app.stage)
-    const nutrientGrid = new NutrientGrid(oceanCurrents);
+    // 1.3. Инициализация сетки нутриентов (передаем ОБА менеджера: oceanCurrents и worldMap)
+    const nutrientGrid = new NutrientGrid(oceanCurrents, worldMap);
     const nutrientGridDebug = new NutrientGridDebug(nutrientGrid, app, worldMap.container);
     
     app.stage.addChild(nutrientGridDebug.container);
