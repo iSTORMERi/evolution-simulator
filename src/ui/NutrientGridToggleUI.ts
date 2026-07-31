@@ -1,13 +1,16 @@
 // src/ui/NutrientGridToggleUI.ts
 
 import { NutrientGridDebug } from '../visuals/NutrientGridDebug';
+import { NutrientPanelUI } from './NutrientPanelUI';
 
 export class NutrientGridToggleUI {
   private button: HTMLButtonElement;
   private gridDebug: NutrientGridDebug;
+  private panelUI: NutrientPanelUI;
 
   constructor(gridDebug: NutrientGridDebug) {
     this.gridDebug = gridDebug;
+    this.panelUI = new NutrientPanelUI();
     this.button = document.createElement('button');
     this.initUI();
   }
@@ -44,9 +47,12 @@ export class NutrientGridToggleUI {
       webkitUserSelect: 'none',
     });
 
-    // Эффект при клике (подсветка синим при включении)
+    // Эффект при клике (подсветка синим при включении и показ панели UI)
     this.button.addEventListener('click', () => {
       const isVisible = this.gridDebug.toggle();
+
+      // Синхронизируем состояние боковой панели нутриентов
+      this.panelUI.toggle(isVisible);
 
       if (isVisible) {
         this.button.style.backgroundColor = 'rgba(74, 160, 237, 0.4)';
