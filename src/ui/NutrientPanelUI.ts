@@ -47,8 +47,9 @@ export class NutrientPanelUI {
   private container: HTMLDivElement;
   private activeTab: 'view' | 'injector' = 'view';
   private selectedGroup: ElementGroup | 'all' = 'all';
-  private selectedElementId: string = 'N';
+  private selectedElementId: string = 'C';
   private brushSize: number = 1;
+  private onCloseCallback?: () => void;
 
   constructor() {
     this.injectStyles();
@@ -58,18 +59,35 @@ export class NutrientPanelUI {
     this.render();
   }
 
+  public setOnCloseCallback(cb: () => void): void {
+    this.onCloseCallback = cb;
+  }
+
   public show(): void {
     this.container.classList.add('visible');
   }
 
   public hide(): void {
+    const wasVisible = this.container.classList.contains('visible');
     this.container.classList.remove('visible');
+    if (wasVisible && this.onCloseCallback) {
+      this.onCloseCallback();
+    }
   }
 
-  public toggle(visible?: boolean): void {
+  public toggle(visible?: boolean): boolean {
     const shouldShow = visible !== undefined ? visible : !this.container.classList.contains('visible');
     if (shouldShow) this.show();
     else this.hide();
+    return shouldShow;
+  }
+
+  public getSelectedElement(): NutrientElement {
+    return NUTRIENT_ELEMENTS.find(e => e.id === this.selectedElementId) || NUTRIENT_ELEMENTS[0];
+  }
+
+  public getActiveTab(): 'view' | 'injector' {
+    return this.activeTab;
   }
 
   private createPanelDOM(): HTMLDivElement {
@@ -87,6 +105,7 @@ export class NutrientPanelUI {
           <span class="icon">🧪</span>
           <span>Нутриенты и Химия</span>
         </div>
+        <button class="panel-close-btn" id="btn-close-panel">✕</button>
       </div>
 
       <!-- Переключатель вкладок -->
@@ -108,7 +127,6 @@ export class NutrientPanelUI {
     this.attachDynamicListeners();
   }
 
-  // --- Отрисовка Вкладки «Просмотр» ---
   private renderViewTab(): string {
     const filteredElements = this.selectedGroup === 'all' 
       ? NUTRIENT_ELEMENTS 
@@ -145,12 +163,10 @@ export class NutrientPanelUI {
     `;
   }
 
-  // --- Отрисовка Вкладки «Инжектор» ---
   private renderInjectorTab(): string {
-    const selectedEl = NUTRIENT_ELEMENTS.find(e => e.id === this.selectedElementId) || NUTRIENT_ELEMENTS[1];
+    const selectedEl = this.getSelectedElement();
 
     return `
-      <!-- Выбранный элемент -->
       <div class="injector-active-element">
         <span class="label">Кисть элемента:</span>
         <div class="selected-badge" style="border-color: ${selectedEl.color}">
@@ -159,7 +175,6 @@ export class NutrientPanelUI {
         </div>
       </div>
 
-      <!-- Размер кисти -->
       <div class="control-group">
         <label>Размер кисти (ячейки):</label>
         <div class="size-selector">
@@ -169,7 +184,6 @@ export class NutrientPanelUI {
         </div>
       </div>
 
-      <!-- Сила впрыска -->
       <div class="control-group">
         <label>Интенсивность распыления:</label>
         <div class="slider-wrapper">
@@ -178,7 +192,6 @@ export class NutrientPanelUI {
         </div>
       </div>
 
-      <!-- Действия -->
       <div class="injector-actions">
         <button class="action-btn danger">🧹 Очистить сетку</button>
         <button class="action-btn secondary">⏸️ Пауза диффузии</button>
@@ -186,11 +199,14 @@ export class NutrientPanelUI {
     `;
   }
 
-  // --- Обработчики событий DOM ---
   private bindEvents(): void {
-    // Клик по вкладкам
     this.container.addEventListener('click', (e) => {
       const target = e.target as HTMLElement;
+
+      if (target.closest('#btn-close-panel')) {
+        this.hide();
+        return;
+      }
 
       const tabBtn = target.closest('.tab-btn') as HTMLElement;
       if (tabBtn) {
@@ -232,7 +248,6 @@ export class NutrientPanelUI {
     }
   }
 
-  // --- Внедрение стилей CSS ---
   private injectStyles(): void {
     if (document.getElementById('nutrient-panel-styles')) return;
 
@@ -244,30 +259,33 @@ export class NutrientPanelUI {
         top: 20px;
         right: 20px;
         width: 320px;
-        background: rgba(22, 27, 34, 0.85);
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
-        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(22, 27, 34, 0.88);
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
+        border: 1px solid rgba(255, 255, 255, 0.12);
         border-radius: 12px;
         box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
         color: #c9d1d9;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         font-size: 13px;
         z-index: 9999;
         opacity: 0;
-        transform: translateX(30px) scale(0.95);
+        transform: translateY(-10px) scale(0.95);
         pointer-events: none;
-        transition: opacity 0.25s ease, transform 0.25s ease;
+        transition: opacity 0.2s ease, transform 0.2s ease;
         overflow: hidden;
       }
 
       .nutrient-panel.visible {
         opacity: 1;
-        transform: translateX(0) scale(1);
+        transform: translateY(0) scale(1);
         pointer-events: all;
       }
 
       .panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
         padding: 12px 16px;
         background: rgba(255, 255, 255, 0.03);
         border-bottom: 1px solid rgba(255, 255, 255, 0.05);
@@ -280,6 +298,22 @@ export class NutrientPanelUI {
         font-weight: 600;
         font-size: 14px;
         color: #f0f6fc;
+      }
+
+      .panel-close-btn {
+        background: none;
+        border: none;
+        color: #8b949e;
+        font-size: 16px;
+        cursor: pointer;
+        padding: 2px 6px;
+        border-radius: 4px;
+        transition: all 0.15s ease;
+      }
+
+      .panel-close-btn:hover {
+        color: #ffffff;
+        background: rgba(255, 255, 255, 0.1);
       }
 
       .panel-tabs {
@@ -317,7 +351,6 @@ export class NutrientPanelUI {
         overflow-y: auto;
       }
 
-      /* Группы фильтра */
       .group-filter {
         display: flex;
         flex-wrap: wrap;
@@ -347,7 +380,6 @@ export class NutrientPanelUI {
         border-color: #2ea043;
       }
 
-      /* Сетка элементов */
       .elements-grid {
         display: grid;
         grid-template-columns: repeat(2, 1fr);
@@ -420,7 +452,6 @@ export class NutrientPanelUI {
         color: #8b949e;
       }
 
-      /* Инжектор controls */
       .injector-active-element {
         margin-bottom: 12px;
       }
