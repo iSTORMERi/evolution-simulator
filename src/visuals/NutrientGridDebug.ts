@@ -79,12 +79,14 @@ export class NutrientGridDebug {
     const isV8 = typeof g.rect === 'function';
 
     // ==========================================
-    // ШАГ 1: Отрисовка закраски масс нутриентов
+    // ШАГ 1: Отрисовка закраски масс нутриентов (строго на воде)
     // ==========================================
     for (let gy = minGridY; gy < maxGridY; gy++) {
       for (let gx = minGridX; gx < maxGridX; gx++) {
         const cell = this.nutrientGrid.getCell(gx, gy);
-        if (!cell || cell.isLand) continue;
+        
+        // Строгая блокировка отрисовки на суше
+        if (!cell || cell.isLand || !cell.isWater) continue;
 
         const surfaceKeys = Object.keys(cell.surfaceNutrients);
         if (surfaceKeys.length === 0) continue;
@@ -124,8 +126,8 @@ export class NutrientGridDebug {
         const sw = Math.round(cellSize * scaleX);
         const sh = Math.round(cellSize * scaleY);
 
-        // Яркая прозрачность: от 0.35 (заметный тап) до 0.9 (насыщенное пятно)
-        const alpha = Math.min(0.9, Math.max(0.35, (totalMass / 150) * 0.55));
+        // Динамическая прозрачность в зависимости от плотности вещества
+        const alpha = Math.min(0.85, Math.max(0.25, (totalMass / 100) * 0.6));
 
         if (isV8) {
           g.rect(sx, sy, sw, sh).fill({ color: blendedColor, alpha });
@@ -138,7 +140,7 @@ export class NutrientGridDebug {
     }
 
     // ==========================================
-    // ШАГ 2: Отрисовка видимых линий сетки
+    // ШАГ 2: Отрисовка видимой сетки
     // ==========================================
     const startSx = Math.max(0, Math.round(minWorldX * scaleX + posX));
     const endSx = Math.min(screenWidth, Math.round(maxWorldX * scaleX + posX));
@@ -152,7 +154,7 @@ export class NutrientGridDebug {
         g.moveTo(startSx, sy);
         g.lineTo(endSx, sy);
       } else {
-        g.lineStyle(1, 0x00e5ff, 0.35);
+        g.lineStyle(1, 0x00e5ff, 0.25);
         g.moveTo(startSx, sy);
         g.lineTo(endSx, sy);
       }
@@ -165,17 +167,17 @@ export class NutrientGridDebug {
         g.moveTo(sx, startSy);
         g.lineTo(sx, endSy);
       } else {
-        g.lineStyle(1, 0x00e5ff, 0.35);
+        g.lineStyle(1, 0x00e5ff, 0.25);
         g.moveTo(sx, startSy);
         g.lineTo(sx, endSy);
       }
     }
 
-    if (typeof g.stroke === 'function') {
+    if (isV8 && typeof g.stroke === 'function') {
       g.stroke({
         width: 1,
         color: 0x00e5ff,
-        alpha: 0.35,
+        alpha: 0.25,
       });
     }
   }
