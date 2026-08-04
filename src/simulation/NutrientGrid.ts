@@ -14,14 +14,17 @@ export interface GridCell {
   worldX: number;
   worldY: number;
 
-  // Данные из масок:
+  // Данные из 5 масок:
   isLand: boolean;                          // Суша/вода из WorldMap
   isWater: boolean;                         // Водный акваториум из OceanCurrentsManager
   zone: ZoneConfig | null;                  // Биом из ocean_zones_mask.png (WorldMap)
-  upwellingType: UpwellingZoneType | null;  // Зона апвеллинга (ENTRY/EXIT) из ocean_upwelling_mask.png
-  downwellingType: DownwellingZoneType | null; // Зона даунвеллинга (ENTRY/EXIT) из ocean_downwelling_mask.png
+  streamColor: string | null;               // Цвет течения из ocean_surface_mask.png
+  upwellingType: UpwellingZoneType | null;  // Зона апвеллинга из ocean_upwelling_mask.png
+  downwellingType: DownwellingZoneType | null; // Зона даунвеллинга из ocean_downwelling_mask.png
 
-  // Сюда в дальнейшем добавим массы веществ (N, P, C и т.д.)
+  // 2-слойная химическая масса (в мг, ключ — символ элемента, напр. 'P', 'N')
+  surfaceNutrients: Record<string, number>; // Взвесь в толще воды
+  benthicNutrients: Record<string, number>; // Донный осадок
 }
 
 export class NutrientGrid {
@@ -31,8 +34,14 @@ export class NutrientGrid {
   public readonly rows: number;
 
   public cells: GridCell[] = [];
+  public isPaused: boolean = false;
+
   private currentsManager: OceanCurrentsManager;
   private worldMap: WorldMap;
+
+  // Коэффициенты физики
+  private readonly DIFFUSION_RATE = 0.15; // Скорость расплывания в секунду
+  private readonly ADVECTION_SCALE = 0.4; // Влияние скорости течения на перенос
 
   constructor(currentsManager: OceanCurrentsManager, worldMap: WorldMap) {
     this.currentsManager = currentsManager;
@@ -56,7 +65,6 @@ export class NutrientGrid {
         const worldX = cx * this.CELL_SIZE;
         const worldY = cy * this.CELL_SIZE;
 
-        // Берем центр ячейки для точной проверки пикселей масок
         const centerX = worldX + this.CELL_SIZE * 0.5;
         const centerY = worldY + this.CELL_SIZE * 0.5;
 
@@ -64,17 +72,22 @@ export class NutrientGrid {
         const zone = this.worldMap ? this.worldMap.getZoneAt(centerX, centerY) : null;
         const isLand = zone ? Boolean(zone.isLand) : false;
 
-        // 2. Флаг воды из OceanCurrentsManager (ocean_surface_mask / ocean_binary_mask)
+        // 2. Флаг воды из OceanCurrentsManager
         const isWater = this.currentsManager 
           ? this.currentsManager.isWater(centerX, centerY) 
           : !isLand;
 
-        // 3. Апвеллинг (ocean_upwelling_mask.png)
+        // 3. Цвет поверхностной струи (ocean_surface_mask.png)
+        const streamColor = (this.currentsManager as any)?.getStreamColorAt 
+          ? (this.currentsManager as any).getStreamColorAt(centerX, centerY) 
+          : null;
+
+        // 4. Апвеллинг (ocean_upwelling_mask.png)
         const upwellingType = this.currentsManager 
           ? this.currentsManager.getUpwellingZoneAt(centerX, centerY) 
           : null;
 
-        // 4. Даунвеллинг (ocean_downwelling_mask.png)
+        // 5. Даунвеллинг (ocean_downwelling_mask.png)
         const downwellingType = this.currentsManager 
           ? this.currentsManager.getDownwellingZoneAt(centerX, centerY) 
           : null;
@@ -87,8 +100,11 @@ export class NutrientGrid {
           isLand,
           isWater,
           zone,
+          streamColor,
           upwellingType,
-          downwellingType
+          downwellingType,
+          surfaceNutrients: {},
+          benthicNutrients: {}
         };
       }
     }
@@ -105,11 +121,196 @@ export class NutrientGrid {
   }
 
   /**
-   * Удобный метод получения ячейки по мировым координатам (worldX, worldY)
+   * Получение ячейки по мировым координатам (worldX, worldY)
    */
   public getCellAtWorld(worldX: number, worldY: number): GridCell | null {
     const gx = Math.floor(worldX / this.CELL_SIZE);
     const gy = Math.floor(worldY / this.CELL_SIZE);
     return this.getCell(gx, gy);
+  }
+
+  /**
+   * Распыление вещества Инжектором с учетом размера кисти (1x1, 3x3, 5x5)
+   */
+  public injectNutrient(
+    worldX: number, 
+    worldY: number, 
+    elementKey: string, 
+    amountMg: number, 
+    brushSize: 1 | 3 | 5
+  ): void {
+    const centerGX = Math.floor(worldX / this.CELL_SIZE);
+    const centerGY = Math.floor(worldY / this.CELL_SIZE);
+    const radius = Math.floor(brushSize / 2);
+
+    const targetCells: GridCell[] = [];
+
+    for (let dy = -radius; dy <= radius; dy++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        const cell = this.getCell(centerGX + dx, centerGY + dy);
+        if (cell && !cell.isLand) {
+          targetCells.push(cell);
+        }
+      }
+    }
+
+    if (targetCells.length === 0) return;
+
+    const amountPerCell = amountMg / targetCells.length;
+    for (const cell of targetCells) {
+      cell.surfaceNutrients[elementKey] = (cell.surfaceNutrients[elementKey] || 0) + amountPerCell;
+    }
+  }
+
+  /**
+   * Очистить всю сетку от веществ
+   */
+  public clearAll(): void {
+    for (const cell of this.cells) {
+      cell.surfaceNutrients = {};
+      cell.benthicNutrients = {};
+    }
+  }
+
+  /**
+   * Главный физический цикл переноса веществ
+   */
+  public update(deltaSeconds: number): void {
+    if (this.isPaused || deltaSeconds <= 0) return;
+
+    // Ограничиваем dt для предотвращения нестабильности при лагах
+    const dt = Math.min(deltaSeconds, 0.1);
+
+    // Временные буферы для сохранения закона сохранения масс (double buffering)
+    const nextSurface: Record<string, number>[] = this.cells.map(c => ({ ...c.surfaceNutrients }));
+    const nextBenthic: Record<string, number>[] = this.cells.map(c => ({ ...c.benthicNutrients }));
+
+    // Вспомогательные направления для 4 соседей
+    const neighborsOffset = [
+      { dx: 0, dy: -1 }, // North
+      { dx: 1, dy: 0 },  // East
+      { dx: 0, dy: 1 },  // South
+      { dx: -1, dy: 0 }  // West
+    ];
+
+    for (let i = 0; i < this.cells.length; i++) {
+      const cell = this.cells[i];
+      if (cell.isLand) continue;
+
+      const surfaceKeys = Object.keys(cell.surfaceNutrients);
+      const benthicKeys = Object.keys(cell.benthicNutrients);
+
+      // ==========================================
+      // 1. ОГРАНИЧЕННАЯ ДИФФУЗИЯ И АДВЕКЦИЯ (Поверхностный слой)
+      // ==========================================
+      for (const elem of surfaceKeys) {
+        const mass = cell.surfaceNutrients[elem];
+        if (mass <= 0.001) continue;
+
+        // --- Диффузия по цветам струй ---
+        for (const offset of neighborsOffset) {
+          const neighbor = this.getCell(cell.gridX + offset.dx, cell.gridY + offset.dy);
+          if (!neighbor || neighbor.isLand) continue;
+
+          // Диффузия работает только внутри одной струи течения (или вне струй)
+          const isSameStream = cell.streamColor === neighbor.streamColor;
+          if (isSameStream) {
+            const neighborMass = neighbor.surfaceNutrients[elem] || 0;
+            const diffAmount = (mass - neighborMass) * this.DIFFUSION_RATE * dt * 0.25;
+
+            if (diffAmount > 0) {
+              nextSurface[i][elem] -= diffAmount;
+              const neighborIdx = neighbor.gridY * this.cols + neighbor.gridX;
+              nextSurface[neighborIdx][elem] = (nextSurface[neighborIdx][elem] || 0) + diffAmount;
+            }
+          }
+        }
+
+        // --- Адвекция (Снос течением) ---
+        if (this.currentsManager) {
+          const centerX = cell.worldX + this.CELL_SIZE * 0.5;
+          const centerY = cell.worldY + this.CELL_SIZE * 0.5;
+          const flow = (this.currentsManager as any).getVectorAt 
+            ? (this.currentsManager as any).getVectorAt(centerX, centerY) 
+            : null;
+
+          if (flow && (flow.x !== 0 || flow.y !== 0)) {
+            const targetGX = Math.round(cell.gridX + flow.x * this.ADVECTION_SCALE * dt);
+            const targetGY = Math.round(cell.gridY + flow.y * this.ADVECTION_SCALE * dt);
+
+            const targetCell = this.getCell(targetGX, targetGY);
+            if (targetCell && !targetCell.isLand) {
+              const shiftAmount = mass * 0.2 * dt;
+              nextSurface[i][elem] -= shiftAmount;
+              const targetIdx = targetCell.gridY * this.cols + targetCell.gridX;
+              nextSurface[targetIdx][elem] = (nextSurface[targetIdx][elem] || 0) + shiftAmount;
+            }
+          }
+        }
+      }
+
+      // ==========================================
+      // 2. ОСЕДАНИЕ / ВЗМУЧИВАНИЕ ПО БИОМАМ (ocean_zones_mask.png)
+      // ==========================================
+      const sinkRate = cell.zone?.sinkingRate ?? 0.05;      // Скорость осадков за сек
+      const riseRate = cell.zone?.resuspensionRate ?? 0.01; // Скорость естественного подъема
+
+      for (const elem of surfaceKeys) {
+        const surfaceMass = cell.surfaceNutrients[elem] || 0;
+        if (surfaceMass > 0) {
+          const sinking = surfaceMass * sinkRate * dt;
+          nextSurface[i][elem] -= sinking;
+          nextBenthic[i][elem] = (nextBenthic[i][elem] || 0) + sinking;
+        }
+      }
+
+      for (const elem of benthicKeys) {
+        const benthicMass = cell.benthicNutrients[elem] || 0;
+        if (benthicMass > 0) {
+          const rising = benthicMass * riseRate * dt;
+          nextBenthic[i][elem] -= rising;
+          nextSurface[i][elem] = (nextSurface[i][elem] || 0) + rising;
+        }
+      }
+
+      // ==========================================
+      // 3. КОНВЕЙЕР ДАУНВЕЛЛИНГА (Уход в глубину)
+      // ==========================================
+      if (cell.downwellingType === DownwellingZoneType.ENTRY) {
+        // В темно-коричневой зоне всасывается поверхность и осадок
+        for (const elem of surfaceKeys) {
+          const amount = (cell.surfaceNutrients[elem] || 0) * 0.5 * dt;
+          nextSurface[i][elem] -= amount;
+          nextBenthic[i][elem] = (nextBenthic[i][elem] || 0) + amount;
+        }
+      }
+
+      // ==========================================
+      // 4. КОНВЕЙЕР АПВЕЛЛИНГА (Подъем на поверхность)
+      // ==========================================
+      if (cell.upwellingType === UpwellingZoneType.ENTRY) {
+        // В темно-зеленой зоне донный осадок подхватывается и поднимается
+        for (const elem of benthicKeys) {
+          const amount = (cell.benthicNutrients[elem] || 0) * 0.6 * dt;
+          nextBenthic[i][elem] -= amount;
+          nextSurface[i][elem] = (nextSurface[i][elem] || 0) + amount;
+        }
+      }
+    }
+
+    // Применяем вычисленные состояния с зажатием нулей
+    for (let i = 0; i < this.cells.length; i++) {
+      const cell = this.cells[i];
+
+      for (const key in nextSurface[i]) {
+        if (nextSurface[i][key] < 0.0001) delete nextSurface[i][key];
+      }
+      for (const key in nextBenthic[i]) {
+        if (nextBenthic[i][key] < 0.0001) delete nextBenthic[i][key];
+      }
+
+      cell.surfaceNutrients = nextSurface[i];
+      cell.benthicNutrients = nextBenthic[i];
+    }
   }
 }
