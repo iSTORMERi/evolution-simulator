@@ -13,10 +13,11 @@ import { CurrentsBackgroundOverlay } from './visuals/CurrentsBackgroundOverlay';
 import { CurrentParticlesDebug } from './visuals/CurrentParticlesDebug';
 import { CurrentsToggleUI } from './ui/CurrentsToggleUI';
 
-// 2. Импортируем подсистему сетки нутриентов
+// 2. Импортируем подсистему сетки нутриентов и интерфейса химической панели
 import { NutrientGrid } from './simulation/NutrientGrid';
 import { NutrientGridDebug } from './visuals/NutrientGridDebug';
 import { NutrientGridToggleUI } from './ui/NutrientGridToggleUI';
+import { NutrientPanelUI } from './ui/NutrientPanelUI';
 
 let currentApp: PIXI.Application | null = null;
 let resizeHandler: (() => void) | null = null;
@@ -108,14 +109,15 @@ async function initApp() {
       debugParticles.container.visible = visible;
     });
 
-    // 1.3. Инициализация сетки нутриентов (передаем ОБА менеджера: oceanCurrents и worldMap)
+    // 1.3. Инициализация сетки нутриентов и панели химии
     const nutrientGrid = new NutrientGrid(oceanCurrents, worldMap);
+    const nutrientPanelUI = new NutrientPanelUI(nutrientGrid);
     const nutrientGridDebug = new NutrientGridDebug(nutrientGrid, app, worldMap.container);
     
     app.stage.addChild(nutrientGridDebug.container);
 
-    // Монтируем кнопку управления сеткой в UI
-    new NutrientGridToggleUI(nutrientGridDebug);
+    // Монтируем кнопку управления сеткой в UI и передаем панель
+    new NutrientGridToggleUI(nutrientGridDebug, nutrientPanelUI);
 
     // 2. Инициализация камеры
     const camera = new CameraController(worldMap.container, canvas, WORLD_WIDTH, WORLD_HEIGHT);
@@ -131,7 +133,57 @@ async function initApp() {
     // 4. Инициализация сканера биомов
     const scanner = new BiomeScanner(worldMap, lightingController);
 
-    // 5. Главный игровой цикл
+    // 5. Интерактивный инжектор химических элементов по клику/драгу
+    let isInjecting = false;
+
+    const performInjection = (e: PointerEvent) => {
+      if (!nutrientPanelUI.isInjectorActive()) return;
+
+      // Получаем координаты мира с учетом трансформаций контейнера карты
+      const rect = canvas.getBoundingClientRect();
+      const screenX = e.clientX - rect.left;
+      const screenY = e.clientY - rect.top;
+
+      const worldPos = worldMap.container.toLocal(new PIXI.Point(screenX, screenY));
+      const config = nutrientPanelUI.getInjectorConfig();
+
+      if (typeof (nutrientGrid as any).injectNutrient === 'function') {
+        (nutrientGrid as any).injectNutrient(
+          worldPos.x,
+          worldPos.y,
+          config.element,
+          config.intensity,
+          config.brushSize
+        );
+      } else if (typeof (nutrientGrid as any).addNutrient === 'function') {
+        (nutrientGrid as any).addNutrient(
+          worldPos.x,
+          worldPos.y,
+          config.element,
+          config.intensity,
+          config.brushSize
+        );
+      }
+    };
+
+    canvas.addEventListener('pointerdown', (e) => {
+      if (nutrientPanelUI.isInjectorActive() && e.button === 0) {
+        isInjecting = true;
+        performInjection(e);
+      }
+    });
+
+    canvas.addEventListener('pointermove', (e) => {
+      if (isInjecting && nutrientPanelUI.isInjectorActive()) {
+        performInjection(e);
+      }
+    });
+
+    const stopInjection = () => { isInjecting = false; };
+    window.addEventListener('pointerup', stopInjection);
+    window.addEventListener('pointercancel', stopInjection);
+
+    // 6. Главный игровой цикл
     app.ticker.add((ticker) => {
       const deltaSeconds = ticker.deltaMS / 1000;
       
@@ -142,6 +194,9 @@ async function initApp() {
       if (debugParticles.container.visible) {
         debugParticles.update(deltaSeconds);
       }
+
+      // Обновляем математическую симуляцию диффузии и течения нутриентов
+      nutrientGrid.update(deltaSeconds);
 
       // Перерисовываем отсеченную сетку строго в экранных пикселях без дробных WebGL-искажений
       nutrientGridDebug.update();
