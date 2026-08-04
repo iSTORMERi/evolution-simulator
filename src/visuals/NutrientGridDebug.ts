@@ -99,7 +99,8 @@ export class NutrientGridDebug {
 
         for (const key of surfaceKeys) {
           const mass = cell.surfaceNutrients[key] || 0;
-          if (mass > 0.0001) {
+          // Порог отображения снижен до 1e-8 для корректного отображения слабой диффузии
+          if (mass > 1e-8) {
             totalMass += mass;
             const hexColor = this.elementColors[key] ?? 0x3d5af1;
             
@@ -113,7 +114,7 @@ export class NutrientGridDebug {
           }
         }
 
-        if (totalMass <= 0.0001) continue;
+        if (totalMass <= 1e-8) continue;
 
         // Итоговый смешанный цвет
         const finalR = Math.round(redSum / totalMass);
@@ -126,8 +127,8 @@ export class NutrientGridDebug {
         const sw = Math.round(cellSize * scaleX);
         const sh = Math.round(cellSize * scaleY);
 
-        // Динамическая прозрачность в зависимости от плотности вещества
-        const alpha = Math.min(0.85, Math.max(0.25, (totalMass / 100) * 0.6));
+        // Логарифмический масштаб прозрачности: виден даже слабый фронт диффузии (мин. alpha = 0.08)
+        const alpha = Math.min(0.85, Math.max(0.08, Math.log10(totalMass + 1) * 0.4 + (totalMass > 0.01 ? 0.2 : 0.05)));
 
         if (isV8) {
           g.rect(sx, sy, sw, sh).fill({ color: blendedColor, alpha });
@@ -154,7 +155,7 @@ export class NutrientGridDebug {
         g.moveTo(startSx, sy);
         g.lineTo(endSx, sy);
       } else {
-        g.lineStyle(1, 0x00e5ff, 0.25);
+        g.lineStyle(1, 0x00e5ff, 0.2);
         g.moveTo(startSx, sy);
         g.lineTo(endSx, sy);
       }
@@ -167,7 +168,7 @@ export class NutrientGridDebug {
         g.moveTo(sx, startSy);
         g.lineTo(sx, endSy);
       } else {
-        g.lineStyle(1, 0x00e5ff, 0.25);
+        g.lineStyle(1, 0x00e5ff, 0.2);
         g.moveTo(sx, startSy);
         g.lineTo(sx, endSy);
       }
@@ -177,7 +178,7 @@ export class NutrientGridDebug {
       g.stroke({
         width: 1,
         color: 0x00e5ff,
-        alpha: 0.25,
+        alpha: 0.2,
       });
     }
   }
