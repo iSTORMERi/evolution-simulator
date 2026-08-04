@@ -1,10 +1,7 @@
 // src/simulation/NutrientGrid.ts
 
-import { 
-  OceanCurrentsManager, 
-  UpwellingZoneType, 
-  DownwellingZoneType 
-} from './OceanCurrentsManager';
+import { OceanCurrentsManager } from './OceanCurrentsManager';
+import type { UpwellingZoneType, DownwellingZoneType } from './OceanCurrentsManager';
 import { WorldMap } from '../world/WorldMap';
 import { ZoneConfig } from '../world/types';
 
@@ -276,7 +273,7 @@ export class NutrientGrid {
       // ==========================================
       // 3. КОНВЕЙЕР ДАУНВЕЛЛИНГА (Уход в глубину)
       // ==========================================
-      if (cell.downwellingType === DownwellingZoneType.ENTRY) {
+      if (cell.downwellingType && String(cell.downwellingType) === 'ENTRY') {
         // В темно-коричневой зоне всасывается поверхность и осадок
         for (const elem of surfaceKeys) {
           const amount = (cell.surfaceNutrients[elem] || 0) * 0.5 * dt;
@@ -288,7 +285,7 @@ export class NutrientGrid {
       // ==========================================
       // 4. КОНВЕЙЕР АПВЕЛЛИНГА (Подъем на поверхность)
       // ==========================================
-      if (cell.upwellingType === UpwellingZoneType.ENTRY) {
+      if (cell.upwellingType && String(cell.upwellingType) === 'ENTRY') {
         // В темно-зеленой зоне донный осадок подхватывается и поднимается
         for (const elem of benthicKeys) {
           const amount = (cell.benthicNutrients[elem] || 0) * 0.6 * dt;
