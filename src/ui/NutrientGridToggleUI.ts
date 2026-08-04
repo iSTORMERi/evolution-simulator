@@ -100,30 +100,30 @@ export class NutrientGridToggleUI {
       webkitUserSelect: 'none',
     });
 
-    // Клик по 🌐 (сетка)
+    // Клик по 🌐 (переключение сетки)
     this.gridButton.addEventListener('click', () => {
       const isGridVisible = this.gridDebug.toggle();
+      this.updateGridButtonState(isGridVisible);
 
       if (isGridVisible) {
-        this.gridButton.style.backgroundColor = 'rgba(74, 160, 237, 0.4)';
-        this.gridButton.style.borderColor = '#4aa0ed';
-        this.gridButton.style.boxShadow = '0 0 12px rgba(74, 160, 237, 0.5)';
         this.showConfigButton();
       } else {
-        this.gridButton.style.backgroundColor = 'rgba(30, 35, 45, 0.75)';
-        this.gridButton.style.borderColor = 'rgba(255, 255, 255, 0.15)';
-        this.gridButton.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.3)';
-
         this.hideConfigButton();
         this.panelUI.hide();
         this.updateConfigButtonActiveState(false);
       }
     });
 
-    // Клик по 🧪 (окно инжектора)
+    // Клик по 🧪 (открытие окна инжектора)
     this.configButton.addEventListener('click', () => {
       const isPanelVisible = this.panelUI.toggle();
       this.updateConfigButtonActiveState(isPanelVisible);
+
+      // Если открываем панель, а сетка была выключена — автоматически включаем её
+      if (isPanelVisible && !this.gridDebug.container.visible) {
+        this.gridDebug.container.visible = true;
+        this.updateGridButtonState(true);
+      }
     });
 
     this.panelUI.setOnCloseCallback(() => {
@@ -135,15 +135,38 @@ export class NutrientGridToggleUI {
   }
 
   /**
+   * Обновление стилей главной кнопки сетки 🌐
+   */
+  private updateGridButtonState(isVisible: boolean): void {
+    if (isVisible) {
+      this.gridButton.style.backgroundColor = 'rgba(74, 160, 237, 0.4)';
+      this.gridButton.style.borderColor = '#4aa0ed';
+      this.gridButton.style.boxShadow = '0 0 12px rgba(74, 160, 237, 0.5)';
+    } else {
+      this.gridButton.style.backgroundColor = 'rgba(30, 35, 45, 0.75)';
+      this.gridButton.style.borderColor = 'rgba(255, 255, 255, 0.15)';
+      this.gridButton.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.3)';
+    }
+  }
+
+  /**
    * Слушатели мыши/тача для распыления вещества прямо по игровому миру
    */
   private initWorldInjectorEvents(): void {
     const handlePointerDown = (e: MouseEvent | TouchEvent) => {
       if (!this.panelUI.isInjectorActive()) return;
 
-      // Если клик внутри самой UI-панели — игнорируем
+      // Игнорируем клики, если они приходятся строго на элементы UI управления
       const target = e.target as HTMLElement;
-      if (target && target.closest('#nutrient-panel-ui')) return;
+      if (target && (target.closest('#nutrient-panel-ui') || target.closest('button'))) {
+        return;
+      }
+
+      // Автоматически включаем видимость сетки при первом же тапе инжектором
+      if (!this.gridDebug.container.visible) {
+        this.gridDebug.container.visible = true;
+        this.updateGridButtonState(true);
+      }
 
       this.isMouseDown = true;
       this.triggerInjection(e);
@@ -186,7 +209,7 @@ export class NutrientGridToggleUI {
     let worldX = clientX;
     let worldY = clientY;
 
-    // Перевод экранных пикселей в мировые координаты сцены
+    // Точный перевод экранных пикселей в мировые координаты с учетом масштаба и сдвига камеры
     if (this.worldContainer) {
       worldX = (clientX - this.worldContainer.position.x) / this.worldContainer.scale.x;
       worldY = (clientY - this.worldContainer.position.y) / this.worldContainer.scale.y;
