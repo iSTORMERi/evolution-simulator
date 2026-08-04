@@ -10,11 +10,11 @@ export class NutrientGridDebug {
   private app: PIXI.Application;
   private worldContainer: PIXI.Container;
 
-  // Карта цветов для отображения элементов на сетке
+  // Карта HEX-цветов элементов для отображения на сетке
   private elementColors: Record<string, number> = {
-    'P': 0xd500f9, // Фосфор — Фиолетовый
-    'N': 0x00e5ff, // Азот — Бирюзовый
-    'C': 0xffd600, // Углерод — Желтый
+    'P': 0xd500f9,  // Фосфор — Фиолетовый
+    'N': 0x00e5ff,  // Азот — Бирюзовый
+    'C': 0xffd600,  // Углерод — Желтый
     'Fe': 0xff3d00, // Железо — Красный
     'Si': 0x76ff03, // Кремний — Зеленый
   };
@@ -29,6 +29,17 @@ export class NutrientGridDebug {
 
     this.gridGraphics = new PIXI.Graphics();
     this.container.addChild(this.gridGraphics);
+  }
+
+  public get visible(): boolean {
+    return this.container.visible;
+  }
+
+  public set visible(value: boolean) {
+    this.container.visible = value;
+    if (value) {
+      this.update();
+    }
   }
 
   /**
@@ -46,7 +57,8 @@ export class NutrientGridDebug {
     const posY = this.worldContainer.position.y;
 
     const cellSize = this.nutrientGrid.CELL_SIZE; // 100
-    const numCells = Math.round(this.nutrientGrid.WORLD_SIZE / cellSize); // 80
+    const numCellsCols = this.nutrientGrid.cols;
+    const numCellsRows = this.nutrientGrid.rows;
 
     this.gridGraphics.clear();
 
@@ -58,13 +70,13 @@ export class NutrientGridDebug {
 
     // 2. Вычисление индексов видимых ячеек
     const minGridX = Math.max(0, Math.floor((-posX / scaleX) / cellSize));
-    const maxGridX = Math.min(numCells, Math.ceil(((screenWidth - posX) / scaleX) / cellSize));
+    const maxGridX = Math.min(numCellsCols, Math.ceil(((screenWidth - posX) / scaleX) / cellSize));
 
     const minGridY = Math.max(0, Math.floor((-posY / scaleY) / cellSize));
-    const maxGridY = Math.min(numCells, Math.ceil(((screenHeight - posY) / scaleY) / cellSize));
+    const maxGridY = Math.min(numCellsRows, Math.ceil(((screenHeight - posY) / scaleY) / cellSize));
 
     const g = this.gridGraphics as any;
-    const isV8 = typeof g.moveTo === 'function';
+    const isV8 = typeof g.rect === 'function';
 
     // ==========================================
     // ШАГ 1: Отрисовка закраски масс нутриентов
@@ -77,35 +89,48 @@ export class NutrientGridDebug {
         const surfaceKeys = Object.keys(cell.surfaceNutrients);
         if (surfaceKeys.length === 0) continue;
 
-        // Находим доминирующий элемент и суммарную массу
-        let mainElem = surfaceKeys[0];
-        let maxMass = 0;
+        // Расчет суммарной массы и взвешенного цвета элементов
         let totalMass = 0;
+        let redSum = 0;
+        let greenSum = 0;
+        let blueSum = 0;
 
         for (const key of surfaceKeys) {
-          const m = cell.surfaceNutrients[key] || 0;
-          totalMass += m;
-          if (m > maxMass) {
-            maxMass = m;
-            mainElem = key;
+          const mass = cell.surfaceNutrients[key] || 0;
+          if (mass > 0.0001) {
+            totalMass += mass;
+            const hexColor = this.elementColors[key] ?? 0x3d5af1;
+            
+            const r = (hexColor >> 16) & 0xFF;
+            const gVal = (hexColor >> 8) & 0xFF;
+            const b = hexColor & 0xFF;
+
+            redSum += r * mass;
+            greenSum += gVal * mass;
+            blueSum += b * mass;
           }
         }
 
-        if (totalMass <= 0.01) continue;
+        if (totalMass <= 0.0001) continue;
+
+        // Итоговый смешанный цвет
+        const finalR = Math.round(redSum / totalMass);
+        const finalG = Math.round(greenSum / totalMass);
+        const finalB = Math.round(blueSum / totalMass);
+        const blendedColor = (finalR << 16) | (finalG << 8) | finalB;
 
         const sx = Math.round(gx * cellSize * scaleX + posX);
         const sy = Math.round(gy * cellSize * scaleY + posY);
         const sw = Math.round(cellSize * scaleX);
         const sh = Math.round(cellSize * scaleY);
 
-        const color = this.elementColors[mainElem] ?? 0x3d5af1;
-        // Прозрачность от 0.15 до 0.75 в зависимости от концентрации (нормируем к 500 мг)
-        const alpha = Math.min(0.75, Math.max(0.15, (totalMass / 500) * 0.7));
+        // Яркая прозрачность: от 0.35 (заметный тап) до 0.9 (насыщенное пятно)
+        const alpha = Math.min(0.9, Math.max(0.35, (totalMass / 150) * 0.55));
 
-        if (isV8 && typeof g.rect === 'function') {
-          g.rect(sx, sy, sw, sh).fill({ color, alpha });
+        if (isV8) {
+          g.rect(sx, sy, sw, sh).fill({ color: blendedColor, alpha });
         } else if (typeof g.beginFill === 'function') {
-          g.beginFill(color, alpha);
+          g.beginFill(blendedColor, alpha);
           g.drawRect(sx, sy, sw, sh);
           g.endFill();
         }
@@ -156,15 +181,12 @@ export class NutrientGridDebug {
   }
 
   public setVisible(visible: boolean): void {
-    this.container.visible = visible;
-    if (visible) {
-      this.update();
-    }
+    this.visible = visible;
   }
 
   public toggle(): boolean {
     const nextState = !this.container.visible;
-    this.setVisible(nextState);
+    this.visible = nextState;
     return nextState;
   }
 
