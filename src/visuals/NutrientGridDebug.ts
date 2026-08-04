@@ -10,6 +10,15 @@ export class NutrientGridDebug {
   private app: PIXI.Application;
   private worldContainer: PIXI.Container;
 
+  // Карта цветов для отображения элементов на сетке
+  private elementColors: Record<string, number> = {
+    'P': 0xd500f9, // Фосфор — Фиолетовый
+    'N': 0x00e5ff, // Азот — Бирюзовый
+    'C': 0xffd600, // Углерод — Желтый
+    'Fe': 0xff3d00, // Железо — Красный
+    'Si': 0x76ff03, // Кремний — Зеленый
+  };
+
   constructor(nutrientGrid: NutrientGrid, app: PIXI.Application, worldContainer: PIXI.Container) {
     this.nutrientGrid = nutrientGrid;
     this.app = app;
@@ -23,7 +32,7 @@ export class NutrientGridDebug {
   }
 
   /**
-   * Перерисовка линий сетки в реальном времени строго в экранных пикселях
+   * Перерисовка сетки и визуализация нутриентов в реальном времени
    */
   public update(): void {
     if (!this.container.visible) return;
@@ -57,12 +66,61 @@ export class NutrientGridDebug {
     const g = this.gridGraphics as any;
     const isV8 = typeof g.moveTo === 'function';
 
+    // ==========================================
+    // ШАГ 1: Отрисовка закраски масс нутриентов
+    // ==========================================
+    for (let gy = minGridY; gy < maxGridY; gy++) {
+      for (let gx = minGridX; gx < maxGridX; gx++) {
+        const cell = this.nutrientGrid.getCell(gx, gy);
+        if (!cell || cell.isLand) continue;
+
+        const surfaceKeys = Object.keys(cell.surfaceNutrients);
+        if (surfaceKeys.length === 0) continue;
+
+        // Находим доминирующий элемент и суммарную массу
+        let mainElem = surfaceKeys[0];
+        let maxMass = 0;
+        let totalMass = 0;
+
+        for (const key of surfaceKeys) {
+          const m = cell.surfaceNutrients[key] || 0;
+          totalMass += m;
+          if (m > maxMass) {
+            maxMass = m;
+            mainElem = key;
+          }
+        }
+
+        if (totalMass <= 0.01) continue;
+
+        const sx = Math.round(gx * cellSize * scaleX + posX);
+        const sy = Math.round(gy * cellSize * scaleY + posY);
+        const sw = Math.round(cellSize * scaleX);
+        const sh = Math.round(cellSize * scaleY);
+
+        const color = this.elementColors[mainElem] ?? 0x3d5af1;
+        // Прозрачность от 0.15 до 0.75 в зависимости от концентрации (нормируем к 500 мг)
+        const alpha = Math.min(0.75, Math.max(0.15, (totalMass / 500) * 0.7));
+
+        if (isV8 && typeof g.rect === 'function') {
+          g.rect(sx, sy, sw, sh).fill({ color, alpha });
+        } else if (typeof g.beginFill === 'function') {
+          g.beginFill(color, alpha);
+          g.drawRect(sx, sy, sw, sh);
+          g.endFill();
+        }
+      }
+    }
+
+    // ==========================================
+    // ШАГ 2: Отрисовка видимых линий сетки
+    // ==========================================
     const startSx = Math.max(0, Math.round(minWorldX * scaleX + posX));
     const endSx = Math.min(screenWidth, Math.round(maxWorldX * scaleX + posX));
     const startSy = Math.max(0, Math.round(minWorldY * scaleY + posY));
     const endSy = Math.min(screenHeight, Math.round(maxWorldY * scaleY + posY));
 
-    // Отрисовка видимых горизонтальных линий
+    // Горизонтальные линии
     for (let j = minGridY; j <= maxGridY; j++) {
       const sy = Math.round(j * cellSize * scaleY + posY);
       if (isV8) {
@@ -75,7 +133,7 @@ export class NutrientGridDebug {
       }
     }
 
-    // Отрисовка видимых вертикальных линий
+    // Вертикальные линии
     for (let i = minGridX; i <= maxGridX; i++) {
       const sx = Math.round(i * cellSize * scaleX + posX);
       if (isV8) {
