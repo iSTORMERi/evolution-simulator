@@ -1,5 +1,7 @@
 // src/ui/NutrientPanelUI.ts
 
+import { NutrientGrid } from '../simulation/NutrientGrid';
+
 export type ElementGroup = 'organogens' | 'skeletal' | 'salts' | 'catalysts' | 'extreme';
 
 export interface NutrientElement {
@@ -45,13 +47,17 @@ export const NUTRIENT_ELEMENTS: NutrientElement[] = [
 
 export class NutrientPanelUI {
   private container: HTMLDivElement;
+  private nutrientGrid?: NutrientGrid;
+
   private activeTab: 'view' | 'injector' = 'view';
   private selectedGroup: ElementGroup | 'all' = 'all';
-  private selectedElementId: string = 'C';
+  private selectedElementId: string = 'P'; // По умолчанию выберем Фосфор
   private brushSize: number = 1;
+  private intensity: number = 100;
   private onCloseCallback?: () => void;
 
-  constructor() {
+  constructor(nutrientGrid?: NutrientGrid) {
+    this.nutrientGrid = nutrientGrid;
     this.injectStyles();
     this.container = this.createPanelDOM();
     document.body.appendChild(this.container);
@@ -88,6 +94,18 @@ export class NutrientPanelUI {
 
   public getActiveTab(): 'view' | 'injector' {
     return this.activeTab;
+  }
+
+  public isInjectorActive(): boolean {
+    return this.container.classList.contains('visible') && this.activeTab === 'injector';
+  }
+
+  public getInjectorConfig(): { element: string; intensity: number; brushSize: number } {
+    return {
+      element: this.selectedElementId,
+      intensity: this.intensity,
+      brushSize: this.brushSize,
+    };
   }
 
   private createPanelDOM(): HTMLDivElement {
@@ -165,13 +183,14 @@ export class NutrientPanelUI {
 
   private renderInjectorTab(): string {
     const selectedEl = this.getSelectedElement();
+    const isPaused = (this.nutrientGrid as any)?.isPaused ?? false;
 
     return `
       <div class="injector-active-element">
         <span class="label">Кисть элемента:</span>
         <div class="selected-badge" style="border-color: ${selectedEl.color}">
           <span class="dot" style="background-color: ${selectedEl.color}"></span>
-          <strong>${selectedEl.symbol}</strong> -- ${selectedEl.name}
+          <strong>${selectedEl.symbol}</strong> — ${selectedEl.name}
         </div>
       </div>
 
@@ -187,14 +206,16 @@ export class NutrientPanelUI {
       <div class="control-group">
         <label>Интенсивность распыления:</label>
         <div class="slider-wrapper">
-          <input type="range" min="10" max="500" value="100" class="intensity-slider" id="intensity-slider">
-          <span class="slider-value" id="intensity-val">100 mg</span>
+          <input type="range" min="10" max="500" value="${this.intensity}" class="intensity-slider" id="intensity-slider">
+          <span class="slider-value" id="intensity-val">${this.intensity} mg</span>
         </div>
       </div>
 
       <div class="injector-actions">
-        <button class="action-btn danger">🧹 Очистить сетку</button>
-        <button class="action-btn secondary">⏸️ Пауза диффузии</button>
+        <button class="action-btn danger" id="btn-clear-grid">🧹 Очистить сетку</button>
+        <button class="action-btn secondary" id="btn-pause-diffusion">
+          ${isPaused ? '▶️ Возобновить' : '⏸️ Пауза диффузии'}
+        </button>
       </div>
     `;
   }
@@ -235,6 +256,34 @@ export class NutrientPanelUI {
         this.render();
         return;
       }
+
+      // Кнопка очистки
+      if (target.closest('#btn-clear-grid')) {
+        if (this.nutrientGrid) {
+          if (typeof (this.nutrientGrid as any).clear === 'function') {
+            (this.nutrientGrid as any).clear();
+          } else if ((this.nutrientGrid as any).grid) {
+            // Очищаем surfaceNutrients вручную
+            const grid = (this.nutrientGrid as any).grid;
+            for (let y = 0; y < grid.length; y++) {
+              for (let x = 0; x < grid[y].length; x++) {
+                grid[y][x].surfaceNutrients = {};
+              }
+            }
+          }
+        }
+        return;
+      }
+
+      // Кнопка паузы
+      if (target.closest('#btn-pause-diffusion')) {
+        if (this.nutrientGrid) {
+          const gridAny = this.nutrientGrid as any;
+          gridAny.isPaused = !gridAny.isPaused;
+          this.render();
+        }
+        return;
+      }
     });
   }
 
@@ -243,7 +292,8 @@ export class NutrientPanelUI {
     const sliderVal = this.container.querySelector('#intensity-val');
     if (slider && sliderVal) {
       slider.addEventListener('input', () => {
-        sliderVal.textContent = `${slider.value} mg`;
+        this.intensity = parseInt(slider.value, 10);
+        sliderVal.textContent = `${this.intensity} mg`;
       });
     }
   }
