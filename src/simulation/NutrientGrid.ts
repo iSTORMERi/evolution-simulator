@@ -36,9 +36,12 @@ export class NutrientGrid {
   private currentsManager: OceanCurrentsManager;
   private worldMap: WorldMap;
 
-  // Уменьшенные коэффициенты для более медленной и плавной диффузии
-  private readonly DIFFUSION_RATE = 0.02; // Медленное расплывание в секунду
+  // Скорость распределения веществ
+  private readonly DIFFUSION_RATE = 0.15; // Скорость выравнивания градиента в секунду
   private readonly ADVECTION_SCALE = 0.08; // Плавное движение по вектору течения
+
+  // Порог зачистки снижен до нанограммов (1e-8), чтобы диффузионная волна никогда не застревала
+  private readonly MIN_MASS_THRESHOLD = 1e-8;
 
   constructor(currentsManager: OceanCurrentsManager, worldMap: WorldMap) {
     this.currentsManager = currentsManager;
@@ -145,7 +148,6 @@ export class NutrientGrid {
     for (let dy = -radius; dy <= radius; dy++) {
       for (let dx = -radius; dx <= radius; dx++) {
         const cell = this.getCell(centerGX + dx, centerGY + dy);
-        // Инъекция разрешена строго на воде (не суша)
         if (cell && !cell.isLand && cell.isWater) {
           targetCells.push(cell);
         }
@@ -176,10 +178,9 @@ export class NutrientGrid {
   public update(deltaSeconds: number): void {
     if (this.isPaused || deltaSeconds <= 0) return;
 
-    // Ограничиваем dt для сохранения стабильности симуляции
     const dt = Math.min(deltaSeconds, 0.1);
 
-    // Временные буферы двойной буферизации
+    // Временные буферы двойной буферизации для соблюдения закона сохранения массы
     const nextSurface: Record<string, number>[] = this.cells.map(c => ({ ...c.surfaceNutrients }));
     const nextBenthic: Record<string, number>[] = this.cells.map(c => ({ ...c.benthicNutrients }));
 
@@ -192,37 +193,34 @@ export class NutrientGrid {
 
     for (let i = 0; i < this.cells.length; i++) {
       const cell = this.cells[i];
-      // Пропуск суши
       if (cell.isLand || !cell.isWater) continue;
 
       const surfaceKeys = Object.keys(cell.surfaceNutrients);
       const benthicKeys = Object.keys(cell.benthicNutrients);
 
       // ==========================================
-      // 1. ОГРАНИЧЕННАЯ МЕДЛЕННАЯ ДИФФУЗИЯ И АДВЕКЦИЯ
+      // 1. БЕСКОНЕЧНАЯ ДИФФУЗИЯ И АДВЕКЦИЯ
       // ==========================================
       for (const elem of surfaceKeys) {
         const mass = cell.surfaceNutrients[elem];
-        if (!mass || mass <= 0.0001) continue;
+        if (!mass || mass <= this.MIN_MASS_THRESHOLD) continue;
 
-        // --- Диффузия, ограниченная конкретной струей течения ---
+        // --- Перенос в область с меньшей концентрацией ---
         for (const offset of neighborsOffset) {
           const neighbor = this.getCell(cell.gridX + offset.dx, cell.gridY + offset.dy);
           
-          // Жесткий фильтр: пропускаем сушу и сухие ячейки
           if (!neighbor || neighbor.isLand || !neighbor.isWater) continue;
 
-          // Диффузия возможна, если ячейки принадлежат одной струе (цвету зоны)
-          // Либо если обе ячейки находятся в фоновой воде без выделенных струй (streamColor === null)
+          // Ограничиваем диффузию пределами конкретного течения
           const isSameStreamZone = cell.streamColor === neighbor.streamColor;
 
           if (isSameStreamZone) {
             const neighborMass = neighbor.surfaceNutrients[elem] || 0;
             const massDifference = mass - neighborMass;
 
+            // Вещество перетекает из большей концентрации в меньшую
             if (massDifference > 0) {
-              // Медленный плавный перенос доли массы
-              const diffAmount = massDifference * this.DIFFUSION_RATE * dt * 0.1;
+              const diffAmount = massDifference * this.DIFFUSION_RATE * dt * 0.25;
 
               if (diffAmount > 0) {
                 nextSurface[i][elem] -= diffAmount;
@@ -233,7 +231,7 @@ export class NutrientGrid {
           }
         }
 
-        // --- Адвекция (Плавный снос по вектору течения) ---
+        // --- Адвекция (Снос течением) ---
         if (this.currentsManager) {
           const centerX = cell.worldX + this.CELL_SIZE * 0.5;
           const centerY = cell.worldY + this.CELL_SIZE * 0.5;
@@ -247,7 +245,6 @@ export class NutrientGrid {
 
             const targetCell = this.getCell(targetGX, targetGY);
             
-            // Проверяем, что вектор не уносит массу на сушу
             if (targetCell && !targetCell.isLand && targetCell.isWater) {
               const shiftAmount = mass * 0.05 * dt;
               nextSurface[i][elem] -= shiftAmount;
@@ -261,8 +258,8 @@ export class NutrientGrid {
       // ==========================================
       // 2. ОСЕДАНИЕ И ПОДЪЕМ ПО БИОМАМ
       // ==========================================
-      const sinkRate = cell.zone?.sinkingRate ?? 0.02;      // Медленное оседание
-      const riseRate = cell.zone?.resuspensionRate ?? 0.005; // Естественный подъем
+      const sinkRate = cell.zone?.sinkingRate ?? 0.01;      
+      const riseRate = cell.zone?.resuspensionRate ?? 0.002; 
 
       for (const elem of surfaceKeys) {
         const surfaceMass = cell.surfaceNutrients[elem] || 0;
@@ -287,7 +284,7 @@ export class NutrientGrid {
       // ==========================================
       if (cell.downwellingType && String(cell.downwellingType) === 'ENTRY') {
         for (const elem of surfaceKeys) {
-          const amount = (cell.surfaceNutrients[elem] || 0) * 0.2 * dt;
+          const amount = (cell.surfaceNutrients[elem] || 0) * 0.15 * dt;
           nextSurface[i][elem] -= amount;
           nextBenthic[i][elem] = (nextBenthic[i][elem] || 0) + amount;
         }
@@ -295,22 +292,22 @@ export class NutrientGrid {
 
       if (cell.upwellingType && String(cell.upwellingType) === 'ENTRY') {
         for (const elem of benthicKeys) {
-          const amount = (cell.benthicNutrients[elem] || 0) * 0.25 * dt;
+          const amount = (cell.benthicNutrients[elem] || 0) * 0.2 * dt;
           nextBenthic[i][elem] -= amount;
           nextSurface[i][elem] = (nextSurface[i][elem] || 0) + amount;
         }
       }
     }
 
-    // Применяем вычисленные состояния с зачисткой микроскопических остатков
+    // Применение результатов с микроскопическим порогом 1e-8
     for (let i = 0; i < this.cells.length; i++) {
       const cell = this.cells[i];
 
       for (const key in nextSurface[i]) {
-        if (nextSurface[i][key] < 0.0001) delete nextSurface[i][key];
+        if (nextSurface[i][key] < this.MIN_MASS_THRESHOLD) delete nextSurface[i][key];
       }
       for (const key in nextBenthic[i]) {
-        if (nextBenthic[i][key] < 0.0001) delete nextBenthic[i][key];
+        if (nextBenthic[i][key] < this.MIN_MASS_THRESHOLD) delete nextBenthic[i][key];
       }
 
       cell.surfaceNutrients = nextSurface[i];
