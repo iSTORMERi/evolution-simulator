@@ -52,8 +52,11 @@ export class NutrientPanelUI {
   private debugVisualizer?: NutrientGridDebug;
 
   private activeTab: 'view' | 'injector' = 'view';
-  private selectedGroup: ElementGroup | 'all' = 'all';
-  private selectedElementId: string = 'P'; // По умолчанию выберем Фосфор
+  private selectedGroup: ElementGroup | 'all' | 'none' = 'none';
+  
+  // Активный элемент для кисти Инжектора
+  private injectorElementId: string = 'P'; 
+  
   private brushSize: number = 1;
   private intensity: number = 100;
   private onCloseCallback?: () => void;
@@ -97,7 +100,7 @@ export class NutrientPanelUI {
   }
 
   public getSelectedElement(): NutrientElement {
-    return NUTRIENT_ELEMENTS.find(e => e.id === this.selectedElementId) || NUTRIENT_ELEMENTS[0];
+    return NUTRIENT_ELEMENTS.find(e => e.id === this.injectorElementId) || NUTRIENT_ELEMENTS[0];
   }
 
   public getActiveTab(): 'view' | 'injector' {
@@ -110,7 +113,7 @@ export class NutrientPanelUI {
 
   public getInjectorConfig(): { element: string; intensity: number; brushSize: number } {
     return {
-      element: this.selectedElementId,
+      element: this.injectorElementId,
       intensity: this.intensity,
       brushSize: this.brushSize,
     };
@@ -154,11 +157,8 @@ export class NutrientPanelUI {
   }
 
   private renderViewTab(): string {
-    const filteredElements = this.selectedGroup === 'all' 
-      ? NUTRIENT_ELEMENTS 
-      : NUTRIENT_ELEMENTS.filter(e => e.group === this.selectedGroup);
-
     const currentRenderMode = this.debugVisualizer?.renderMode || 'surface';
+    const activeElementsList = this.debugVisualizer ? this.debugVisualizer.getActiveElements() : [];
 
     return `
       <!-- Переключатель вертикального горизонта (Пелагиаль / Бенталь / Интегральный) -->
@@ -174,7 +174,7 @@ export class NutrientPanelUI {
         </button>
       </div>
 
-      <!-- Фильтр групп -->
+      <!-- Фильтр групп (быстрые пресеты) -->
       <div class="group-filter">
         <button class="filter-chip ${this.selectedGroup === 'all' ? 'active' : ''}" data-group="all">Все</button>
         <button class="filter-chip ${this.selectedGroup === 'organogens' ? 'active' : ''}" data-group="organogens">Органогены</button>
@@ -184,15 +184,18 @@ export class NutrientPanelUI {
         <button class="filter-chip ${this.selectedGroup === 'extreme' ? 'active' : ''}" data-group="extreme">Экстрем</button>
       </div>
 
-      <!-- Сетка элементов -->
+      <!-- Сетка элементов (Toggle-карточки) -->
       <div class="elements-grid">
-        ${filteredElements.map(el => `
-          <div class="element-card ${this.selectedElementId === el.id ? 'selected' : ''}" data-element-id="${el.id}">
-            <span class="color-badge" style="background-color: ${el.color}; box-shadow: 0 0 6px ${el.color}aa;"></span>
-            <span class="element-symbol">${el.symbol}</span>
-            <span class="element-name">${el.name}</span>
-          </div>
-        `).join('')}
+        ${NUTRIENT_ELEMENTS.map(el => {
+          const isSelected = this.debugVisualizer?.isElementActive(el.id) ?? false;
+          return `
+            <div class="element-card ${isSelected ? 'selected' : ''}" data-element-id="${el.id}">
+              <span class="color-badge" style="background-color: ${el.color}; box-shadow: 0 0 6px ${el.color}aa;"></span>
+              <span class="element-symbol">${el.symbol}</span>
+              <span class="element-name">${el.name}</span>
+            </div>
+          `;
+        }).join('')}
       </div>
 
       <!-- Шкала концентрации -->
@@ -210,14 +213,24 @@ export class NutrientPanelUI {
 
     return `
       <div class="injector-active-element">
-        <span class="label">Кисть элемента:</span>
+        <span class="label">Выбор элемента для распыления:</span>
         <div class="selected-badge" style="border-color: ${selectedEl.color}">
           <span class="dot" style="background-color: ${selectedEl.color}"></span>
           <strong>${selectedEl.symbol}</strong> — ${selectedEl.name}
         </div>
       </div>
 
-      <div class="control-group">
+      <!-- Сетка элементов для инжектора (выбор 1 элемента) -->
+      <div class="elements-grid mini">
+        ${NUTRIENT_ELEMENTS.map(el => `
+          <div class="element-card mini ${this.injectorElementId === el.id ? 'selected' : ''}" data-injector-el="${el.id}">
+            <span class="color-badge" style="background-color: ${el.color}"></span>
+            <span class="element-symbol">${el.symbol}</span>
+          </div>
+        `).join('')}
+      </div>
+
+      <div class="control-group" style="margin-top: 12px;">
         <label>Размер кисти (ячейки):</label>
         <div class="size-selector">
           <button class="size-btn ${this.brushSize === 1 ? 'active' : ''}" data-size="1">1 x 1</button>
@@ -270,16 +283,45 @@ export class NutrientPanelUI {
         return;
       }
 
+      // Нажатие на пресеты-категории (Все, Органогены и т.д.)
       const groupChip = target.closest('.filter-chip') as HTMLElement;
       if (groupChip) {
-        this.selectedGroup = groupChip.dataset.group as ElementGroup | 'all';
+        const group = groupChip.dataset.group as ElementGroup | 'all';
+        
+        if (this.selectedGroup === group) {
+          // Повторный клик — сбрасываем выбор
+          this.selectedGroup = 'none';
+          this.debugVisualizer?.clearActiveElements();
+        } else {
+          this.selectedGroup = group;
+          if (group === 'all') {
+            const allIds = NUTRIENT_ELEMENTS.map(el => el.id);
+            this.debugVisualizer?.setActiveElements(allIds);
+          } else {
+            const groupIds = NUTRIENT_ELEMENTS.filter(el => el.group === group).map(el => el.id);
+            this.debugVisualizer?.setActiveElements(groupIds);
+          }
+        }
         this.render();
         return;
       }
 
-      const elCard = target.closest('.element-card') as HTMLElement;
-      if (elCard) {
-        this.selectedElementId = elCard.dataset.elementId!;
+      // Toggle элемента во вкладке "Просмотр"
+      const elCard = target.closest('.element-card:not(.mini)') as HTMLElement;
+      if (elCard && this.activeTab === 'view') {
+        const id = elCard.dataset.elementId!;
+        if (this.debugVisualizer) {
+          this.debugVisualizer.toggleElement(id);
+          this.selectedGroup = 'none'; // Сбрасываем подсвеченный пресет, т.к. идет кастомный выбор
+        }
+        this.render();
+        return;
+      }
+
+      // Выбор элемента во вкладке "Инжектор"
+      const injectorCard = target.closest('.element-card.mini') as HTMLElement;
+      if (injectorCard && this.activeTab === 'injector') {
+        this.injectorElementId = injectorCard.dataset.injectorEl!;
         this.render();
         return;
       }
@@ -518,6 +560,11 @@ export class NutrientPanelUI {
         margin-bottom: 14px;
       }
 
+      .elements-grid.mini {
+        grid-template-columns: repeat(5, 1fr);
+        gap: 4px;
+      }
+
       .element-card {
         display: flex;
         align-items: center;
@@ -528,6 +575,7 @@ export class NutrientPanelUI {
         border-radius: 6px;
         cursor: pointer;
         transition: all 0.15s ease;
+        user-select: none;
       }
 
       .element-card:hover {
@@ -537,7 +585,13 @@ export class NutrientPanelUI {
 
       .element-card.selected {
         border-color: #58a6ff;
-        background: rgba(88, 166, 255, 0.12);
+        background: rgba(88, 166, 255, 0.18);
+        box-shadow: inset 0 0 8px rgba(88, 166, 255, 0.2);
+      }
+
+      .element-card.mini {
+        padding: 4px;
+        justify-content: center;
       }
 
       .color-badge {
@@ -584,7 +638,7 @@ export class NutrientPanelUI {
       }
 
       .injector-active-element {
-        margin-bottom: 12px;
+        margin-bottom: 8px;
       }
 
       .injector-active-element .label {
