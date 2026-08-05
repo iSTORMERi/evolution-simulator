@@ -256,14 +256,14 @@ export class NutrientGrid {
       }
 
       // ==========================================
-      // 2. ОСЕДАНИЕ В БЕНТАЛЬ И ПОДЪЕМ В ПЕЛАГИАЛЬ
+      // 2. ОСЕДАНИЕ В БЕНТАЛЬ И ПОДЪЕМ В ПЕЛАГИАЛЬ (Заглушка: Оседание временно отключено)
       // ==========================================
-      const sinkRate = cell.zone?.sinkingRate ?? 0.01;      
+      const sinkRate = 0; // Принудительно отключено: элементы не выпадают в осадок
       const riseRate = cell.zone?.resuspensionRate ?? 0.002; 
 
       for (const elem of surfaceKeys) {
         const surfaceMass = cell.surfaceNutrients[elem] || 0;
-        if (surfaceMass > 0) {
+        if (surfaceMass > 0 && sinkRate > 0) {
           const sinking = surfaceMass * sinkRate * dt;
           nextSurface[i][elem] -= sinking;
           nextBenthic[i][elem] = (nextBenthic[i][elem] || 0) + sinking;
