@@ -27,8 +27,8 @@ export class NutrientGridToggleUI {
     this.app = app;
     this.worldContainer = worldContainer;
 
-    // Передаем ссылку на NutrientGrid в интерфейс панели
-    this.panelUI = new NutrientPanelUI(this.nutrientGrid);
+    // Передаем и NutrientGrid, и NutrientGridDebug для полноценной работы панели
+    this.panelUI = new NutrientPanelUI(this.nutrientGrid, this.gridDebug);
 
     this.gridButton = document.createElement('button');
     this.configButton = document.createElement('button');
@@ -134,9 +134,6 @@ export class NutrientGridToggleUI {
     document.body.appendChild(this.configButton);
   }
 
-  /**
-   * Обновление стилей главной кнопки сетки 🌐
-   */
   private updateGridButtonState(isVisible: boolean): void {
     if (isVisible) {
       this.gridButton.style.backgroundColor = 'rgba(74, 160, 237, 0.4)';
@@ -149,20 +146,15 @@ export class NutrientGridToggleUI {
     }
   }
 
-  /**
-   * Слушатели мыши/тача для распыления вещества прямо по игровому миру
-   */
   private initWorldInjectorEvents(): void {
     const handlePointerDown = (e: MouseEvent | TouchEvent) => {
       if (!this.panelUI.isInjectorActive()) return;
 
-      // Игнорируем клики, если они приходятся строго на элементы UI управления
       const target = e.target as HTMLElement;
       if (target && (target.closest('#nutrient-panel-ui') || target.closest('button'))) {
         return;
       }
 
-      // Автоматически включаем видимость сетки при первом же тапе инжектором
       if (!this.gridDebug.container.visible) {
         this.gridDebug.container.visible = true;
         this.updateGridButtonState(true);
@@ -191,9 +183,6 @@ export class NutrientGridToggleUI {
     window.addEventListener('touchend', handlePointerUp);
   }
 
-  /**
-   * Преобразование экранных координат клика в мировые координаты PixiJS и вызов инжектора
-   */
   private triggerInjection(e: MouseEvent | TouchEvent): void {
     let clientX = 0;
     let clientY = 0;
@@ -209,7 +198,6 @@ export class NutrientGridToggleUI {
     let worldX = clientX;
     let worldY = clientY;
 
-    // Точный перевод экранных пикселей в мировые координаты с учетом масштаба и сдвига камеры
     if (this.worldContainer) {
       worldX = (clientX - this.worldContainer.position.x) / this.worldContainer.scale.x;
       worldY = (clientY - this.worldContainer.position.y) / this.worldContainer.scale.y;
