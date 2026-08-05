@@ -1,6 +1,7 @@
 // src/ui/NutrientPanelUI.ts
 
 import { NutrientGrid } from '../simulation/NutrientGrid';
+import { NutrientGridDebug, NutrientRenderMode } from '../visuals/NutrientGridDebug';
 
 export type ElementGroup = 'organogens' | 'skeletal' | 'salts' | 'catalysts' | 'extreme';
 
@@ -48,6 +49,7 @@ export const NUTRIENT_ELEMENTS: NutrientElement[] = [
 export class NutrientPanelUI {
   private container: HTMLDivElement;
   private nutrientGrid?: NutrientGrid;
+  private debugVisualizer?: NutrientGridDebug;
 
   private activeTab: 'view' | 'injector' = 'view';
   private selectedGroup: ElementGroup | 'all' = 'all';
@@ -56,12 +58,18 @@ export class NutrientPanelUI {
   private intensity: number = 100;
   private onCloseCallback?: () => void;
 
-  constructor(nutrientGrid?: NutrientGrid) {
+  constructor(nutrientGrid?: NutrientGrid, debugVisualizer?: NutrientGridDebug) {
     this.nutrientGrid = nutrientGrid;
+    this.debugVisualizer = debugVisualizer;
     this.injectStyles();
     this.container = this.createPanelDOM();
     document.body.appendChild(this.container);
     this.bindEvents();
+    this.render();
+  }
+
+  public setDebugVisualizer(visualizer: NutrientGridDebug): void {
+    this.debugVisualizer = visualizer;
     this.render();
   }
 
@@ -150,7 +158,22 @@ export class NutrientPanelUI {
       ? NUTRIENT_ELEMENTS 
       : NUTRIENT_ELEMENTS.filter(e => e.group === this.selectedGroup);
 
+    const currentRenderMode = this.debugVisualizer?.renderMode || 'surface';
+
     return `
+      <!-- Переключатель вертикального горизонта (Пелагиаль / Бенталь / Интегральный) -->
+      <div class="horizon-selector">
+        <button class="horizon-btn ${currentRenderMode === 'surface' ? 'active surface' : ''}" data-mode="surface">
+          🌊 Пелагиаль
+        </button>
+        <button class="horizon-btn ${currentRenderMode === 'benthic' ? 'active benthic' : ''}" data-mode="benthic">
+          🏜️ Бенталь
+        </button>
+        <button class="horizon-btn ${currentRenderMode === 'both' ? 'active both' : ''}" data-mode="both">
+          🧬 Интегральный
+        </button>
+      </div>
+
       <!-- Фильтр групп -->
       <div class="group-filter">
         <button class="filter-chip ${this.selectedGroup === 'all' ? 'active' : ''}" data-group="all">Все</button>
@@ -236,6 +259,17 @@ export class NutrientPanelUI {
         return;
       }
 
+      // Переключатель вертикальных горизонтов
+      const horizonBtn = target.closest('.horizon-btn') as HTMLElement;
+      if (horizonBtn) {
+        const mode = horizonBtn.dataset.mode as NutrientRenderMode;
+        if (this.debugVisualizer) {
+          this.debugVisualizer.setRenderMode(mode);
+        }
+        this.render();
+        return;
+      }
+
       const groupChip = target.closest('.filter-chip') as HTMLElement;
       if (groupChip) {
         this.selectedGroup = groupChip.dataset.group as ElementGroup | 'all';
@@ -260,15 +294,14 @@ export class NutrientPanelUI {
       // Кнопка очистки
       if (target.closest('#btn-clear-grid')) {
         if (this.nutrientGrid) {
-          if (typeof (this.nutrientGrid as any).clear === 'function') {
+          if (typeof this.nutrientGrid.clearAll === 'function') {
+            this.nutrientGrid.clearAll();
+          } else if (typeof (this.nutrientGrid as any).clear === 'function') {
             (this.nutrientGrid as any).clear();
-          } else if ((this.nutrientGrid as any).grid) {
-            // Очищаем surfaceNutrients вручную
-            const grid = (this.nutrientGrid as any).grid;
-            for (let y = 0; y < grid.length; y++) {
-              for (let x = 0; x < grid[y].length; x++) {
-                grid[y][x].surfaceNutrients = {};
-              }
+          } else if ((this.nutrientGrid as any).cells) {
+            for (const cell of (this.nutrientGrid as any).cells) {
+              cell.surfaceNutrients = {};
+              cell.benthicNutrients = {};
             }
           }
         }
@@ -399,6 +432,54 @@ export class NutrientPanelUI {
         padding: 14px;
         max-height: 480px;
         overflow-y: auto;
+      }
+
+      /* Стили переключателя горизонтов */
+      .horizon-selector {
+        display: flex;
+        gap: 4px;
+        background: rgba(0, 0, 0, 0.25);
+        padding: 3px;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        margin-bottom: 12px;
+      }
+
+      .horizon-btn {
+        flex: 1;
+        padding: 6px 4px;
+        background: none;
+        border: none;
+        border-radius: 6px;
+        color: #8b949e;
+        font-size: 11px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        text-align: center;
+      }
+
+      .horizon-btn:hover {
+        color: #c9d1d9;
+        background: rgba(255, 255, 255, 0.04);
+      }
+
+      .horizon-btn.active.surface {
+        background: rgba(0, 229, 255, 0.15);
+        color: #00e5ff;
+        border: 1px solid rgba(0, 229, 255, 0.3);
+      }
+
+      .horizon-btn.active.benthic {
+        background: rgba(255, 145, 0, 0.15);
+        color: #ff9100;
+        border: 1px solid rgba(255, 145, 0, 0.3);
+      }
+
+      .horizon-btn.active.both {
+        background: rgba(224, 64, 251, 0.15);
+        color: #e040fb;
+        border: 1px solid rgba(224, 64, 251, 0.3);
       }
 
       .group-filter {
