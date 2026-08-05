@@ -36,12 +36,23 @@ export class NutrientGrid {
   private currentsManager: OceanCurrentsManager;
   private worldMap: WorldMap;
 
-  // Скорость распределения веществ
-  private readonly DIFFUSION_RATE = 0.15; // Скорость выравнивания градиента в секунду
+  // Базовые параметры переноса
   private readonly ADVECTION_SCALE = 0.08; // Плавное движение по вектору течения
+  private readonly MIN_MASS_THRESHOLD = 1e-8; // Порог зачистки микро-концентраций
 
-  // Порог зачистки снижен до нанограммов (1e-8), чтобы диффузионная волна никогда не застревала
-  private readonly MIN_MASS_THRESHOLD = 1e-8;
+  /**
+   * Зависимость скорости турбулентной диффузии от цвета зоны течения (streamColor).
+   * Оранжевая — самая быстрая (сильная турбулентность),
+   * Синяя — средняя,
+   * Фиолетовая — низкая (спокойная вода/медленное течение),
+   * default — базовая скорость для нейтральной воды.
+   */
+  private readonly STREAM_DIFFUSION_RATES: Record<string, number> = {
+    ORANGE: 0.35,  // Высокая скорость перемешивания
+    BLUE: 0.20,    // Средняя скорость перемешивания
+    PURPLE: 0.08,  // Низкая скорость перемешивания
+    DEFAULT: 0.15  // Вода без выраженного течения
+  };
 
   constructor(currentsManager: OceanCurrentsManager, worldMap: WorldMap) {
     this.currentsManager = currentsManager;
@@ -111,8 +122,15 @@ export class NutrientGrid {
   }
 
   /**
-   * Получение ячейки по сеточным координатам (gx, gy)
+   * Вспомогательный метод определения скорости диффузии ячейки
    */
+  private getDiffusionRateForCell(cell: GridCell): number {
+    if (!cell.streamColor) return this.STREAM_DIFFUSION_RATES.DEFAULT;
+
+    const colorKey = cell.streamColor.toUpperCase();
+    return this.STREAM_DIFFUSION_RATES[colorKey] ?? this.STREAM_DIFFUSION_RATES.DEFAULT;
+  }
+
   public getCell(gridX: number, gridY: number): GridCell | null {
     if (gridX < 0 || gridX >= this.cols || gridY < 0 || gridY >= this.rows) {
       return null;
@@ -120,18 +138,12 @@ export class NutrientGrid {
     return this.cells[gridY * this.cols + gridX];
   }
 
-  /**
-   * Получение ячейки по мировым координатам (worldX, worldY)
-   */
   public getCellAtWorld(worldX: number, worldY: number): GridCell | null {
     const gx = Math.floor(worldX / this.CELL_SIZE);
     const gy = Math.floor(worldY / this.CELL_SIZE);
     return this.getCell(gx, gy);
   }
 
-  /**
-   * Распыление вещества Инжектором строго по водным ячейкам (по умолчанию попадает в пелагиаль)
-   */
   public injectNutrient(
     worldX: number, 
     worldY: number, 
@@ -162,9 +174,6 @@ export class NutrientGrid {
     }
   }
 
-  /**
-   * Очистить всю сетку от веществ во всех слоях
-   */
   public clearAll(): void {
     for (const cell of this.cells) {
       cell.surfaceNutrients = {};
@@ -180,7 +189,6 @@ export class NutrientGrid {
 
     const dt = Math.min(deltaSeconds, 0.1);
 
-    // Временные буферы двойной буферизации для соблюдения закона сохранения массы
     const nextSurface: Record<string, number>[] = this.cells.map(c => ({ ...c.surfaceNutrients }));
     const nextBenthic: Record<string, number>[] = this.cells.map(c => ({ ...c.benthicNutrients }));
 
@@ -198,6 +206,9 @@ export class NutrientGrid {
       const surfaceKeys = Object.keys(cell.surfaceNutrients);
       const benthicKeys = Object.keys(cell.benthicNutrients);
 
+      // Получаем индивидуальный коэффициент диффузии для текущей ячейки
+      const cellDiffusionRate = this.getDiffusionRateForCell(cell);
+
       // ==========================================
       // 1. БЕСКОНЕЧНАЯ ДИФФУЗИЯ И АДВЕКЦИЯ (Пелагиаль)
       // ==========================================
@@ -205,28 +216,24 @@ export class NutrientGrid {
         const mass = cell.surfaceNutrients[elem];
         if (!mass || mass <= this.MIN_MASS_THRESHOLD) continue;
 
-        // --- Перенос в область с меньшей концентрацией ---
+        // --- Независимая диффузия во все водные соседние ячейки ---
         for (const offset of neighborsOffset) {
           const neighbor = this.getCell(cell.gridX + offset.dx, cell.gridY + offset.dy);
           
+          // Текстура суши — единственная преграда
           if (!neighbor || neighbor.isLand || !neighbor.isWater) continue;
 
-          // Ограничиваем диффузию пределами конкретного течения
-          const isSameStreamZone = cell.streamColor === neighbor.streamColor;
+          const neighborMass = neighbor.surfaceNutrients[elem] || 0;
+          const massDifference = mass - neighborMass;
 
-          if (isSameStreamZone) {
-            const neighborMass = neighbor.surfaceNutrients[elem] || 0;
-            const massDifference = mass - neighborMass;
+          // Вещество перетекает из большей концентрации в меньшую (Второй закон термодинамики)
+          if (massDifference > 0) {
+            const diffAmount = massDifference * cellDiffusionRate * dt * 0.25;
 
-            // Вещество перетекает из большей концентрации в меньшую
-            if (massDifference > 0) {
-              const diffAmount = massDifference * this.DIFFUSION_RATE * dt * 0.25;
-
-              if (diffAmount > 0) {
-                nextSurface[i][elem] -= diffAmount;
-                const neighborIdx = neighbor.gridY * this.cols + neighbor.gridX;
-                nextSurface[neighborIdx][elem] = (nextSurface[neighborIdx][elem] || 0) + diffAmount;
-              }
+            if (diffAmount > 0) {
+              nextSurface[i][elem] -= diffAmount;
+              const neighborIdx = neighbor.gridY * this.cols + neighbor.gridX;
+              nextSurface[neighborIdx][elem] = (nextSurface[neighborIdx][elem] || 0) + diffAmount;
             }
           }
         }
@@ -256,9 +263,8 @@ export class NutrientGrid {
       }
 
       // ==========================================
-      // 2. ОСЕДАНИЕ В БЕНТАЛЬ И ПОДЪЕМ В ПЕЛАГИАЛЬ (Заглушено)
+      // 2. ПОДЪЕМ ИЗ СТАРОГО ОСАДКА (Ресуспензия)
       // ==========================================
-      // Любое оседание заблокировано. Старый осадок поднимается апвеллинг/ресуспензией:
       const riseRate = cell.zone?.resuspensionRate ?? 0.002; 
       for (const elem of benthicKeys) {
         const benthicMass = cell.benthicNutrients[elem] || 0;
@@ -270,19 +276,8 @@ export class NutrientGrid {
       }
 
       // ==========================================
-      // 3. КОНВЕЙЕР АПВЕЛЛИНГА И ДАУНВЕЛЛИНГА
+      // 3. КОНВЕЙЕР АПВЕЛЛИНГА
       // ==========================================
-      // ВРЕМЕННО: Даунвеллинг закомментирован, чтобы не накапливать бенталь!
-      /*
-      if (cell.downwellingType && String(cell.downwellingType) === 'ENTRY') {
-        for (const elem of surfaceKeys) {
-          const amount = (cell.surfaceNutrients[elem] || 0) * 0.15 * dt;
-          nextSurface[i][elem] -= amount;
-          nextBenthic[i][elem] = (nextBenthic[i][elem] || 0) + amount;
-        }
-      }
-      */
-
       if (cell.upwellingType && String(cell.upwellingType) === 'ENTRY') {
         for (const elem of benthicKeys) {
           const amount = (cell.benthicNutrients[elem] || 0) * 0.2 * dt;
@@ -292,7 +287,7 @@ export class NutrientGrid {
       }
     }
 
-    // Применение результатов с микроскопическим порогом 1e-8
+    // Применение результатов
     for (let i = 0; i < this.cells.length; i++) {
       const cell = this.cells[i];
 
