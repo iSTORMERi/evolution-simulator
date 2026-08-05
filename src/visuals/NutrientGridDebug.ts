@@ -3,12 +3,17 @@
 import * as PIXI from 'pixi.js';
 import { NutrientGrid } from '../simulation/NutrientGrid';
 
+export type NutrientRenderMode = 'surface' | 'benthic' | 'both';
+
 export class NutrientGridDebug {
   public container: PIXI.Container;
   private gridGraphics: PIXI.Graphics;
   private nutrientGrid: NutrientGrid;
   private app: PIXI.Application;
   private worldContainer: PIXI.Container;
+
+  // Режим отображения слоев: 'surface' (Пелагиаль), 'benthic' (Бенталь), 'both' (Интегральный)
+  public renderMode: NutrientRenderMode = 'surface';
 
   // Карта HEX-цветов элементов для отображения на сетке
   private elementColors: Record<string, number> = {
@@ -40,6 +45,34 @@ export class NutrientGridDebug {
     if (value) {
       this.update();
     }
+  }
+
+  /**
+   * Явная установка режима отображения горизонта (Пелагиаль / Бенталь / Интегральный)
+   */
+  public setRenderMode(mode: NutrientRenderMode): void {
+    this.renderMode = mode;
+    if (this.visible) {
+      this.update();
+    }
+  }
+
+  /**
+   * Циклическое переключение режимов: Пелагиаль -> Бенталь -> Интегральный
+   */
+  public cycleRenderMode(): NutrientRenderMode {
+    if (this.renderMode === 'surface') {
+      this.renderMode = 'benthic';
+    } else if (this.renderMode === 'benthic') {
+      this.renderMode = 'both';
+    } else {
+      this.renderMode = 'surface';
+    }
+
+    if (this.visible) {
+      this.update();
+    }
+    return this.renderMode;
   }
 
   /**
@@ -79,7 +112,7 @@ export class NutrientGridDebug {
     const isV8 = typeof g.rect === 'function';
 
     // ==========================================
-    // ШАГ 1: Отрисовка закраски масс нутриентов (строго на воде)
+    // ШАГ 1: Отрисовка нутриентов с учетом выбранного горизонта
     // ==========================================
     for (let gy = minGridY; gy < maxGridY; gy++) {
       for (let gx = minGridX; gx < maxGridX; gx++) {
@@ -88,8 +121,23 @@ export class NutrientGridDebug {
         // Строгая блокировка отрисовки на суше
         if (!cell || cell.isLand || !cell.isWater) continue;
 
-        const surfaceKeys = Object.keys(cell.surfaceNutrients);
-        if (surfaceKeys.length === 0) continue;
+        // Агрегируем химические массы согласно выбранному режиму
+        const activeNutrients: Record<string, number> = {};
+
+        if (this.renderMode === 'surface' || this.renderMode === 'both') {
+          for (const key in cell.surfaceNutrients) {
+            activeNutrients[key] = (activeNutrients[key] || 0) + cell.surfaceNutrients[key];
+          }
+        }
+
+        if (this.renderMode === 'benthic' || this.renderMode === 'both') {
+          for (const key in cell.benthicNutrients) {
+            activeNutrients[key] = (activeNutrients[key] || 0) + cell.benthicNutrients[key];
+          }
+        }
+
+        const keys = Object.keys(activeNutrients);
+        if (keys.length === 0) continue;
 
         // Расчет суммарной массы и взвешенного цвета элементов
         let totalMass = 0;
@@ -97,9 +145,8 @@ export class NutrientGridDebug {
         let greenSum = 0;
         let blueSum = 0;
 
-        for (const key of surfaceKeys) {
-          const mass = cell.surfaceNutrients[key] || 0;
-          // Порог отображения снижен до 1e-8 для корректного отображения слабой диффузии
+        for (const key of keys) {
+          const mass = activeNutrients[key] || 0;
           if (mass > 1e-8) {
             totalMass += mass;
             const hexColor = this.elementColors[key] ?? 0x3d5af1;
@@ -127,8 +174,13 @@ export class NutrientGridDebug {
         const sw = Math.round(cellSize * scaleX);
         const sh = Math.round(cellSize * scaleY);
 
-        // Логарифмический масштаб прозрачности: виден даже слабый фронт диффузии (мин. alpha = 0.08)
-        const alpha = Math.min(0.85, Math.max(0.08, Math.log10(totalMass + 1) * 0.4 + (totalMass > 0.01 ? 0.2 : 0.05)));
+        // Логарифмический масштаб прозрачности: виден даже слабый фронт диффузии
+        let alpha = Math.min(0.85, Math.max(0.08, Math.log10(totalMass + 1) * 0.4 + (totalMass > 0.01 ? 0.2 : 0.05)));
+
+        // Легкая корректировка прозрачности для донного слоя
+        if (this.renderMode === 'benthic') {
+          alpha *= 0.85; 
+        }
 
         if (isV8) {
           g.rect(sx, sy, sw, sh).fill({ color: blendedColor, alpha });
@@ -141,12 +193,22 @@ export class NutrientGridDebug {
     }
 
     // ==========================================
-    // ШАГ 2: Отрисовка видимой сетки
+    // ШАГ 2: Отрисовка видимой сетки с индикацией горизонта
     // ==========================================
     const startSx = Math.max(0, Math.round(minWorldX * scaleX + posX));
     const endSx = Math.min(screenWidth, Math.round(maxWorldX * scaleX + posX));
     const startSy = Math.max(0, Math.round(minWorldY * scaleY + posY));
     const endSy = Math.min(screenHeight, Math.round(maxWorldY * scaleY + posY));
+
+    // Динамический цвет сетки для визуального подтверждения текущего режима:
+    // Пелагиаль = Бирюзовый (0x00e5ff)
+    // Бенталь = Оранжевый/Песочный (0xff9100)
+    // Интегральный = Пурпурный (0xe040fb)
+    const gridColor = this.renderMode === 'surface' 
+      ? 0x00e5ff 
+      : this.renderMode === 'benthic' 
+        ? 0xff9100 
+        : 0xe040fb;
 
     // Горизонтальные линии
     for (let j = minGridY; j <= maxGridY; j++) {
@@ -155,7 +217,7 @@ export class NutrientGridDebug {
         g.moveTo(startSx, sy);
         g.lineTo(endSx, sy);
       } else {
-        g.lineStyle(1, 0x00e5ff, 0.2);
+        g.lineStyle(1, gridColor, 0.2);
         g.moveTo(startSx, sy);
         g.lineTo(endSx, sy);
       }
@@ -168,7 +230,7 @@ export class NutrientGridDebug {
         g.moveTo(sx, startSy);
         g.lineTo(sx, endSy);
       } else {
-        g.lineStyle(1, 0x00e5ff, 0.2);
+        g.lineStyle(1, gridColor, 0.2);
         g.moveTo(sx, startSy);
         g.lineTo(sx, endSy);
       }
@@ -177,7 +239,7 @@ export class NutrientGridDebug {
     if (isV8 && typeof g.stroke === 'function') {
       g.stroke({
         width: 1,
-        color: 0x00e5ff,
+        color: gridColor,
         alpha: 0.2,
       });
     }
