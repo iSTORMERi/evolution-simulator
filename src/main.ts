@@ -112,9 +112,9 @@ async function initApp() {
     const nutrientGrid = new NutrientGrid(oceanCurrents, worldMap);
     const nutrientGridDebug = new NutrientGridDebug(nutrientGrid, app, worldMap.container);
     
-    // Размещаем отладочный слой поверх частиц в контейнере мира
-    nutrientGridDebug.container.zIndex = 101;
-    worldMap.container.addChild(nutrientGridDebug.container);
+    // ВАЖНО: Добавляем отладочную сетку в app.stage, 
+    // так как NutrientGridDebug рассчитывает проекцию в экранном пространстве!
+    app.stage.addChild(nutrientGridDebug.container);
 
     // Передаем все необходимые зависимости в единый контроллер кнопок и инжектора
     new NutrientGridToggleUI(nutrientGridDebug, nutrientGrid, app, worldMap.container);
