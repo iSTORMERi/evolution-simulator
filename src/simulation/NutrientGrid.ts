@@ -256,20 +256,10 @@ export class NutrientGrid {
       }
 
       // ==========================================
-      // 2. ОСЕДАНИЕ В БЕНТАЛЬ И ПОДЪЕМ В ПЕЛАГИАЛЬ (Заглушка: Оседание временно отключено)
+      // 2. ОСЕДАНИЕ В БЕНТАЛЬ И ПОДЪЕМ В ПЕЛАГИАЛЬ (Заглушено)
       // ==========================================
-      const sinkRate = 0; // Принудительно отключено: элементы не выпадают в осадок
+      // Любое оседание заблокировано. Старый осадок поднимается апвеллинг/ресуспензией:
       const riseRate = cell.zone?.resuspensionRate ?? 0.002; 
-
-      for (const elem of surfaceKeys) {
-        const surfaceMass = cell.surfaceNutrients[elem] || 0;
-        if (surfaceMass > 0 && sinkRate > 0) {
-          const sinking = surfaceMass * sinkRate * dt;
-          nextSurface[i][elem] -= sinking;
-          nextBenthic[i][elem] = (nextBenthic[i][elem] || 0) + sinking;
-        }
-      }
-
       for (const elem of benthicKeys) {
         const benthicMass = cell.benthicNutrients[elem] || 0;
         if (benthicMass > 0) {
@@ -280,8 +270,10 @@ export class NutrientGrid {
       }
 
       // ==========================================
-      // 3. КОНВЕЙЕР ДАУНВЕЛЛИНГА И АПВЕЛЛИНГА
+      // 3. КОНВЕЙЕР АПВЕЛЛИНГА И ДАУНВЕЛЛИНГА
       // ==========================================
+      // ВРЕМЕННО: Даунвеллинг закомментирован, чтобы не накапливать бенталь!
+      /*
       if (cell.downwellingType && String(cell.downwellingType) === 'ENTRY') {
         for (const elem of surfaceKeys) {
           const amount = (cell.surfaceNutrients[elem] || 0) * 0.15 * dt;
@@ -289,6 +281,7 @@ export class NutrientGrid {
           nextBenthic[i][elem] = (nextBenthic[i][elem] || 0) + amount;
         }
       }
+      */
 
       if (cell.upwellingType && String(cell.upwellingType) === 'ENTRY') {
         for (const elem of benthicKeys) {
