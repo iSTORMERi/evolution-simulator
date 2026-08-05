@@ -20,8 +20,8 @@ export interface GridCell {
   downwellingType: DownwellingZoneType | null; // Зона даунвеллинга из ocean_downwelling_mask.png
 
   // 2-слойная химическая масса (в мг, ключ — символ элемента, напр. 'P', 'N')
-  surfaceNutrients: Record<string, number>; // Взвесь в толще воды
-  benthicNutrients: Record<string, number>; // Донный осадок
+  surfaceNutrients: Record<string, number>; // Взвесь в толще воды (Пелагиаль)
+  benthicNutrients: Record<string, number>; // Донный осадок (Бенталь)
 }
 
 export class NutrientGrid {
@@ -130,7 +130,7 @@ export class NutrientGrid {
   }
 
   /**
-   * Распыление вещества Инжектором строго по водным ячейкам
+   * Распыление вещества Инжектором строго по водным ячейкам (по умолчанию попадает в пелагиаль)
    */
   public injectNutrient(
     worldX: number, 
@@ -163,7 +163,7 @@ export class NutrientGrid {
   }
 
   /**
-   * Очистить всю сетку от веществ
+   * Очистить всю сетку от веществ во всех слоях
    */
   public clearAll(): void {
     for (const cell of this.cells) {
@@ -199,7 +199,7 @@ export class NutrientGrid {
       const benthicKeys = Object.keys(cell.benthicNutrients);
 
       // ==========================================
-      // 1. БЕСКОНЕЧНАЯ ДИФФУЗИЯ И АДВЕКЦИЯ
+      // 1. БЕСКОНЕЧНАЯ ДИФФУЗИЯ И АДВЕКЦИЯ (Пелагиаль)
       // ==========================================
       for (const elem of surfaceKeys) {
         const mass = cell.surfaceNutrients[elem];
@@ -256,7 +256,7 @@ export class NutrientGrid {
       }
 
       // ==========================================
-      // 2. ОСЕДАНИЕ И ПОДЪЕМ ПО БИОМАМ
+      // 2. ОСЕДАНИЕ В БЕНТАЛЬ И ПОДЪЕМ В ПЕЛАГИАЛЬ
       // ==========================================
       const sinkRate = cell.zone?.sinkingRate ?? 0.01;      
       const riseRate = cell.zone?.resuspensionRate ?? 0.002; 
