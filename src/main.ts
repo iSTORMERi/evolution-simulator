@@ -112,7 +112,9 @@ async function initApp() {
     const nutrientGrid = new NutrientGrid(oceanCurrents, worldMap);
     const nutrientGridDebug = new NutrientGridDebug(nutrientGrid, app, worldMap.container);
     
-    app.stage.addChild(nutrientGridDebug.container);
+    // Размещаем отладочный слой поверх частиц в контейнере мира
+    nutrientGridDebug.container.zIndex = 101;
+    worldMap.container.addChild(nutrientGridDebug.container);
 
     // Передаем все необходимые зависимости в единый контроллер кнопок и инжектора
     new NutrientGridToggleUI(nutrientGridDebug, nutrientGrid, app, worldMap.container);
@@ -146,8 +148,10 @@ async function initApp() {
       // Обновляем математическую симуляцию диффузии и течения нутриентов
       nutrientGrid.update(deltaSeconds);
 
-      // Перерисовываем отсеченную сетку строго в экранных пикселях без дробных WebGL-искажений
-      nutrientGridDebug.update();
+      // Перерисовываем сетку визуализатора нутриентов при включенном слое
+      if (nutrientGridDebug.container.visible) {
+        nutrientGridDebug.update();
+      }
 
       // Синхронизируем состояние дня/ночи на карте
       if (typeof (lightingController as any).getCurrentHours === 'function') {
